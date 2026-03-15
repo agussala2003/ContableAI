@@ -1,0 +1,12 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# VCS
+.git/
+
+# Environment files
+.env
+
+# Local development settings
+**/appsettings.Development.json
