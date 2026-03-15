@@ -1,0 +1,74 @@
+﻿<div class="fixed inset-0 z-[9500] flex items-center justify-center p-4"
+     style="background:rgba(0,0,0,.55);backdrop-filter:blur(4px)">
+
+  <div role="dialog" aria-modal="true" aria-labelledby="onboarding-title"
+       class="relative w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden
+              bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+
+    <!-- Header gradient -->
+    <div class="bg-gradient-to-br from-indigo-600 to-indigo-700 px-8 pt-8 pb-6">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="bg-white/15 p-2 rounded-xl">
+          <lucide-icon name="book-open" class="w-6 h-6 text-white"></lucide-icon>
+        </div>
+        <span class="text-white/80 text-sm font-medium tracking-wide uppercase">Primeros pasos</span>
+      </div>
+      <h2 id="onboarding-title" class="text-2xl font-bold text-white leading-snug">
+        @if (displayName()) {
+          Bienvenido, {{ displayName() }}
+        } @else {
+          Bienvenido a ContableAI
+        }
+      </h2>
+      <p class="text-indigo-200 text-sm mt-1">Seguí estos pasos para empezar a procesar extractos bancarios.</p>
+    </div>
+
+    <!-- Steps -->
+    <div class="px-8 py-6 space-y-4">
+      @for (step of steps; track step.key) {
+        <div class="flex items-start gap-4">
+          <div class="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center" [ngClass]="step.color">
+            @switch (step.key) {
+              @case ('company') {
+                <lucide-icon name="building-2" class="w-5 h-5"></lucide-icon>
+              }
+              @case ('upload') {
+                <lucide-icon name="upload" class="w-5 h-5"></lucide-icon>
+              }
+              @case ('review') {
+                <lucide-icon name="users" class="w-5 h-5"></lucide-icon>
+              }
+              @case ('export') {
+                <lucide-icon name="download" class="w-5 h-5"></lucide-icon>
+              }
+            }
+          </div>
+          <div class="flex-1 min-w-0 pt-1">
+            <p class="font-semibold text-gray-900 dark:text-white text-sm">
+              <span class="text-gray-400 dark:text-gray-500 mr-1.5">{{ step.n }}.</span>{{ step.title }}
+            </p>
+            <p class="text-gray-500 dark:text-gray-400 text-xs mt-0.5 leading-relaxed">{{ step.desc }}</p>
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Footer actions -->
+    <div class="px-8 pb-7 flex flex-col sm:flex-row gap-3">
+      <button (click)="onStart()"
+              class="flex-1 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800
+                     text-white font-semibold text-sm rounded-xl py-2.5 px-5
+                     transition-colors duration-150 focus:outline-none focus-visible:ring-2
+                     focus-visible:ring-indigo-500">
+        Comenzar ahora
+      </button>
+      <button (click)="onSkip()"
+              class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200
+                     text-sm font-medium py-2.5 px-4 rounded-xl transition-colors duration-150
+                     focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400">
+        Omitir
+      </button>
+    </div>
+
+  </div>
+</div>

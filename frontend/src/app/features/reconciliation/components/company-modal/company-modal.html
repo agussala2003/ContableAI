@@ -1,0 +1,38 @@
+<div
+  class="fixed inset-0 z-50 flex items-end sm:items-center justify-center
+         bg-slate-900/50 dark:bg-black/60 backdrop-blur-sm p-4 sm:p-6
+         animate-fade-in"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="company-modal-title"
+  (click)="close.emit()"
+>
+  <div
+    class="relative w-full max-w-2xl bg-white dark:bg-slate-900
+           rounded-2xl border border-slate-200 dark:border-slate-800
+           shadow-xl p-6 max-h-[90vh] overflow-y-auto
+           animate-fade-in-up"
+    (click)="$event.stopPropagation()"
+  >
+    <div class="sm:hidden w-12 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 mx-auto mb-6"></div>
+
+    <div class="flex items-start justify-between mb-6">
+      <div>
+        <h2 id="company-modal-title" class="text-lg font-semibold text-slate-900 dark:text-white leading-tight">
+          Gestión de Empresas
+        </h2>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+          Agregá, editá y seleccioná la empresa activa.
+        </p>
+      </div>
+      
+      <button (click)="close.emit()" aria-label="Cerrar modal"
+        class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+        <lucide-icon name="x" class="w-5 h-5"></lucide-icon>
+      </button>
+    </div>
+
+    <app-company-bar />
+    
+  </div>
+</div>

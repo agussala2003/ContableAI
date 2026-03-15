@@ -1,0 +1,168 @@
+<div class="flex h-screen overflow-hidden bg-slate-100 dark:bg-slate-950 transition-colors duration-200">
+
+  <!-- Sidebar -->
+  <aside
+    class="h-full flex flex-col bg-indigo-600 dark:bg-indigo-700 border-r border-indigo-700 dark:border-indigo-800
+           shrink-0 transition-[width] duration-300 ease-in-out overflow-hidden z-40"
+    [class.w-56]="sidebarOpen()"
+    [class.w-16]="!sidebarOpen()">
+
+    <!-- Header: brand + toggle -->
+    <div class="flex items-center h-14 px-2 gap-2 border-b border-white/10 shrink-0"
+         [class.justify-between]="sidebarOpen()"
+         [class.justify-center]="!sidebarOpen()">
+      @if (sidebarOpen()) {
+        <div class="flex items-center gap-2.5 overflow-hidden">
+          <div class="shrink-0 bg-white/15 p-1.5 rounded-lg">
+            <lucide-icon name="zap" [size]="14" color="white" />
+          </div>
+          <span class="text-white font-bold text-sm tracking-tight whitespace-nowrap">ContableAI</span>
+        </div>
+      }
+      <button
+        (click)="toggleSidebar()"
+        class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20
+               text-white transition-colors shrink-0"
+        [title]="sidebarOpen() ? 'Contraer menú' : 'Expandir menú'">
+        @if (sidebarOpen()) {
+          <lucide-icon name="chevrons-left" [size]="16" color="white" />
+        } @else {
+          <lucide-icon name="chevrons-right" [size]="16" color="white" />
+        }
+      </button>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="flex-1 overflow-y-auto overflow-x-hidden py-3 px-2 flex flex-col gap-0.5">
+
+      <a routerLink="/" [routerLinkActiveOptions]="{ exact: true }"
+         routerLinkActive="bg-white/20 text-white"
+         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                hover:text-white hover:bg-white/10 transition-colors"
+         [class.justify-center]="!sidebarOpen()"
+         title="Inicio">
+        <lucide-icon name="home" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Inicio</span> }
+      </a>
+
+      <a routerLink="/journal"
+         routerLinkActive="bg-white/20 text-white"
+         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                hover:text-white hover:bg-white/10 transition-colors"
+         [class.justify-center]="!sidebarOpen()"
+         title="Asientos">
+        <lucide-icon name="book-open" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Asientos</span> }
+      </a>
+
+      <a routerLink="/rules"
+         routerLinkActive="bg-white/20 text-white"
+         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                hover:text-white hover:bg-white/10 transition-colors"
+         [class.justify-center]="!sidebarOpen()"
+         title="Reglas">
+        <lucide-icon name="sliders-horizontal" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Reglas</span> }
+      </a>
+
+      @if (isSystemAdmin) {
+        <a routerLink="/admin"
+           routerLinkActive="bg-white/20 text-white"
+           class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                  hover:text-white hover:bg-white/10 transition-colors"
+           [class.justify-center]="!sidebarOpen()"
+           title="Admin">
+          <lucide-icon name="shield" [size]="16" color="currentColor" class="shrink-0" />
+          @if (sidebarOpen()) { <span class="whitespace-nowrap">Admin</span> }
+        </a>
+      }
+
+    </nav>
+
+    <!-- Footer: account info + actions -->
+    <div class="shrink-0 border-t border-white/10 p-2 flex flex-col gap-1.5">
+
+      @if (sidebarOpen()) {
+        @if (companyService.activeCompany(); as company) {
+          <div class="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-white/5">
+            <lucide-icon name="building-2" [size]="14" color="white" class="shrink-0 opacity-60" />
+            <div class="min-w-0">
+              <p class="text-white text-xs font-semibold truncate leading-tight">{{ company.name }}</p>
+              <p class="text-white/50 text-[10px] truncate leading-tight">{{ company.cuit }}</p>
+            </div>
+          </div>
+        } @else {
+          <div class="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-white/5">
+            <lucide-icon name="building-2" [size]="14" color="white" class="shrink-0 opacity-40" />
+            <p class="text-white/40 text-xs italic truncate">Sin empresa activa</p>
+          </div>
+        }
+
+        @if (authService.currentUser(); as user) {
+          <div class="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-white/5">
+            <lucide-icon name="user" [size]="14" color="white" class="shrink-0 opacity-60" />
+            <div class="min-w-0">
+              <p class="text-white text-xs font-semibold truncate leading-tight">{{ user.displayName }}</p>
+              <p class="text-white/50 text-[10px] truncate leading-tight">{{ roleLabel(user.role) }}</p>
+            </div>
+          </div>
+        }
+      }
+
+      <button
+        (click)="toggleTheme()"
+        class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+               hover:text-white hover:bg-white/10 transition-colors w-full"
+        [class.justify-center]="!sidebarOpen()"
+        [title]="isDark() ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'">
+        @if (isDark()) {
+          <lucide-icon name="sun" [size]="14" color="currentColor" class="shrink-0" />
+        } @else {
+          <lucide-icon name="moon" [size]="14" color="currentColor" class="shrink-0" />
+        }
+        @if (sidebarOpen()) {
+          <span class="whitespace-nowrap">{{ isDark() ? 'Modo claro' : 'Modo oscuro' }}</span>
+        }
+      </button>
+
+      <button
+        (click)="authService.logout()"
+        class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+               hover:text-white hover:bg-red-500/30 transition-colors w-full"
+        [class.justify-center]="!sidebarOpen()"
+        title="Cerrar sesión">
+        <lucide-icon name="log-out" [size]="14" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Cerrar sesión</span> }
+      </button>
+
+    </div>
+  </aside>
+
+  <!-- Main content area -->
+  <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+    <main class="flex-1 px-6 lg:px-10 py-8">
+      <router-outlet />
+    </main>
+  </div>
+
+  <!-- Toast notifications -->
+  <app-toast />
+
+  <!-- Confirm dialog (global) -->
+  <app-confirm-dialog />
+
+  @if (loadingService.isLoading()) {
+    <div
+      class="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 backdrop-blur-[1px]"
+      aria-live="polite"
+      aria-busy="true"
+      aria-label="Cargando"
+    >
+      <div class="flex flex-col items-center gap-3 rounded-2xl bg-white/90 dark:bg-slate-900/90 px-6 py-5 shadow-2xl border border-slate-200/70 dark:border-slate-700/70">
+        <div class="h-10 w-10 rounded-full border-4 border-indigo-200 dark:border-indigo-900 border-t-indigo-600 dark:border-t-indigo-400 animate-spin"></div>
+        <p class="text-sm font-medium text-slate-700 dark:text-slate-200">Procesando...</p>
+      </div>
+    </div>
+  }
+
+</div>

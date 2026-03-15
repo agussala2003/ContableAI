@@ -1,0 +1,58 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  .NET / C# backend
+# ──────────────────────────────────────────────────────────────────────────────
+backend/**/bin/
+backend/**/obj/
+backend/**/TestResults/
+backend/**/*.user
+backend/**/*.suo
+backend/.vs/
+backend/src/ContableAI.API/appsettings.Development.json
+
+# Migraciones despliegue (mantener las fuentes, no los artefactos de runtime)
+backend/**/*.db
+backend/**/*.db-shm
+backend/**/*.db-wal
+
+# Certificados AFIP — NUNCA subir al repositorio
+backend/certs/*.p12
+backend/certs/*.pfx
+backend/certs/*.pem
+backend/certs/*.key
+
+# Logs generados por Serilog
+backend/logs/
+!backend/logs/.gitkeep
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Angular frontend
+# ──────────────────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/.env
+frontend/.env.*
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Variables de entorno y secretos
+# ──────────────────────────────────────────────────────────────────────────────
+*.env
+.env
+.env.local
+.env.production
+.env.development
+.env.*.local
+appsettings.Production.json
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  IDEs
+# ──────────────────────────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Docker
+# ──────────────────────────────────────────────────────────────────────────────
+docker-compose.override.yml

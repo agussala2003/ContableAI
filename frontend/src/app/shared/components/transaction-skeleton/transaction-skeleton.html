@@ -1,0 +1,52 @@
+<div
+  class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70 shadow-sm overflow-hidden mt-4"
+  aria-label="Cargando movimientos..."
+  aria-busy="true"
+>
+  <!-- Header bar -->
+  <div
+    class="px-6 py-4 border-b border-slate-100 dark:border-slate-700/70 flex items-center justify-between"
+  >
+    <div class="h-4 w-44 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div
+      class="h-6 w-20 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 animate-pulse"
+    ></div>
+  </div>
+
+  <!-- Column headers -->
+  <div
+    class="flex items-center gap-4 px-6 py-3 bg-slate-50/80 dark:bg-slate-800/60 border-b border-slate-100 dark:border-slate-700/70"
+  >
+    <div class="h-2.5 w-14 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div class="h-2.5 w-32 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse flex-1"></div>
+    <div class="h-2.5 w-16 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse ml-auto"></div>
+    <div class="h-2.5 w-28 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div class="h-2.5 w-12 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+  </div>
+
+  <!-- Skeleton rows -->
+  @for (row of rows; track row) {
+    <div
+      class="flex items-center gap-4 px-6 py-4 border-b border-slate-50 dark:border-slate-800 animate-pulse"
+      [style.animation-delay]="row * 55 + 'ms'"
+    >
+      <!-- Date -->
+      <div class="h-3 w-20 rounded-full bg-slate-100 dark:bg-slate-800 shrink-0"></div>
+
+      <!-- Description -->
+      <div
+        class="h-3 rounded-full bg-slate-100 dark:bg-slate-800 flex-1"
+        [style.width]="descWidths[row]"
+      ></div>
+
+      <!-- Amount -->
+      <div class="h-3 w-20 rounded-full bg-slate-100 dark:bg-slate-800 ml-auto shrink-0"></div>
+
+      <!-- Account badge -->
+      <div class="h-6 w-28 rounded-full bg-slate-100 dark:bg-slate-800 shrink-0"></div>
+
+      <!-- Source badge -->
+      <div class="h-6 w-14 rounded-full bg-slate-100 dark:bg-slate-800 shrink-0"></div>
+    </div>
+  }
+</div>

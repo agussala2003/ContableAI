@@ -1,0 +1,1368 @@
+00:00:01,470 --> 00:00:02,660 [speaker_0]
+¿Te importa?
+
+00:00:02,720 --> 00:00:03,989 [speaker_1]
+Sí, a mí me re importo. Ah-
+
+00:00:04,019 --> 00:00:09,440 [speaker_0]
+No, lo estoy grabando,
+porque después lo transcribo y se lo paso para que entienda todo el contexto y eso.
+
+00:00:09,510 --> 00:00:17,120 [speaker_1]
+Está bien. [ruido]
+
+00:00:17,220 --> 00:00:25,720 [speaker_0]
+Eh, [ruido] pero es, ponele, es como que ves-- esto no sé si sirve, en realidad,
+no sé si sirve para vos.
+
+00:00:25,760 --> 00:00:26,910 [speaker_1]
+No, creo que no.
+
+00:00:26,910 --> 00:00:30,060 [speaker_0]
+Un dashboard, porque es como...
+
+00:00:30,120 --> 00:00:31,110 [speaker_1]
+No, no me interesa.
+
+00:00:31,120 --> 00:00:33,920 [speaker_0]
+Para mí, no. Para mí, la co-- la conciliación es lo que-
+
+00:00:33,980 --> 00:00:34,160 [speaker_1]
+Sí
+
+00:00:34,320 --> 00:00:55,660 [speaker_0]
+me interesa. Y es como que después, acá vos podés subir tipo reglas, ¿ves? Acá te dice:
+arrastrar tu, tu extracto bancario, Galicia, Santander, UVA, así...
+
+00:00:55,670 --> 00:00:58,440 [speaker_1]
+O sea, a ver, pará, ahí arrastro el extracto bancario.
+
+00:00:58,480 --> 00:01:00,810 [speaker_0]
+Claro.
+
+00:01:00,810 --> 00:01:01,060 [speaker_1]
+Okey.
+
+00:01:01,080 --> 00:01:05,280 [speaker_0]
+Vos, en teoría, ¿vos, vos qué me habías pasado en los archivos?
+
+00:01:05,319 --> 00:01:06,610 [speaker_1]
+No me acuerdo qué te pasé, a ver.
+
+00:01:06,620 --> 00:01:32,400 [speaker_0]
+Creo que lo tengo. Pará, pará. [ruido] ¡Uy! Eh... Vos me habías pasado:
+regla de concepto de restaurantes, asientos eje BBVA.
+
+00:01:32,440 --> 00:01:35,300 [speaker_1]
+Sí, el de arriba es el extracto.
+
+00:01:37,140 --> 00:01:44,400 [speaker_0]
+Para esto lo voy a esperar... No tengo. No tengo coso.
+
+00:01:44,440 --> 00:01:45,600 [speaker_1]
+Entonces, Exce-Excel.
+
+00:01:45,640 --> 00:02:12,940 [speaker_0]
+No. [pausa] Este, este y este. Este sería después, ¿no? ¿Este es el estado final?
+
+00:02:12,980 --> 00:02:18,269 [speaker_1]
+No, no, esto es el extracto bancario, que después lo paso acá, ¿ves? [carraspeo] Yo lo paso acá.
+
+00:02:18,860 --> 00:02:20,540 [speaker_0]
+Sí, que es este. Este es.
+
+00:02:20,600 --> 00:02:23,160 [speaker_1]
+Exacto, y después tenés el asiento ahí.
+
+00:02:23,200 --> 00:02:27,280 [speaker_0]
+O sea, el, el flujo es [sonido de computadora] cero siete veinticinco, que es el extracto bancario.
+
+00:02:27,340 --> 00:02:28,720 [speaker_1]
+Sí.
+
+00:02:28,820 --> 00:02:30,880 [speaker_0]
+Vos de acá empezás a sacar los conceptos-
+
+00:02:30,940 --> 00:02:31,240 [speaker_1]
+Sí
+
+00:02:31,260 --> 00:02:36,580 [speaker_0]
+... de los restaurantes y acá están, esto es lo que terminás haciendo vos, ¿no?
+
+00:02:36,620 --> 00:02:51,600 [speaker_1]
+Claro, yo de, yo copio del extracto bancario, lo pego acá y después lo traspaso al asiento ese.
+O sea, se pasa solo, o sea, viste, ponés más este, más este. Ves, mirá, poné. Bah,
+
+00:02:51,609 --> 00:02:52,780 [speaker_0]
+¿Esto, la suma?
+
+00:02:52,820 --> 00:02:55,440 [speaker_1]
+Poné la otra hoja, bancos cero uno.
+
+00:02:55,450 --> 00:02:55,450 [speaker_0]
+Ahí está.
+
+00:02:55,460 --> 00:03:02,740 [speaker_1]
+Poné ahí en el debe, ¿ves? Es más Franc--
+la otra hoja y en la que dice intereses y gastos bancarios.
+
+00:03:02,780 --> 00:03:20,900 [speaker_0]
+Ya, okey. [ruido] Y pero, ¿qué, [carraspeo] qué, qué otra cosa? Ponele, ponele, viste,
+tu viejo decía que el pago a AFIP.
+
+00:03:20,960 --> 00:03:21,580 [speaker_1]
+Sí.
+
+00:03:21,600 --> 00:03:21,800 [speaker_0]
+Es-
+
+00:03:21,860 --> 00:03:24,240 [speaker_1]
+Ah, mirá, entrada, entrar a la AFIP.
+
+00:03:24,340 --> 00:03:25,150 [speaker_0]
+Ah, la AFIP, ¿literal?
+
+00:03:25,200 --> 00:03:27,840 [speaker_1]
+Sí. No, pará, entro yo, sí tengo, porque yo tengo la cuenta.
+
+00:03:27,860 --> 00:03:30,120 [speaker_0]
+Ah, bien. Arca, ¿no?
+
+00:03:30,180 --> 00:03:46,000 [speaker_1]
+Sí. [ruido] Igual, a ver, esto también es con... con Banco BBVA y los restaurantes. Después está la-
+
+00:03:46,040 --> 00:03:47,280 [speaker_0]
+No, no, hay que hacerlo con todos los bancos.
+
+00:03:47,360 --> 00:03:47,780 [speaker_1]
+Por eso.
+
+00:03:47,820 --> 00:03:52,600 [speaker_0]
+Sí, sí, sí, sí, eso seguro. Y con otros tipos de negocios.
+
+00:03:52,700 --> 00:03:53,000 [speaker_1]
+Sí.
+
+00:03:53,040 --> 00:03:53,990 [speaker_0]
+No solo restaurantes.
+
+00:03:54,040 --> 00:04:08,440 [speaker_1]
+Yo, eh, estoy haciendo asientos de restaurantes y de coso, así que de las peluquerías.
+Eso después lo, me lo, me tengo que familiarizar, así después te los voy...
+
+00:04:08,480 --> 00:04:10,480 [speaker_0]
+No, no, el sistema tendría que soportar todo.
+
+00:04:10,520 --> 00:04:10,940 [speaker_1]
+Por eso-
+
+00:04:10,980 --> 00:04:11,020 [speaker_0]
+Sí
+
+00:04:11,060 --> 00:04:12,680 [speaker_1]
+... el sistema, digo, no los asientos.
+
+00:04:12,700 --> 00:04:14,460 [speaker_0]
+No, no, obvio, obvio.
+
+00:04:17,420 --> 00:04:22,180 [speaker_1]
+¿Ves? Mirá, en realidad, mi viejo lo saca también de una declaración jurada.
+
+00:04:22,200 --> 00:04:23,660 [speaker_0]
+Pero ¿quien-- de quién es esa cuenta?
+
+00:04:23,720 --> 00:04:38,360 [speaker_1]
+Esta es la cuenta de los restaurantes. ¿Ves? Voy acá. [ruido] Yo lo que hago es esto.
+Este es el CUIL de Julio Welscher, que es el dueño de las sociedades. ¿Ves?
+
+00:04:38,400 --> 00:04:48,020 [speaker_0]
+Pero pará, pará, una consulta. ¿Vos tenés--
+cómo el dueño de los restaurantes o el de los restaurantes? No entiendo ahí.
+
+00:04:48,060 --> 00:04:50,140 [speaker_1]
+Este chabón tiene todas estas sociedades-
+
+00:04:50,240 --> 00:04:50,410 [speaker_0]
+Ah, es
+
+00:04:50,410 --> 00:04:51,250 [speaker_1]
+... que son los restaurantes.
+
+00:04:51,300 --> 00:04:51,480 [speaker_0]
+Okey.
+
+00:04:51,580 --> 00:04:56,540 [speaker_1]
+O sea, ponele, tiene tres restaurantes, es una sociedad, otro tiene cinco restaurantes,
+otra sociedad.
+
+00:04:56,560 --> 00:04:59,160 [speaker_0]
+Claro, pero tenés que entrar a otra cuenta.
+
+00:04:59,200 --> 00:05:05,240 [speaker_1]
+No, acá mismo. O sea, de, lo que cambia es el CUIL, ¿entendés? El CUIL de la sociedad.
+
+00:05:05,280 --> 00:05:09,400 [speaker_0]
+Y pero ponele, [carraspeo] este chabón tiene mu-- eh, tiene muchos restaurantes.
+
+00:05:09,440 --> 00:05:09,800 [speaker_1]
+Sí.
+
+00:05:09,840 --> 00:05:14,440 [speaker_0]
+Si, ocho, otro chabón, pero no tiene nada que ver, tiene otros restaurantes,
+tenés que entrar con otra cuenta.
+
+00:05:14,520 --> 00:05:15,100 [speaker_1]
+Obviamente.
+
+00:05:15,160 --> 00:05:28,580 [speaker_0]
+Ah, veo, veo, veo. Mira, para mí, lo, lo que yo pienso es que se puede hacer que vos cargues...
+Vos primero descargas [ruido] todas las declaraciones juradas y las cargás. Yo, yo-
+
+00:05:28,620 --> 00:05:36,840 [speaker_1]
+A ver, igual, ah, si, si esto es muy difícil, es una pelotudez buscarlo acá. O sea,
+si tengo que cargar nada más en los asientos los pagos, así-
+
+00:05:36,850 --> 00:05:37,060 [speaker_0]
+Sí, sí. Okey
+
+00:05:37,100 --> 00:05:38,980 [speaker_1]
+... No, no tengo problema.
+
+00:05:39,020 --> 00:05:48,570 [speaker_0]
+No, pero si, si vos podés d-descargar todos los, eh, de la,
+las declaraciones juradas y que el siste-- el sistema te permita cargarlas y comparar.
+
+00:05:48,570 --> 00:05:59,880 [speaker_1]
+Pa-para eso le voy a preguntar a mi... ¿dónde dejé eso? Eh,
+le voy a preguntar a mi hijo de dónde saca, porque yo lo saco de acá,
+
+00:06:00,000 --> 00:06:06,299 [speaker_0]
+No, no, igual está bien. [chista] Lo que yo te digo es que si yo tengo que--
+yo entiendo que si yo tengo que entrar a esto, no voy a poder.
+
+00:06:06,656 --> 00:06:12,576 [speaker_1]
+... No sé si existe una, una API de, de Arca o de AFIP.
+
+00:06:12,596 --> 00:06:15,156 [speaker_0]
+AFIP, ah, ta va.
+
+00:06:15,956 --> 00:06:17,156 [speaker_1]
+Le voy a preguntar. Eso.
+
+00:06:20,736 --> 00:06:27,426 [speaker_0]
+[soplido] No sé cómo carajo habrá hecho el bot de... ¿Viste que nos dio el banco? Eso sí lo sacaba.
+
+00:06:28,796 --> 00:06:32,716 [speaker_1]
+Sí, ya sé, pero entonces no sé si bueno, está autorizado, ¿entendés?
+
+00:06:32,756 --> 00:06:43,576 [speaker_0]
+Pero, pero esa no es que lo, eh, lo hicieron unos chabones, no era que lo hizo el Banco Central,
+ese bot, ¿entendés? Yo creo que... mmm, no sé cómo decirte que-
+
+00:06:43,616 --> 00:06:45,676 [speaker_1]
+No, no, no, está bien. O sea, sí, si vos decís que-
+
+00:06:45,696 --> 00:06:48,516 [speaker_0]
+O sea, yo creo que es así como nosotros, ¿entendés?
+
+00:06:48,596 --> 00:07:09,596 [speaker_1]
+Sí, sí, sí. [pausa] Eh, okey, okey. Bueno, igual ahora,
+después cuando terminemos de transcribirle todo, va a entender un poco más.
+
+00:07:23,096 --> 00:07:25,276 [speaker_0]
+O sea, eso por un lado, ¿no?
+
+00:07:25,336 --> 00:07:25,856 [speaker_1]
+Sí.
+
+00:07:25,916 --> 00:07:27,956 [speaker_0]
+Ese, ponele, vos-
+
+00:07:27,996 --> 00:07:29,576 [speaker_1]
+Después hay otro tema.
+
+00:07:29,616 --> 00:07:30,536 [speaker_0]
+Sí, a ver.
+
+00:07:30,616 --> 00:07:55,096 [speaker_1]
+Eh, mirá, andá a la regla de conceptos, que ahí la puse. ¿Ves?
+Restaría saber cómo sacar el impuesto ley veinticinco-- 25.413 normal y computable. Esto es así.
+
+00:07:55,135 --> 00:07:55,286 [speaker_0]
+Sí.
+
+00:07:55,296 --> 00:07:57,316 [speaker_1]
+Creo que se... ¿viste? Se, se-
+
+00:07:57,356 --> 00:08:01,556 [speaker_0]
+Y pero no conviene entonces re-- que vos el extracto me lo mandes como PDF?
+
+00:08:02,296 --> 00:08:03,946 [speaker_1]
+Ah, sí, como vos quieras, no sé.
+
+00:08:04,676 --> 00:08:08,156 [speaker_0]
+Y no, porque esto, esto debe soportar lectura de PDF. Entonces-
+
+00:08:08,196 --> 00:08:08,655 [speaker_1]
+Bueno, sí, sí.
+
+00:08:08,676 --> 00:08:13,186 [speaker_0]
+Permiso, ¿esto es seleccionable? Sí, está bien.
+
+00:08:13,186 --> 00:08:17,436 [speaker_1]
+Sí, te deja. ¿Ves? Es así.
+
+00:08:17,455 --> 00:08:20,895 [speaker_0]
+Igual lo último, pone- ponemos que soporte cualquier cosa, no pasa nada.
+
+00:08:20,936 --> 00:08:24,296 [speaker_1]
+Esto también, igual, si, si no se puede, me lleva un pedo.
+
+00:08:24,305 --> 00:08:25,156 [speaker_0]
+¿Qué cosa?
+
+00:08:25,216 --> 00:08:38,506 [speaker_1]
+Esto mismo. Esto es, esto es la, la impuesto ley veinticinco... esa mierda. Lo que hago es:
+sumo el importe neto retenido de junio, o sea, del... siempre te tira el mes pasado y el mes del,
+
+00:08:38,675 --> 00:08:39,756 [speaker_0]
+Sí.
+
+00:08:39,796 --> 00:08:55,436 [speaker_1]
+Hago así, veintitrés con noventa más el de este mes, el importe neto retenido ,
+menos el crédito de impuesto susceptible a ser, que ese es el impuesto ley 25.413 computable.
+
+00:08:55,446 --> 00:08:57,296 [speaker_0]
+¿Qué significa que sea computable?
+
+00:08:57,336 --> 00:09:01,076 [speaker_1]
+Que se le puede restar al importe retenido. [ruido de objetos] Yo lo entiendo así, no sé.
+
+00:09:01,096 --> 00:09:02,656 [speaker_0]
+Para que te lo devuelvan.
+
+00:09:02,716 --> 00:09:03,096 [speaker_1]
+Sí.
+
+00:09:03,116 --> 00:09:04,796 [speaker_0]
+Okey.
+
+00:09:04,876 --> 00:09:15,716 [speaker_1]
+Eh, menos, bueno, esto que te dije, nuevemil doscientos setenta y cuatro con veintinueve,
+menos cuatrocientos veinte, doscientos ochenta y tres con catorce.
+
+00:09:15,856 --> 00:09:16,696 [speaker_0]
+Sí.
+
+00:09:16,706 --> 00:09:21,636 [speaker_1]
+¿Ves? Esto es el... el normal, digamos.
+
+00:09:21,675 --> 00:09:23,915 [speaker_0]
+Este.
+
+00:09:24,696 --> 00:09:32,376 [speaker_1]
+Este. Y después, el otro lo saco sumando, es-- el computable son estos dos-
+
+00:09:32,396 --> 00:09:32,816 [speaker_0]
+Mhm.
+
+00:09:32,826 --> 00:09:41,536 [speaker_1]
+Cuatro veinte, dos ochenta y tres con catorce más... [ruido de teclado] y lo pongo acá.
+
+00:09:41,716 --> 00:09:56,236 [speaker_0]
+Ta bien, y otra pregunta. Ponele, vos, vos tenés esta, ¿no? Esto, acá. Tipo,
+¿cuál es tu estado final de, de, de la hoja y para qué te sirve?
+
+00:09:56,245 --> 00:09:57,156 [speaker_1]
+¿Cómo, cómo?
+
+00:09:57,196 --> 00:09:59,896 [speaker_0]
+Tipo, vos hacés todo el asiento, que sería esto.
+
+00:09:59,936 --> 00:10:00,396 [speaker_1]
+Sí.
+
+00:10:00,406 --> 00:10:01,196 [speaker_0]
+¿Esto es el final?
+
+00:10:01,236 --> 00:10:03,516 [speaker_1]
+Eso, eso es el final, sí. Estado final.
+
+00:10:03,556 --> 00:10:07,596 [speaker_0]
+De, este, en este caso es cero uno del 2025.
+
+00:10:07,656 --> 00:10:09,216 [speaker_1]
+Claro, eso sería enero del 25.
+
+00:10:09,256 --> 00:10:11,876 [speaker_0]
+Y todo esto lo vas acumulando en una misma hoja.
+
+00:10:12,136 --> 00:10:13,796 [speaker_1]
+En el mismo archivo.
+
+00:10:14,415 --> 00:10:17,056 [speaker_0]
+Okey, ¿y eso es necesario o no?
+
+00:10:18,436 --> 00:10:22,796 [speaker_1]
+O sea, es necesario, el-- esto es necesario, el lado de abajo no hace falta.
+
+00:10:22,836 --> 00:10:26,415 [speaker_0]
+No, no, ya sé que lo otro... Digo, ¿es necesario que tengas todo juntos o no?
+
+00:10:27,256 --> 00:10:27,266 [speaker_1]
+Eh-
+
+00:10:27,736 --> 00:10:30,616 [speaker_0]
+Porque yo lo que imagino es, ponele, vos lo metés en, en el-
+
+00:10:30,656 --> 00:10:32,016 [speaker_1]
+Y tiene que ser por mes.
+
+00:10:32,036 --> 00:10:40,716 [speaker_0]
+No, eso seguro. Vos igual vas a poder ponerle un rango de fechas y listo, eso no importa.
+Vo-vos ponele, acá le das a exportar.
+
+00:10:40,726 --> 00:10:40,816 [speaker_1]
+Sí.
+
+00:10:40,826 --> 00:10:43,816 [speaker_0]
+Y lo exportás, y ponele, ponés febrero.
+
+00:10:43,856 --> 00:10:46,156 [speaker_1]
+Mmm, o sea, pongo el extracto de febrero.
+
+00:10:46,216 --> 00:11:01,425 [speaker_0]
+Sí, y que te, y que-- y exportarlo como febrero, digo. [chista] O sea, vos,
+vos necesitás que sí o sí, el ex-- el, la expor-- porque ponele, [chista] yo pienso, vos tenés esto,
+
+00:11:01,425 --> 00:11:01,776 [speaker_1]
+Emprendimientos Gourmet
+
+00:11:01,915 --> 00:11:11,456 [speaker_0]
+... SRL. Ponele que vos, como usuario,
+puedas registrar a Emprendimientos Gourmet SRL y armarle como algo para él, ¿entendés?
+
+00:11:11,516 --> 00:11:12,156 [speaker_1]
+Sí.
+
+00:11:12,175 --> 00:11:34,596 [speaker_0]
+Entonces, después vos decís: "Bueno,
+yo en Emprendimientos Gourmet tengo todo esto y los junto y los exporto todos juntos",
+
+00:11:34,736 --> 00:11:39,196 [speaker_1]
+Ah, a ver, es [carraspeo] para que quede más ordenado, capaz es mejor que,
+que me quede en un archivo.
+
+00:11:39,216 --> 00:11:40,076 [speaker_0]
+Ta, ta.
+
+00:11:40,096 --> 00:11:46,286 [speaker_1]
+O sea, si me tira, no sé, los doce meses en un archivo, los asientos, sí, ta-- e-eso sería lo ideal,
+creo.
+
+00:11:46,336 --> 00:11:50,816 [speaker_0]
+Okey, y pe-- y después, ponele, vos, vos terminás con esto, ¿no? Tenés el asiento.
+
+00:11:50,876 --> 00:11:51,276 [speaker_1]
+Sí.
+
+00:11:51,336 --> 00:11:53,756 [speaker_0]
+Y después de esto, ¿cuál es el...? ¿Qué hacés con esto?
+
+00:11:53,816 --> 00:12:05,276 [speaker_1]
+Eso yo se lo paso a, al socio de mi viejo, que está con nosotros en el estudio,
+y de ahí va sacando las cosas para hacer el balance [ruido de objeto] de la empresa.
+
+00:12:05,286 --> 00:12:10,055 [speaker_0]
+¿Y eso lo tenés automatizado, no?... o es otra cosa? O eso ya-
+
+00:12:10,065 --> 00:12:14,976 [speaker_1]
+No lo sé, no, no sé cómo hace. O sea, no sé si hay mucho para automatizar ahí.
+
+00:12:15,036 --> 00:12:19,736 [speaker_0]
+Okey, okey. O sea, digamos, el stock, vos-- el stock final debería ser esto.
+
+00:12:19,776 --> 00:12:22,496 [speaker_1]
+Exactamente. Por ahora, sí.
+
+00:12:22,506 --> 00:12:24,815 [speaker_0]
+¿Y tiene que ser en este formato o no importa?
+
+00:12:24,876 --> 00:12:25,695 [speaker_1]
+No, no, no importa.
+
+00:12:25,776 --> 00:12:44,136 [speaker_0]
+Okey, okey. [ruido] Mmm. Estoy pensando si... Porque, ponele, ahora, entonces, para tener,
+para tener en cuenta, vos car-- yo es como que debería registrar los conceptos-
+
+00:12:45,455 --> 00:12:45,465 [speaker_1]
+Mhm
+
+00:12:45,465 --> 00:12:47,915 [speaker_0]
+... de los restaurantes, esto.
+
+00:12:47,996 --> 00:12:51,996 [speaker_1]
+Sí, igual, eh... Ah, bueno, igual lo puedo escribir yo, ¿no?
+
+00:12:52,136 --> 00:12:52,776 [speaker_0]
+Sí, sí.
+
+00:12:52,835 --> 00:12:54,536 [speaker_1]
+A-ayer me puse a hacer asientos-
+
+00:12:54,896 --> 00:12:55,016 [speaker_0]
+Sí.
+
+00:12:55,075 --> 00:13:00,335 [speaker_1]
+Y había un extracto que tenía cuentas que atípicas. Tenía un par de cuentas que no están siempre.
+
+00:13:00,346 --> 00:13:01,575 [speaker_0]
+¿Qué es una cuenta atípica, ponele?
+
+00:13:01,585 --> 00:13:14,006 [speaker_1]
+Eh, por ejemplo, no sé, eh... estas son típicas, están casi siempre en los, eh,
+por no decir siempre, en los extractos. Y capaz hay otra que, no sé, es multa de no sé qué verga.
+
+00:13:14,195 --> 00:13:14,256 [speaker_0]
+Ah
+
+00:13:14,266 --> 00:13:17,636 [speaker_1]
+... atípica, no suele estar.
+
+00:13:17,656 --> 00:13:35,136 [speaker_0]
+Bueno, y vo-vos ponele, to-- esto lo podés, eh... tipo, estas reglas,
+¿hay ciertas que sean tipo [aplauso] cien por ciento las mismas? Porque ponele,
+
+00:13:35,156 --> 00:13:37,215 [speaker_1]
+Sí, eh, y-
+
+00:13:37,256 --> 00:13:44,335 [speaker_0]
+La idea del sistema es que aprenda y, y todo el tiempo esté a-adquiriendo nuevos conocimientos.
+
+00:13:44,356 --> 00:13:57,376 [speaker_1]
+Y, la verdad que no, o sea, creo que no. Además, capaz si es el mismo banco,
+algunas deben coincidir, pero... es como te digo, que te dije el otro día. Por ejemplo, acá, ¿ves?
+
+00:13:58,975 --> 00:13:58,986 [speaker_0]
+Sí.
+
+00:13:59,016 --> 00:14:06,205 [speaker_1]
+Esto, en esta empresa, es proveedores, pero en las peluquerías, eso es sindicato, ¿entendés? [ruido]
+
+00:14:06,256 --> 00:14:15,596 [speaker_0]
+Okey. Y... o sea, vos decís que cuando vos lees del extracto bancario un pago cheque,
+va a ser a la cuenta de proveedores.
+
+00:14:15,636 --> 00:14:16,266 [speaker_1]
+En este caso, sí.
+
+00:14:16,266 --> 00:14:27,075 [speaker_0]
+En restaurantes. Ta, tan. Pero digamos, más o menos es esto, ¿no?
+
+00:14:27,136 --> 00:14:29,055 [speaker_1]
+Sí, sí, la base es eso.
+
+00:14:29,116 --> 00:14:33,795 [speaker_0]
+Tipo vos que veas esto y que te quede todo limpio y lo exportás y listo.
+
+00:14:33,856 --> 00:14:35,315 [speaker_1]
+Sí.
+
+00:14:35,396 --> 00:14:36,406 [speaker_0]
+Okey.
+
+00:14:39,636 --> 00:14:44,756 [speaker_1]
+Y bueno, si se puede hacer lo que te dije del impuesto este y... la AFIP, muchísimo mejor.
+
+00:14:44,815 --> 00:14:46,305 [speaker_0]
+No, eso, eso obvio, obvio.
+
+00:14:46,315 --> 00:14:49,805 [speaker_1]
+Pero bueno, no sé cómo, yo no tengo ni idea cómo podría hacer.
+
+00:14:49,815 --> 00:15:07,536 [speaker_0]
+No, no, igual, según esto que estoy viendo, ahí se ve manual para el desarrollador y... hay como,
+me dice: esta op-- esto es una consulta, que sería un get. Dice:
+
+00:15:07,555 --> 00:15:08,136 [speaker_1]
+Declaración jurada
+
+00:15:08,156 --> 00:15:29,376 [speaker_0]
+... Declaración jurada, que se intentó presentar, fue procesada correctamente.
+Y vos le tenés que pasar el CUIT del contribuyente. Bueno, no sé, una--
+
+00:15:29,396 --> 00:15:29,496 [speaker_1]
+¿Eh? ¿Sí?
+
+00:15:29,516 --> 00:15:34,396 [speaker_0]
+Que la AFIP tenga un do-- una documentación así, es un desastre.
+
+00:15:34,435 --> 00:15:35,876 [speaker_1]
+Ya el sistema es medio poronga.
+
+00:15:35,896 --> 00:15:37,315 [speaker_0]
+No, es una verga.
+
+00:15:37,356 --> 00:15:38,616 [speaker_1]
+Reantiguo, eh, boludo.
+
+00:15:38,626 --> 00:15:50,915 [speaker_0]
+¿Qué es esto, amigo? No puede. [se burla] No está desprolijo, boludo. Mira esto, 2010.
+
+00:15:50,935 --> 00:15:53,636 [speaker_1]
+[se ríe] Y lo último, 2016.
+
+00:15:53,695 --> 00:16:04,656 [speaker_0]
+Terrible. Eh... estoy pensando a ver qué más.
+
+00:16:07,215 --> 00:16:10,336 [speaker_1]
+Ah, y yo lo que hago con... también te lo puse ahí-
+
+00:16:10,516 --> 00:16:10,805 [speaker_0]
+Mhm.
+
+00:16:10,805 --> 00:16:18,175 [speaker_1]
+Acá. Es que yo lo, las tarjetas de crédito, las saco por diferencia, ¿entendés?
+
+00:16:19,975 --> 00:16:20,475 [speaker_0]
+¿Cómo sería eso?
+
+00:16:20,485 --> 00:16:28,016 [speaker_1]
+O sea, no las paso acá. O sea, sí, en realidad sí las paso acá, pero van como dife-- por diferencia.
+[ruido] O sea, saco todos los conceptos-
+
+00:16:28,055 --> 00:16:28,435 [speaker_0]
+Y recién después-
+
+00:16:28,455 --> 00:16:31,096 [speaker_1]
+Paso todos los conceptos, excepto las tarjetas de crédito, ¿entendés?
+
+00:16:31,106 --> 00:16:32,376 [speaker_0]
+¿Y eso por qué?
+
+00:16:32,415 --> 00:16:44,995 [speaker_1]
+Porque así lo pasaba... En realidad, era lo mismo, pero no es ca-- bueno, yo te comento,
+capaz te sirve, no sé. Eh, pero sí, se puede pasar también [ruido] así como lo puse.
+
+00:16:45,016 --> 00:16:45,545 [speaker_0]
+Okey.
+
+00:16:47,435 --> 00:16:51,715 [speaker_1]
+No tiene que ser exacto, porque lo, lo dibujan el balance a veces.
+
+00:16:51,756 --> 00:16:52,086 [speaker_0]
+No, no, si-
+
+00:16:52,086 --> 00:16:56,106 [speaker_1]
+Pero tiene, tiene que haber cosas, obviamente.
+
+00:16:56,136 --> 00:17:07,586 [speaker_0]
+No, yo te-- yo digo, porque... si, si la idea es que el sistema sea como general para las personas,
+y por ahí hay algo que lo hacés vos así.
+
+00:17:07,636 --> 00:17:08,556 [speaker_1]
+Ah, sí, sí, claro.
+
+00:17:08,596 --> 00:17:09,596 [speaker_0]
+La idea es que en realidad-
+
+00:17:09,616 --> 00:17:10,775 [speaker_1]
+Sí, una estandarización.
+
+00:17:10,795 --> 00:17:11,255 [speaker_0]
+Claro.
+
+00:17:11,275 --> 00:17:13,556 [speaker_1]
+No, no tan específico. Está bien.
+
+00:17:13,596 --> 00:17:16,616 [speaker_0]
+Y, y hay algo, ponele, que, que vos ha-- no sé-
+
+00:17:16,656 --> 00:17:20,955 [speaker_1]
+Igual, la mayoría de gente debe ser así, medio a-- lo hacen medio a ojo.
+
+00:17:20,975 --> 00:17:26,715 [speaker_0]
+No, igual, si est-- si esto va a quedar automatizado, en la te-- en teoría,
+ya debería automatizarse y listo.
+
+00:17:26,735 --> 00:17:28,036 [speaker_1]
+Sí.
+
+00:17:28,076 --> 00:17:39,856 [speaker_0]
+Lo que yo te iba a preguntar es, eh... tipo, ¿no hay algo como que vos en el medio hagas, no sé,
+como evadir algo?
+
+00:17:39,976 --> 00:17:40,336 [speaker_1]
+Eh-
+
+00:17:40,376 --> 00:17:42,596 [speaker_0]
+O no es en e-- no es a, en esta agencia.
+
+00:17:42,606 --> 00:17:42,936 [speaker_1]
+El balance, no.
+
+00:17:42,995 --> 00:18:07,556 [speaker_0]
+Okey, okey. No, no, yo te pregunto porque si hay algo que no sea estandarizado,
+ya ahí hay que ver cómo hacerlo, ¿entendés? Porque si hay que personalizar algo... no sé, estoy,
+
+00:18:07,616 --> 00:18:16,012 [speaker_1]
+No, no.... Pero ves, mirá. ¿Ves que algunas cuentas están en cero?
+Eso es porque son cuentas atípicas, ponele.
+
+00:18:16,032 --> 00:18:17,652 [speaker_0]
+Y, ¿pero por qué están?
+
+00:18:17,831 --> 00:18:18,722 [speaker_1]
+No hace falta que estén.
+
+00:18:18,792 --> 00:18:19,322 [speaker_0]
+Ah, okey, okey.
+
+00:18:19,331 --> 00:18:20,872 [speaker_1]
+Están al-- porque sí.
+
+00:18:20,892 --> 00:18:21,252 [speaker_0]
+Porque yo-
+
+00:18:21,262 --> 00:18:23,772 [speaker_1]
+No hace falta que estén, no las saqué de pajero.
+
+00:18:23,812 --> 00:18:25,112 [speaker_0]
+Claro, porque copiaste y pegaste.
+
+00:18:25,132 --> 00:18:25,502 [speaker_1]
+Claro.
+
+00:18:25,532 --> 00:18:32,252 [speaker_0]
+Okey, okey. [suspirando] Claro, ves.
+
+00:18:32,272 --> 00:18:39,712 [speaker_1]
+Lo que, lo que yo, a ver, pienso es, eh...
+Capaz hay una cuenta que no aparece nunca y una vez aparece-
+
+00:18:39,792 --> 00:18:40,312 [speaker_0]
+Sí.
+
+00:18:40,322 --> 00:18:45,132 [speaker_1]
+¿Cómo lo va a escupir el s-- el programa, digamos?
+
+00:18:45,172 --> 00:18:45,782 [speaker_0]
+No, y la, y la-
+
+00:18:45,782 --> 00:18:47,812 [speaker_1]
+Tengo que realizar el extracto y ahí lo configuro.
+
+00:18:47,872 --> 00:19:02,851 [speaker_0]
+La idea es que vea... Claro, sí. O sea,
+va a ver todos los conceptos que vos usaste en tu cuenta y va a ver con cuál más se relaciona.
+
+00:19:02,872 --> 00:19:08,372 [speaker_1]
+Ah, entonces, si, si el sistema encuentra que no hay, es una cuenta atípica, digamos,
+te va a sugerir.
+
+00:19:08,632 --> 00:19:12,372 [speaker_0]
+Claro, te va a sugerir, pero probablemente la tengas que cargar vos, dice.
+
+00:19:12,392 --> 00:19:13,172 [speaker_1]
+Está bueno eso.
+
+00:19:13,212 --> 00:19:34,601 [speaker_0]
+Sí, sí, obvio. [ruido] No sé, estoy, estoy pensando si hay algo más, pero... [chista] O sea,
+la realidad es que no es, no es tan-- no es gran cosa, en realidad. O sea, es,
+
+00:19:34,601 --> 00:19:36,112 [speaker_1]
+Sí, sí.
+
+00:19:36,172 --> 00:19:50,892 [speaker_0]
+Y bueno, en, en todo caso, también, además de, de, de cargar el extracto, si es que no se puede co--
+eh, traerlo a AFIP, cargarle todas las declaraciones juradas, ¿no?
+
+00:19:50,932 --> 00:19:58,302 [speaker_1]
+Claro, si no, pasa, tengo que ver, ehm... [ruido de motor]
+
+00:19:58,302 --> 00:20:04,522 [speaker_0]
+Igual para mí se va a poder, ¿eh? Lo de conectarse a AFIP, pero por los dos, tipo,
+estoy tratando de, de comentar todo así-
+
+00:20:04,532 --> 00:20:04,662 [speaker_1]
+Sí, sí
+
+00:20:04,662 --> 00:20:07,932 [speaker_0]
+... en el contexto.
+
+00:20:08,002 --> 00:20:22,772 [speaker_1]
+[ruido] ¿Ves? Y hay algunas, por ejemplo, esto, C, I, J, P, son cargas sociales.
+
+00:20:22,792 --> 00:20:24,312 [speaker_0]
+¿Y eso?
+
+00:20:25,792 --> 00:20:26,632 [speaker_1]
+¿Cómo y eso?
+
+00:20:26,652 --> 00:20:29,272 [speaker_0]
+Y eso que tie-- entonces, ¿no es un pago AFIP o sí?
+
+00:20:29,292 --> 00:20:30,371 [speaker_1]
+Sí, es un pago AFIP.
+
+00:20:30,392 --> 00:20:33,351 [speaker_0]
+Bueno, pero... no importa, está dentro de lo mismo.
+
+00:20:33,392 --> 00:20:38,072 [speaker_1]
+Sí, bueno, este IVA. Y [chista] pasa que-
+
+00:20:38,092 --> 00:20:38,552 [speaker_0]
+Porque a ver, pará-
+
+00:20:38,561 --> 00:20:40,612 [speaker_1]
+O sea, lo tendría que leer del PDF.
+
+00:20:40,672 --> 00:20:40,882 [speaker_0]
+Sí, sí, obvio.
+
+00:20:41,012 --> 00:20:54,092 [speaker_1]
+Es como decís, eh, porque ves, acá descargo el PDF. Este me dice Arca,
+entonces yo no sé qué es esto y tengo que entrar al PDF, que es este, y ver qué es. ¿Qué es esto?
+
+00:20:54,692 --> 00:20:55,392 [speaker_0]
+¿Y eso cómo?
+
+00:20:55,412 --> 00:21:02,212 [speaker_1]
+De, de IVA, o sea, que es una, que pagan el IVA tarde, es esto. Ve,
+esta es una cuenta recontatípica.
+
+00:21:02,312 --> 00:21:03,292 [speaker_0]
+Recontatípica.
+
+00:21:03,331 --> 00:21:03,632 [speaker_1]
+Sí.
+
+00:21:03,642 --> 00:21:06,952 [speaker_0]
+¿Y eso cómo-- y esa a cuenta, a qué cuenta la pasás?
+
+00:21:06,992 --> 00:21:14,632 [speaker_1]
+Intereses resarcitorios de, de IVA, le puse. Fijate, está en el último mes, eso. Doce, veinte,
+veinticinco.
+
+00:21:14,692 --> 00:21:15,392 [speaker_0]
+Doce.
+
+00:21:15,452 --> 00:21:17,482 [speaker_1]
+Ah, no, pará que te pasé un antiguo, ya está.
+
+00:21:17,492 --> 00:21:18,612 [speaker_0]
+Sí, sí, sí.
+
+00:21:20,202 --> 00:21:24,212 [speaker_1]
+¿Ves? Le puse... Intereses resarcitorios AFIP.
+
+00:21:24,272 --> 00:21:26,092 [speaker_0]
+No, pero en el, en el banco-
+
+00:21:26,132 --> 00:21:26,222 [speaker_1]
+Asiento
+
+00:21:26,222 --> 00:21:27,452 [speaker_0]
+... ahí no está, ¿o sí?
+
+00:21:27,472 --> 00:21:28,542 [speaker_1]
+¿En el banco?
+
+00:21:28,572 --> 00:21:30,192 [speaker_0]
+Claro, en el asiento.
+
+00:21:31,612 --> 00:21:31,902 [speaker_1]
+Sí, este.
+
+00:21:31,912 --> 00:21:32,812 [speaker_0]
+Ah, sí, ahí está.
+
+00:21:32,851 --> 00:21:34,772 [speaker_1]
+Esto es pago AFIP, también.
+
+00:21:34,812 --> 00:21:38,272 [speaker_0]
+Sí, sí, está bien, está bien. Estoy, estoy-- quiero ver en el extracto cómo aparece.
+
+00:21:40,272 --> 00:21:46,052 [speaker_1]
+Pago AFIP. Pero es-- en ese no te va a aparecer.
+
+00:21:46,072 --> 00:21:46,932 [speaker_0]
+Pagos AFIP, acá.
+
+00:21:46,952 --> 00:21:50,132 [speaker_1]
+Pero, sí, pero en ese no, no está, porque es de julio.
+
+00:21:51,552 --> 00:21:53,052 [speaker_0]
+¿Y qué tiene?
+
+00:21:54,172 --> 00:21:59,422 [speaker_1]
+¿Cómo que tiene? No te va a aparecer el mismo monto, porque es de julio, ese...
+Yo el que te mostré es de diciembre.
+
+00:21:59,432 --> 00:22:02,851 [speaker_0]
+No, no, ya sé, quiero ver cómo aparece. ¿Esto es AFIP DGI?
+
+00:22:02,871 --> 00:22:11,371 [speaker_1]
+Ese AFIP DGI son planes de pago de AFIP. Que ojo, eh, eso te iba a decir, me olvidé de decirte.
+¿Esto ves que son todos débitos automáticos?
+
+00:22:11,432 --> 00:22:11,992 [speaker_0]
+Sí.
+
+00:22:12,032 --> 00:22:20,552 [speaker_1]
+Subí, andá a la parte del extracto. Acá también, acá también están,
+así que hay que tener ojo con eso, porque te lo duplica. Pero mirá, bajá.
+
+00:22:21,132 --> 00:22:22,992 [speaker_0]
+Y, pero entonces, esto no hay que tenerlo en cuenta, ¿o sí?
+
+00:22:23,012 --> 00:22:24,672 [speaker_1]
+Sí, es-esto es lo que hay que tener en cuenta-
+
+00:22:24,682 --> 00:22:24,682 [speaker_0]
+Ah.
+
+00:22:24,692 --> 00:22:29,691 [speaker_1]
+Porque mirá, ahí dice Sist, Pro-- no sé, Cablevisión, Más Si existen, esos proveedores.
+
+00:22:29,751 --> 00:22:30,212 [speaker_0]
+Sí.
+
+00:22:30,232 --> 00:22:31,972 [speaker_1]
+Y están en débito automático.
+
+00:22:31,992 --> 00:22:32,081 [speaker_0]
+O sea, eso no-
+
+00:22:32,092 --> 00:22:39,792 [speaker_1]
+Y después, AFIP DGI, eso es, eh, planes de pago de AFIP, y los ponen esos, bueno,
+esos son proveedores.
+
+00:22:40,272 --> 00:22:43,871 [speaker_0]
+Pe-pero entonces, ¿cuáles habría que tener en cuenta ahí? Los de AFIP.
+
+00:22:44,012 --> 00:22:51,422 [speaker_1]
+Eh... Yo, en realidad, va, sí, sí, sí, los de AFIP o... Pasa, ¿sabés lo que pasa? Como te digo,
+o sea, capaz-
+
+00:22:51,432 --> 00:22:54,422 [speaker_0]
+Y no, pero en todo caso, tiene que comparar.
+
+00:22:54,452 --> 00:23:02,371 [speaker_1]
+Capaz, este, ¿ves? Acá también está el... lo iba a filtrar. ¿Dónde está el...?
+
+00:23:02,412 --> 00:23:18,232 [speaker_0]
+No, pero si, si ve, agarra, esto lo limpia todo, ¿no? Va a un... a una fecha y un monto, y, y hay,
+y está todo duplicado, si está duplicado en una fecha y un monto, es porque está mal.
+
+00:23:18,252 --> 00:23:19,722 [speaker_1]
+Claro, no, ehm...
+
+00:23:19,732 --> 00:23:20,572 [speaker_0]
+Es muy difícil.
+
+00:23:21,851 --> 00:23:28,302 [speaker_1]
+Depende qué cuenta, pero justo para débito, esto, débito, no. O sea, va, no sé, [aplauso] eh,
+hay veces que se duplica el mismo número.
+
+00:23:28,392 --> 00:23:29,492 [speaker_0]
+O, o de última, ponele-
+
+00:23:29,512 --> 00:23:34,802 [speaker_1]
+Pero si se duplica el mismo número, es el mismo concepto, ¿entendés? Es el, es, eh...
+
+00:23:34,812 --> 00:23:35,132 [speaker_0]
+Claro.
+
+00:23:35,182 --> 00:23:38,272 [speaker_1]
+O es el plan de AFIP o es, eh, proveedores.
+
+00:23:38,312 --> 00:23:54,712 [speaker_0]
+No, no, o si no, que ponele esto, que me divida. [ruido] Esto, o sea, ¿esto qué serían? ¿Cuentas?
+No entiendo. ¿Cuál es la diferencia entre débitos y lo que está arriba? Porque, o sea,
+
+00:23:55,432 --> 00:24:03,032 [speaker_1]
+Esas son otras cuentas, eh, pero, pero mirá, subí, volvé, eh, filtrá y buscá los débitos.
+
+00:24:04,712 --> 00:24:05,042 [speaker_0]
+A ver.
+
+00:24:05,052 --> 00:24:07,992 [speaker_1]
+No, pero buscá en el filtro del, del Excel.
+
+00:24:08,012 --> 00:24:11,472 [speaker_0]
+Ah. Acá arriba.
+
+00:24:11,552 --> 00:24:14,871 [speaker_1]
+Sí, ahí, no, en ese no, la cuenta.
+
+00:24:14,932 --> 00:24:15,922 [speaker_0]
+Acá.
+
+00:24:15,922 --> 00:24:17,748 [speaker_1]
+Acá....¿Este?
+
+00:24:17,768 --> 00:24:18,628 [speaker_0]
+Ese.
+
+00:24:18,648 --> 00:24:26,008 [speaker_1]
+Débito directo, pone. O débito. Ese, débito directo.
+
+00:24:26,108 --> 00:24:28,008 [speaker_0]
+¿Qué te vas a acordás vos?
+
+00:24:28,888 --> 00:24:32,348 [speaker_1]
+No te dejaaa, pará, lo busco yo que es más fácil acá en el Excel.
+
+00:24:32,408 --> 00:24:34,168 [speaker_0]
+Dale.
+
+00:24:34,178 --> 00:24:56,388 [speaker_1]
+[ruido] Qué pelotudo, Gabriel. Ah, no, está bien. [ruido del teclado] ¿Ves? Mirá.
+
+00:24:57,768 --> 00:25:00,528 [speaker_0]
+[ruido] A ver.
+
+00:25:01,428 --> 00:25:02,548 [speaker_1]
+¿Ves? Débito directo.
+
+00:25:02,608 --> 00:25:04,088 [speaker_0]
+Sí, y si vos bajás abajo-
+
+00:25:04,108 --> 00:25:05,928 [speaker_1]
+Pero yo esto no sé qué es, ¿entendés?
+
+00:25:05,968 --> 00:25:06,988 [speaker_0]
+Ni-- no, ya sé.
+
+00:25:07,008 --> 00:25:10,268 [speaker_1]
+No sé qué carajo es esto. Entonces, ¿qué hago? Me fijo acá.
+
+00:25:10,428 --> 00:25:11,048 [speaker_0]
+Comparás.
+
+00:25:11,408 --> 00:25:13,417 [speaker_1]
+¿Qué es esto? ¿Esto, ves?
+
+00:25:13,588 --> 00:25:14,568 [speaker_0]
+Ciento setenta y cuatro.
+
+00:25:14,588 --> 00:25:17,768 [speaker_1]
+Ciento setenta y cuatro, ¿ves? Está acá.
+
+00:25:17,808 --> 00:25:18,268 [speaker_0]
+Es un débito.
+
+00:25:18,277 --> 00:25:26,768 [speaker_1]
+¿Qué dice acá? De esto es... bueno, esto me doy cuenta, esto es proveedores, lo manda proveedores,
+porque es un pago que le hacen, no sé, es proveedores.
+
+00:25:26,848 --> 00:25:28,128 [speaker_0]
+Okey, okey.
+
+00:25:29,088 --> 00:25:37,528 [speaker_1]
+Y también el mismo débito directo que están acá, están los planes de pago de AFIP. ¿Ves?
+
+00:25:37,608 --> 00:25:43,068 [speaker_0]
+Sí, sí, pero esos son los pagos AFIP, ¿no?
+
+00:25:43,108 --> 00:25:44,288 [speaker_1]
+No, esto es otra cosa.
+
+00:25:44,298 --> 00:25:45,028 [speaker_0]
+¿Qué es?
+
+00:25:45,068 --> 00:25:56,388 [speaker_1]
+Planes de pago AFIP, queee no tiene nada que ver con los pagos AFIP. Esto,
+los planes de pagos AFIP son, ponele, que... no sé, te digo una boludez,
+
+00:25:56,447 --> 00:25:56,848 [speaker_0]
+Sí.
+
+00:25:56,868 --> 00:26:06,108 [speaker_1]
+Y no lo pagaron. ¿Y qué hace? La AFIP te puede,
+te puede dar un plan de pago para que vos ya lo pagás en cuotas, ¿eh?
+
+00:26:06,148 --> 00:26:07,868 [speaker_0]
+Okey.
+
+00:26:07,908 --> 00:26:12,318 [speaker_1]
+Y los otros pagos AFIP es los pagos mensuales de IVA o-
+
+00:26:12,348 --> 00:26:15,368 [speaker_0]
+Pero esos sí, sí aparecen arriba.
+
+00:26:15,447 --> 00:26:19,068 [speaker_1]
+Sí, aparecen acá, [carraspeo] es, ah, por acá están.
+
+00:26:19,088 --> 00:26:21,928 [speaker_0]
+Y a ver cómo, cómo aparecería? Eso quiero saber.
+
+00:26:21,968 --> 00:26:22,828 [speaker_1]
+Estos son, boludo.
+
+00:26:22,838 --> 00:26:23,648 [speaker_0]
+¿Débito directo?
+
+00:26:23,687 --> 00:26:24,278 [speaker_1]
+Sí, por eso-
+
+00:26:24,278 --> 00:26:24,358 [speaker_0]
+¡Ah!
+
+00:26:24,358 --> 00:26:28,628 [speaker_1]
+...te digo que yo los busco acá abajo, porque no sé qué es esto,
+no sé si es proveedores o el plan de pago de AFIP.
+
+00:26:28,688 --> 00:26:34,568 [speaker_0]
+No, no, pero yo no te digo el plan de pago de AFIP, digo los otros, los que,
+los que yo tendría que ir a buscar la declaración jurada.
+
+00:26:34,648 --> 00:26:35,578 [speaker_1]
+Ah, los pagos AFIP, ese.
+
+00:26:35,588 --> 00:26:36,328 [speaker_0]
+Claro, eso.
+
+00:26:36,388 --> 00:26:37,528 [speaker_1]
+Son dos cosas distintas, esas, ¿eh?
+
+00:26:37,538 --> 00:26:44,578 [speaker_0]
+Sí, sí, sí, eso, eso quiero saber. Pagos AFIP, ahí está.
+
+00:26:44,578 --> 00:26:44,908 [speaker_1]
+Estos.
+
+00:26:45,828 --> 00:26:46,847 [speaker_0]
+¿Trece palos, eso?
+
+00:26:47,768 --> 00:26:48,888 [speaker_1]
+Sí.
+
+00:26:48,928 --> 00:26:51,328 [speaker_0]
+Ah, igual no hay tantos, tres veces en un mes.
+
+00:26:51,388 --> 00:26:53,368 [speaker_1]
+Son... sí, son dos, tres.
+
+00:26:53,408 --> 00:26:54,348 [speaker_0]
+Okey, okey.
+
+00:26:54,368 --> 00:27:06,188 [speaker_1]
+Por mes. O, o esto es IVA, o es cargas sociales, o como te dije, a ve-- a veces es medio atípico,
+que no sé, como te mostré, los intereses resarcitorios.
+
+00:27:06,248 --> 00:27:06,478 [speaker_0]
+Okey.
+
+00:27:06,478 --> 00:27:09,508 [speaker_1]
+Pagar el IVA tarde, por ejemplo.
+
+00:27:09,548 --> 00:27:11,217 [speaker_0]
+Sí, sí, sí, está bien, está bien.
+
+00:27:11,248 --> 00:27:15,428 [speaker_1]
+O moratorias, cosas así.
+
+00:27:20,268 --> 00:27:22,428 [speaker_0]
+¿Algo más que te acuerdes?
+
+00:27:22,548 --> 00:27:27,848 [speaker_1]
+Eeeh, a ver, acá yo he anotado todo.
+
+00:27:27,868 --> 00:27:36,608 [speaker_0]
+Fijate, fijate. [risas] Este es, es el peluquero.
+
+00:27:40,408 --> 00:27:45,848 [speaker_1]
+[risas] Ah, esto también, los sindicatos.
+
+00:27:47,048 --> 00:27:49,157 [speaker_0]
+Lo... ¿ese pago BTOB y B?
+
+00:27:49,428 --> 00:28:06,528 [speaker_1]
+Sí, pero mirá, entrá. Esto también lo anoté. Esto es sindicato, pero,
+pero a veces conviene sacarlo del resumen de debajo. ¿Qué quise decir con esto de acá? [ruido] ¿Ves?
+
+00:28:06,538 --> 00:28:07,408 [speaker_0]
+¿Dónde?
+
+00:28:07,447 --> 00:28:08,608 [speaker_1]
+Ahí.
+
+00:28:08,668 --> 00:28:08,928 [speaker_0]
+Y-
+
+00:28:08,947 --> 00:28:11,308 [speaker_1]
+Esto, esto es del sindicato, pero también-
+
+00:28:11,328 --> 00:28:11,877 [speaker_0]
+¿Cómo sabés?
+
+00:28:12,947 --> 00:28:16,447 [speaker_1]
+Porque dice Unión de Trabajadores, esto es UTGRA, Unión de Trabajadores-
+
+00:28:16,458 --> 00:28:16,458 [speaker_0]
+Ah
+
+00:28:16,458 --> 00:28:20,648 [speaker_1]
+... de Hoteles, no sé qué, Gastronómicos, no sé qué poronga más era.
+
+00:28:20,708 --> 00:28:23,908 [speaker_0]
+Y, pero perdón, ¿eh? ¿Por qué aparece un poquito más abajo?
+
+00:28:23,928 --> 00:28:26,208 [speaker_1]
+Porque esto so-- es como el detalle del detalle, ¿entendés?
+
+00:28:26,248 --> 00:28:33,378 [speaker_0]
+Sí, pero ¿por qué, ponele, acá ves que tenés esto hasta acá y acá tenés enviadas, aceptadas,
+estas cu-- estas pocas?
+
+00:28:33,388 --> 00:28:34,008 [speaker_1]
+No, no tengo idea.
+
+00:28:34,028 --> 00:28:41,228 [speaker_0]
+Ah, okey, okey. Por ahí, no, digo, distinguen en algo, pero... eeeh...
+
+00:28:41,248 --> 00:28:43,048 [speaker_1]
+Igual, todo esto son tarjetas de crédito.
+
+00:28:43,108 --> 00:28:43,848 [speaker_0]
+Ta bien, ta bien.
+
+00:28:43,888 --> 00:28:44,668 [speaker_1]
+Estas.
+
+00:28:44,728 --> 00:28:48,088 [speaker_0]
+Y entonces, ¿vos decías lo del sindicato?
+
+00:28:48,128 --> 00:29:12,388 [speaker_1]
+Que lo del sindicato yo lo saco acá, porque a veces a mí me dijeron que lo pase así, porque se pasa,
+está como duplicado en el extracto, no sé por qué. Está bien en el extracto,
+
+00:29:12,467 --> 00:29:13,588 [speaker_0]
+Sí.
+
+00:29:13,688 --> 00:29:15,717 [speaker_1]
+Eeeh, está solo una vez.
+
+00:29:15,848 --> 00:29:18,268 [speaker_0]
+Sí. ¿Y qué tiene?
+
+00:29:18,288 --> 00:29:22,478 [speaker_1]
+Que acá está dos veces. A mí me dijeron que lo pase una vez, debe estar en otro lado.
+
+00:29:22,548 --> 00:29:23,947 [speaker_0]
+Ah, bueno, pero el monto coincide.
+
+00:29:23,988 --> 00:29:26,528 [speaker_1]
+El monto coincide, pero es una sola vez, hay que pasarlo.
+
+00:29:26,568 --> 00:29:34,808 [speaker_0]
+No, eso, eso es obvio, pero si el monto coincide... no,
+es como que queda en cero si yo comparo los dos, ¿entendés?
+
+00:29:34,818 --> 00:29:34,818 [speaker_1]
+Sí.
+
+00:29:34,828 --> 00:29:35,548 [speaker_0]
+No tiene sentido.
+
+00:29:35,558 --> 00:29:39,648 [speaker_1]
+[chasquido] O sea, yo lo que te digo que... yo lo saco de acá, ¿entendés?
+
+00:29:39,688 --> 00:29:40,368 [speaker_0]
+Sí, sí, sí, está bien.
+
+00:29:40,378 --> 00:30:06,947 [speaker_1]
+Pero también hay veces, eeeh, que los pagos del sindicato están en transferencias, y se-- así en,
+en... El otro día lo saqué, que es esta cuenta: transferencia... No, pero este, este,
+
+00:30:13,708 --> 00:30:17,947 [speaker_0]
+Igual, ahora, cuando terminemos de-
+
+00:30:17,988 --> 00:30:21,328 [speaker_1]
+Este, parece que es. Ves, este.
+
+00:30:23,272 --> 00:30:25,412 [speaker_0]
+... Ah, encima está la firma, mirá.
+
+00:30:26,312 --> 00:30:27,792 [speaker_1]
+Sí, la del banco.
+
+00:30:27,892 --> 00:30:29,192 [speaker_0]
+Ah.
+
+00:30:29,572 --> 00:30:34,672 [speaker_1]
+Con e- estos números coincide, para que sea en el sindicato, me di cuenta.
+
+00:30:34,712 --> 00:30:37,832 [speaker_0]
+Bueno, pero igual no sé, habría que verlo.
+
+00:30:38,452 --> 00:30:40,412 [speaker_1]
+Porque como yo lo saco de acá-
+
+00:30:40,472 --> 00:30:43,732 [speaker_0]
+No, pero eso debe ser porque la cuenta del sindicato es esa.
+
+00:30:43,772 --> 00:30:44,232 [speaker_1]
+Sí, sí.
+
+00:30:44,272 --> 00:30:48,152 [speaker_0]
+No, no, pero eso no, no sé si es una forma de, de compararlo.
+
+00:30:48,192 --> 00:30:53,532 [speaker_1]
+No, no, pero justamente yo lo que hago-- o sea,
+primero yo paso todas las transferencias que están en el débito-
+
+00:30:53,572 --> 00:30:54,912 [speaker_0]
+Sí.
+
+00:30:54,952 --> 00:31:10,192 [speaker_1]
+Que pagan los restoranes. Y después, ¿qué hago? Busco los sindicatos acá. Enviadas, aceptadas,
+no sé por qué están, la verdad, no sé por qué están ahí. ¿Ves? Acá está.
+
+00:31:11,072 --> 00:31:11,362 [speaker_0]
+Mhm.
+
+00:31:11,372 --> 00:31:21,132 [speaker_1]
+Entonces, ¿qué hago? Como le voy a pasar transferencias, las transferencias en débito, ¿qué son?
+Son proveedores. Después vuel-- busco en proveedores este monto, porque si no lo estoy duplicando,
+
+00:31:21,592 --> 00:31:22,532 [speaker_0]
+Sí, sí, sí.
+
+00:31:22,542 --> 00:31:27,492 [speaker_1]
+Porque esto es sindicato, y entonces lo borro y, bueno, lo paso a sindicato.
+
+00:31:27,532 --> 00:31:28,412 [speaker_0]
+Okey.
+
+00:31:28,452 --> 00:31:31,452 [speaker_1]
+Acá, este, Gastronomi, dice, de gastronómicos.
+
+00:31:31,492 --> 00:31:31,952 [speaker_0]
+Okey.
+
+00:31:31,962 --> 00:31:41,122 [speaker_1]
+[ruido] Igual capaz hay, eh, ahí debe haber una manera más fácil, pero bueno, me enseñaron así.
+
+00:31:41,122 --> 00:31:51,172 [speaker_0]
+No, no, igual está bien, está bien. Es como que l-la idea del sistema es que vos al...
+todo el tiempo, al cargarle más cosas, va a empezar a reconocerte cómo trabajás vos con tu cuenta-
+
+00:31:51,192 --> 00:31:51,222 [speaker_1]
+Mhm
+
+00:31:51,222 --> 00:32:09,092 [speaker_0]
+... ¿entendés? Ehm, no sé si algo más, si no, yo le-- l-la idea es que sería, ahora igual,
+ahora lo hacemos, ¿no? Pero pasarle toda la transcripción de lo que hablamos.
+
+00:32:09,272 --> 00:32:09,282 [speaker_1]
+Sí
+
+00:32:09,282 --> 00:32:18,142 [speaker_0]
+... para saberlo. Y, eh, le voy a decir si me,
+si me puede hacer también más preguntas para tener más contexto,
+
+00:32:18,172 --> 00:32:18,972 [speaker_1]
+Sí.

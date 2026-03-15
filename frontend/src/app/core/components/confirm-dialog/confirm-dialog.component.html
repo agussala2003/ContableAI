@@ -1,0 +1,71 @@
+@if (svc.isVisible()) {
+  <!-- Backdrop -->
+  <div
+    data-backdrop="true"
+    (click)="onBackdropClick($event)"
+    class="fixed inset-0 z-[9000] flex items-center justify-center p-4"
+    [class.animate-backdrop-in]="!isLeaving()"
+    [class.animate-backdrop-out]="isLeaving()"
+    style="background: rgba(15,23,42,0.55); backdrop-filter: blur(2px);"
+  >
+    <!-- Dialog panel -->
+    <div
+      role="dialog"
+      aria-modal="true"
+      [attr.aria-labelledby]="'confirm-title'"
+      [class.animate-dialog-in]="!isLeaving()"
+      [class.animate-dialog-out]="isLeaving()"
+      class="w-full max-w-sm bg-white dark:bg-slate-800
+             rounded-2xl shadow-2xl shadow-black/25 dark:shadow-black/50
+             border border-slate-200/60 dark:border-slate-700/60
+             overflow-hidden"
+    >
+      <!-- Header -->
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start gap-4">
+          <!-- Icon -->
+          <div class="shrink-0 w-10 h-10 rounded-xl bg-red-50 dark:bg-red-500/10
+                      flex items-center justify-center">
+            <lucide-icon name="triangle-alert" class="w-5 h-5 text-red-500 dark:text-red-400"></lucide-icon>
+          </div>
+          <!-- Text -->
+          <div class="flex-1 min-w-0">
+            <h3 id="confirm-title"
+                class="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug">
+              {{ svc.config().title }}
+            </h3>
+            @if (svc.config().message) {
+              <p class="mt-1 text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                {{ svc.config().message }}
+              </p>
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="px-6 pb-5 flex justify-end gap-3">
+        <button
+          type="button"
+          (click)="onCancel()"
+          class="px-4 py-2 rounded-lg text-sm font-medium
+                 text-slate-700 dark:text-slate-300
+                 bg-slate-100 dark:bg-slate-700
+                 hover:bg-slate-200 dark:hover:bg-slate-600
+                 transition-colors duration-150"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          (click)="onConfirm()"
+          class="px-4 py-2 rounded-lg text-sm font-semibold text-white
+                 bg-red-600 hover:bg-red-700 active:bg-red-800
+                 transition-colors duration-150 shadow-sm"
+        >
+          {{ svc.config().confirmLabel ?? 'Confirmar' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

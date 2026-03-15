@@ -1,0 +1,55 @@
+<div
+  class="fixed inset-0 z-50 flex items-end sm:items-center justify-center
+         bg-black/60 backdrop-blur-sm p-4
+         animate-[fadeIn_0.15s_ease-out_forwards]"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="upload-modal-title"
+  (click)="close.emit()"
+>
+  <div
+    class="relative w-full max-w-xl bg-white dark:bg-slate-900
+           rounded-t-2xl sm:rounded-2xl
+           border border-slate-200 dark:border-slate-700/70
+           shadow-2xl p-7
+           transition-all duration-300
+           animate-[slideUp_0.2s_ease-out_forwards]"
+    (click)="$event.stopPropagation()"
+  >
+    <!-- Handle móvil -->
+    <div class="sm:hidden w-10 h-1 rounded-full bg-slate-200 dark:bg-slate-700 mx-auto mb-5"></div>
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h2 id="upload-modal-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          Subir extractos
+        </h2>
+        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+          En PDF — el banco se detecta automáticamente.
+        </p>
+      </div>
+      <button
+        (click)="close.emit()"
+        class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400
+               hover:text-slate-600 dark:hover:text-white
+               hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-150"
+        aria-label="Cerrar modal"
+      >
+        <lucide-icon name="x" class="w-4 h-4"></lucide-icon>
+      </button>
+    </div>
+
+    <app-upload-zone
+      [isLoading]="isLoading()"
+      [companyId]="companyId()"
+      (fileDropped)="fileDropped.emit($event)"
+    />
+    <app-afip-zone
+      class="mt-4 block"
+      [companyId]="companyId()"
+      [pendingCount]="pendingCount()"
+      (matchComplete)="matchComplete.emit()"
+    />
+  </div>
+</div>

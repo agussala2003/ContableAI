@@ -1,0 +1,63 @@
+<div class="relative flex flex-col h-[calc(100vh-121px)] overflow-hidden">
+  @if (!companyService.activeCompany()) {
+    <div class="flex flex-col items-center justify-center h-full gap-5 text-center px-4 animate-fade-in">
+      <div class="flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800/50">
+        <lucide-icon name="building-2" class="w-8 h-8 text-slate-400 dark:text-slate-500"></lucide-icon>
+      </div>
+      <div class="max-w-sm space-y-1.5">
+        <h3 class="text-base font-medium text-slate-900 dark:text-slate-100">Ninguna empresa seleccionada</h3>
+        <p class="text-sm text-slate-500 dark:text-slate-400">Seleccioná una empresa para gestionar sus reglas de clasificación.</p>
+      </div>
+      <button (click)="showCompanyModal.set(true)"
+        class="mt-2 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all duration-200">
+        <lucide-icon name="building-2" class="w-4 h-4"></lucide-icon> Gestionar empresas
+      </button>
+    </div>
+  } @else {
+    <app-rules-toolbar
+      [companies]="companyService.companies()"
+      [activeCompanyId]="companyService.activeCompany()?.id ?? null"
+      [rulesCount]="rules().length"
+      [searchQuery]="searchQuery()"
+      [filterType]="filterType()"
+      [canCreate]="!!companyService.activeCompany()"
+      (companyChange)="onCompanySelectChange($event)"
+      (manageCompaniesRequested)="showCompanyModal.set(true)"
+      (searchQueryChange)="onSearchQueryChange($event)"
+      (filterTypeChange)="onFilterTypeChange($event)"
+      (createRequested)="openCreate()"
+    />
+
+    <div class="flex-1 min-h-0 overflow-hidden">
+      <app-rules-table class="block h-full min-h-0"
+        [rules]="rules()"
+        [isLoading]="isLoading()"
+        [searchQuery]="searchQuery()"
+        [filterType]="filterType()"
+        [deletingId]="deletingId()"
+        [overrideMapByOwnRule]="overrideMapByOwnRule()"
+        [overrideMapByGlobalRule]="overrideMapByGlobalRule()"
+        (createRequested)="openCreate()"
+        (editRequested)="openEdit($event)"
+        (deleteRequested)="confirmDelete($event)"
+      />
+    </div>
+  }
+
+  <app-rule-form-slideover
+    [open]="panelOpen()"
+    [title]="panelTitle()"
+    [form]="form()"
+    [isSaving]="isSaving()"
+    [isEditing]="!!editingRule()"
+    [applyRetroactive]="applyRetroactive()"
+    (closeRequested)="closePanel()"
+    (saveRequested)="saveRule()"
+    (formFieldChanged)="onFormFieldChange($event)"
+    (applyRetroactiveChange)="onApplyRetroactiveChange($event)"
+  />
+
+  @if (showCompanyModal()) {
+    <app-company-modal (close)="showCompanyModal.set(false)" />
+  }
+</div>

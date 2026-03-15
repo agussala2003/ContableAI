@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ContableAI.API/ContableAI.API.csproj" />
+    <Project Path="src/ContableAI.Application/ContableAI.Application.csproj" />
+    <Project Path="src/ContableAI.Domain/ContableAI.Domain.csproj" />
+    <Project Path="src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ContableAI.Tests/ContableAI.Tests.csproj" />
+  </Folder>
+</Solution>

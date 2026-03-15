@@ -1,0 +1,136 @@
+using ContableAI.Domain.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace ContableAI.Infrastructure.Persistence;
+
+public class ContableAIDbContext : DbContext
+{
+    public ContableAIDbContext(DbContextOptions<ContableAIDbContext> options) : base(options) { }
+
+    public DbSet<BankTransaction>  BankTransactions  { get; set; }
+    public DbSet<AccountingRule>   AccountingRules   { get; set; }
+    public DbSet<Company>          Companies         { get; set; }
+    public DbSet<User>             Users             { get; set; }
+    public DbSet<ChartOfAccount>   ChartOfAccounts   { get; set; }
+    public DbSet<JournalEntry>     JournalEntries    { get; set; }
+    public DbSet<JournalEntryLine> JournalEntryLines { get; set; }
+    public DbSet<AuditLog>         AuditLogs         { get; set; }
+    public DbSet<ClosedPeriod>     ClosedPeriods     { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        // ==========================================
+        // BankTransaction
+        // ==========================================
+        modelBuilder.Entity<BankTransaction>()
+            .Property(b => b.Amount)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<BankTransaction>()
+            .Property(b => b.BalanceAfter)
+            .HasPrecision(18, 2);
+
+        // Índice en TenantId (legacy) y en CompanyId (FK real)
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => b.TenantId);
+
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => b.CompanyId);
+
+        // FK real: BankTransaction → Company
+        modelBuilder.Entity<BankTransaction>()
+            .HasOne(b => b.Company)
+            .WithMany()
+            .HasForeignKey(b => b.CompanyId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        // ==========================================
+        // AccountingRule
+        // ==========================================
+        modelBuilder.Entity<AccountingRule>()
+            .HasIndex(r => r.CompanyId);
+
+        // ==========================================
+        // Company
+        // ==========================================
+        modelBuilder.Entity<Company>()
+            .HasIndex(c => c.StudioTenantId);
+
+        modelBuilder.Entity<Company>()
+            .HasIndex(c => c.Cuit)
+            .IsUnique();
+
+        // ==========================================
+        // JournalEntry
+        // ==========================================
+        modelBuilder.Entity<JournalEntry>()
+            .HasIndex(j => j.CompanyId);
+
+        modelBuilder.Entity<JournalEntry>()
+            .HasIndex(j => j.BankTransactionId)
+            .IsUnique(); // una transacción → un asiento
+
+        modelBuilder.Entity<JournalEntryLine>()
+            .Property(l => l.Amount)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<JournalEntryLine>()
+            .HasOne(l => l.JournalEntry)
+            .WithMany(j => j.Lines)
+            .HasForeignKey(l => l.JournalEntryId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // ==========================================
+        // ChartOfAccount
+        // ==========================================
+        modelBuilder.Entity<ChartOfAccount>()
+            .HasIndex(a => new { a.Name, a.StudioTenantId })
+            .IsUnique();
+
+        modelBuilder.Entity<ChartOfAccount>()
+            .HasIndex(a => a.StudioTenantId);
+
+        // ==========================================
+        // User
+        // ==========================================
+        // Email único por estudio contable
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
+
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.StudioTenantId);
+
+        // ==========================================
+        // AuditLog
+        // ==========================================
+        modelBuilder.Entity<AuditLog>()
+            .HasIndex(a => a.TenantId);
+
+        modelBuilder.Entity<AuditLog>()
+            .HasIndex(a => a.Timestamp);
+
+        // ==========================================
+        // ClosedPeriod
+        // ==========================================
+        modelBuilder.Entity<ClosedPeriod>()
+            .HasIndex(p => new { p.StudioTenantId, p.Year, p.Month })
+            .IsUnique(); // un estudio no puede cerrar el mismo mes dos veces
+
+        // ==========================================
+        // Optimistic Concurrency (RowVersion)
+        // Previene que dos usuarios editen el mismo registro simultáneamente.
+        // EF Core lanza DbUpdateConcurrencyException si los RowVersion no coinciden.
+        // ==========================================
+        modelBuilder.Entity<BankTransaction>()
+            .Property(b => b.RowVersion)
+            .IsRowVersion();
+
+        modelBuilder.Entity<JournalEntry>()
+            .Property(j => j.RowVersion)
+            .IsRowVersion();
+    }
+}
