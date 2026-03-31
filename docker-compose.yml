@@ -6,14 +6,3 @@ services:
       SA_PASSWORD: "YourStrongPass123!"
     ports:
       - "1433:1433"
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"   # REST / Web UI
-      - "6334:6334"   # gRPC (usado por Qdrant.Client .NET)
-    volumes:
-      - qdrant_storage:/qdrant/storage
-
-volumes:
-  qdrant_storage:

@@ -13,19 +13,24 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContableAI.API.Endpoints;
 
+internal sealed record SeedAdminRequest(string AdminPassword);
+
 /// <summary>Handles the one-time system admin bootstrap.</summary>
 internal static class SeedAdminHandler
 {
     internal static async Task<IResult> Handle(
+        SeedAdminRequest      request,
         IPasswordHasher<User> hasher,
         IJwtTokenService      jwt,
         ContableAIDbContext   db)
     {
+        if (string.IsNullOrWhiteSpace(request.AdminPassword) || request.AdminPassword.Length < 12)
+            return Results.BadRequest("AdminPassword debe tener al menos 12 caracteres.");
+
         if (await db.Users.AnyAsync(u => u.Role == UserRole.SystemAdmin))
             return Results.Conflict("Ya existe un administrador del sistema. Este endpoint está deshabilitado.");
 
-        const string adminEmail    = "admin@contableai.com";
-        const string adminPassword = "Admin1234!";
+        const string adminEmail = "admin@contableai.com";
 
         var user = new User
         {
@@ -36,16 +41,15 @@ internal static class SeedAdminHandler
             AccountStatus  = AccountStatus.Active,
             IsActive       = true,
         };
-        user.PasswordHash = hasher.HashPassword(user, adminPassword);
+        user.PasswordHash = hasher.HashPassword(user, request.AdminPassword);
         db.Users.Add(user);
         await db.SaveChangesAsync();
 
         return Results.Ok(new
         {
-            Message  = "Administrador creado. Guardá estas credenciales — esta respuesta no se repite.",
-            Email    = adminEmail,
-            Password = adminPassword,
-            Token    = jwt.GenerateToken(user),
+            Message = "Administrador creado exitosamente.",
+            Email   = adminEmail,
+            Token   = jwt.GenerateToken(user),
         });
     }
 }
@@ -141,7 +145,7 @@ public static class AuthEndpoints
             .WithName("SeedAdmin")
             .WithTags("Autenticación")
             .WithSummary("Bootstrap único del administrador del sistema.")
-            .WithDescription("Solo Development: crea el usuario SystemAdmin inicial (admin@contableai.com / Admin1234!). Se auto-deshabilita en cuanto ya existe un SystemAdmin.")
+            .WithDescription("Solo Development: crea el usuario SystemAdmin inicial (admin@contableai.com). Requiere body { adminPassword } con mínimo 12 caracteres. Se auto-deshabilita en cuanto ya existe un SystemAdmin.")
             .Produces(200)
             .Produces<ProblemDetails>(409);
         }

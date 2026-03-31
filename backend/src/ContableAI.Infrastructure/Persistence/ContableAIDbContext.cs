@@ -39,6 +39,15 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<BankTransaction>()
             .HasIndex(b => b.CompanyId);
 
+        // Índices compuestos de performance (reportes y paginación por período)
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.CompanyId, b.Date })
+            .HasDatabaseName("IX_BankTransactions_CompanyId_Date");
+
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.CompanyId, b.ClassificationSource })
+            .HasDatabaseName("IX_BankTransactions_CompanyId_ClassificationSource");
+
         // FK real: BankTransaction → Company
         modelBuilder.Entity<BankTransaction>()
             .HasOne(b => b.Company)
@@ -52,6 +61,11 @@ public class ContableAIDbContext : DbContext
         // ==========================================
         modelBuilder.Entity<AccountingRule>()
             .HasIndex(r => r.CompanyId);
+
+        // Índice compuesto de performance (clasificación en batch por prioridad)
+        modelBuilder.Entity<AccountingRule>()
+            .HasIndex(r => new { r.CompanyId, r.Priority })
+            .HasDatabaseName("IX_AccountingRules_CompanyId_Priority");
 
         // ==========================================
         // Company

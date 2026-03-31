@@ -361,55 +361,50 @@ public static class TransactionEndpoints
             if (!string.IsNullOrWhiteSpace(search))
                 filterBaseQuery = filterBaseQuery.Where(t => t.Description.Contains(search));
 
-            var availableAccounts = await filterBaseQuery
-                .Select(t => t.AssignedAccount)
-                .Distinct()
+            // ── Consolidación 1: 3 queries → 1 (accounts + months + years) ──
+            // Una sola query proyecta las 3 columnas livianas; los Distinct/Sort se hacen en memoria.
+            var filterMeta = await filterBaseQuery
+                .Select(t => new { t.AssignedAccount, Month = t.Date.Month, Year = t.Date.Year })
                 .ToListAsync();
 
-            var availableMonths = await filterBaseQuery
-                .Select(t => t.Date.Month)
-                .Distinct()
-                .OrderBy(m => m)
-                .ToListAsync();
-
-            var availableYears = await filterBaseQuery
-                .Select(t => t.Date.Year)
-                .Distinct()
-                .OrderByDescending(y => y)
-                .ToListAsync();
-
-            var normalizedAccounts = availableAccounts
-                .Select(a => string.IsNullOrWhiteSpace(a) ? "Pending" : a.Trim())
+            var normalizedAccounts = filterMeta
+                .Select(x => string.IsNullOrWhiteSpace(x.AssignedAccount) ? "Pending" : x.AssignedAccount.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(a => a == "Pending" ? 0 : 1)
                 .ThenBy(a => a, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var totalCount = await query.CountAsync();
+            var availableMonths = filterMeta.Select(x => x.Month).Distinct().OrderBy(m => m).ToList();
+            var availableYears  = filterMeta.Select(x => x.Year).Distinct().OrderByDescending(y => y).ToList();
+
             pageSize = Math.Clamp(pageSize, 1, 500);
             page     = Math.Max(1, page);
 
-            // ── Aggregate totals for the current filtered view ──────────────
-            var totalIngresosFiltered = await query
-                .Where(t => t.Type == TransactionType.Credit)
-                .SumAsync(t => (decimal?)t.Amount) ?? 0m;
-            var totalEgresosFiltered  = await query
-                .Where(t => t.Type == TransactionType.Debit)
-                .SumAsync(t => (decimal?)t.Amount) ?? 0m;
+            // ── Consolidación 2: 3 queries → 1 (count + ingresos + egresos filtrados) ──
+            // GROUP BY Type genera: SELECT Type, COUNT(*), SUM(Amount) en una sola roundtrip.
+            var filteredStats = await query
+                .GroupBy(t => t.Type)
+                .Select(g => new { Type = g.Key, Count = g.Count(), Total = g.Sum(t => t.Amount) })
+                .ToListAsync();
 
-            // ── Aggregate totals for ALL movements (company-scoped only) ────
+            var totalCount            = filteredStats.Sum(x => x.Count);
+            var totalIngresosFiltered = filteredStats.FirstOrDefault(x => x.Type == TransactionType.Credit)?.Total ?? 0m;
+            var totalEgresosFiltered  = filteredStats.FirstOrDefault(x => x.Type == TransactionType.Debit)?.Total ?? 0m;
+
+            // ── Consolidación 3: 2 queries → 1 (ingresos + egresos totales sin filtro fecha/cuenta) ──
             var queryAll = dbContext.BankTransactions
                 .AsNoTracking()
                 .Where(t => t.CompanyId.HasValue && studioCompanyIds.Contains(t.CompanyId.Value));
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cIdAll))
                 queryAll = queryAll.Where(t => t.CompanyId == cIdAll);
 
-            var totalIngresosAll = await queryAll
-                .Where(t => t.Type == TransactionType.Credit)
-                .SumAsync(t => (decimal?)t.Amount) ?? 0m;
-            var totalEgresosAll  = await queryAll
-                .Where(t => t.Type == TransactionType.Debit)
-                .SumAsync(t => (decimal?)t.Amount) ?? 0m;
+            var allStats = await queryAll
+                .GroupBy(t => t.Type)
+                .Select(g => new { Type = g.Key, Total = g.Sum(t => t.Amount) })
+                .ToListAsync();
+
+            var totalIngresosAll = allStats.FirstOrDefault(x => x.Type == TransactionType.Credit)?.Total ?? 0m;
+            var totalEgresosAll  = allStats.FirstOrDefault(x => x.Type == TransactionType.Debit)?.Total ?? 0m;
 
             bool asc = string.Equals(sortDir, "asc", StringComparison.OrdinalIgnoreCase);
             IOrderedQueryable<BankTransaction> orderedQuery = sortBy?.ToLowerInvariant() switch
