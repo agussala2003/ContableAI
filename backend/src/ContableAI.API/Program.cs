@@ -28,6 +28,10 @@ try
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Permite sobreescribir cualquier config via variables de entorno (ej: Frontend__BaseUrl, Jwt__Key)
+// Formato: sección__clave  →  doble guión bajo como separador de jerarquía
+builder.Configuration.AddEnvironmentVariables();
+
 // Reemplaza el logging por defecto de .NET con Serilog
 builder.Host.UseSerilog((ctx, services, config) => config
     .ReadFrom.Configuration(ctx.Configuration)
@@ -46,7 +50,7 @@ builder.Host.UseSerilog((ctx, services, config) => config
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"));
 
 builder.Services.AddOpenApi();
-builder.Services.AddContableCors();
+builder.Services.AddContableCors(builder.Configuration);
 builder.Services.AddContableInfrastructure(builder.Configuration);
 builder.Services.AddContableAuth(builder.Configuration);
 // ── Global exception handler (RFC 7807) ──────────────────────────────────────

@@ -22,12 +22,20 @@ public static class ServiceExtensions
 {
     /// <summary>
     /// Registra CORS para el cliente Angular.
+    /// El origen permitido se lee desde la configuración (Frontend:BaseUrl),
+    /// lo que permite sobreescribirlo con variables de entorno en producción.
     /// </summary>
-    public static IServiceCollection AddContableCors(this IServiceCollection services)
+    public static IServiceCollection AddContableCors(
+        this IServiceCollection services, IConfiguration configuration)
     {
+        var frontendUrl = configuration["Frontend:BaseUrl"]
+            ?? throw new InvalidOperationException(
+                "La variable de configuración 'Frontend:BaseUrl' es obligatoria. " +
+                "Agregá la variable de entorno 'Frontend__BaseUrl' en el servidor de producción.");
+
         services.AddCors(options =>
             options.AddPolicy("AllowAngular", policy =>
-                policy.WithOrigins("http://localhost:4200")
+                policy.WithOrigins(frontendUrl)
                       .AllowAnyHeader()
                       .AllowAnyMethod()));
         return services;
@@ -80,7 +88,7 @@ public static class ServiceExtensions
         services.AddSingleton<AuditInterceptor>();
         services.AddDbContext<ContableAIDbContext>((sp, options) =>
         {
-            options.UseSqlServer(configuration.GetConnectionString("DefaultConnection"));
+            options.UseNpgsql(configuration.GetConnectionString("DefaultConnection"));
             options.AddInterceptors(sp.GetRequiredService<AuditInterceptor>());
         });
 
