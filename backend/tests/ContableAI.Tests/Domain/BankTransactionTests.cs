@@ -103,13 +103,4 @@ public class BankTransactionTests
         tx.Notes.Should().Be("F.931 – Período 202501");
     }
 
-    // ── RowVersion ───────────────────────────────────────────────────────────
-
-    [Fact]
-    public void RowVersion_DefaultIsEmptyByteArray()
-    {
-        var tx = CreateTx();
-        tx.RowVersion.Should().NotBeNull();
-        tx.RowVersion.Should().BeEmpty();
-    }
 }

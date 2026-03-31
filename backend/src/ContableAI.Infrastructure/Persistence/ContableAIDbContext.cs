@@ -121,16 +121,21 @@ public class ContableAIDbContext : DbContext
             .IsUnique(); // un estudio no puede cerrar el mismo mes dos veces
 
         // ==========================================
-        // Optimistic Concurrency (RowVersion)
-        // Previene que dos usuarios editen el mismo registro simultáneamente.
-        // EF Core lanza DbUpdateConcurrencyException si los RowVersion no coinciden.
+        // Optimistic Concurrency via xmin (PostgreSQL nativo)
+        // xmin es el transaction ID interno de cada fila en PostgreSQL: se actualiza
+        // automáticamente en cada escritura sin necesidad de una columna extra.
+        // EF Core lanza DbUpdateConcurrencyException si el xmin no coincide al hacer UPDATE.
         // ==========================================
         modelBuilder.Entity<BankTransaction>()
-            .Property(b => b.RowVersion)
-            .IsRowVersion();
+            .Property<uint>("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
 
         modelBuilder.Entity<JournalEntry>()
-            .Property(j => j.RowVersion)
-            .IsRowVersion();
+            .Property<uint>("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
     }
 }

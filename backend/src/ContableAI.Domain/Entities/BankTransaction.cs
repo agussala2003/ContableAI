@@ -44,9 +44,6 @@ public class BankTransaction : ITenantEntity
     /// <summary>Notas adicionales del contador o del sistema (ej: F.931 – Período 202501).</summary>
     public string? Notes { get; set; }
 
-    /// <summary>Token de concurrencia optimista — EF Core lo actualiza en cada escritura.</summary>
-    public byte[] RowVersion { get; private set; } = [];
-
     // Legacy string tenant — se mantiene por compatibilidad con datos existentes
     public string TenantId { get; set; } = "ESTUDIO_DEFAULT";
 
