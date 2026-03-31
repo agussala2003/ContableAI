@@ -1,5 +1,5 @@
 {
-  "apiUrl": "http://localhost:5284/api",
+  "apiUrl": "https://contableai-api.onrender.com/api",
   "appVersion": "0.1.0-beta",
   "requestTimeoutMs": 15000,
   "defaultToastDurationMs": 4500,
