@@ -9,7 +9,7 @@ COPY ["src/ContableAI.Application/ContableAI.Application.csproj", "src/ContableA
 COPY ["src/ContableAI.Domain/ContableAI.Domain.csproj", "src/ContableAI.Domain/"]
 COPY ["src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj", "src/ContableAI.Infrastructure/"]
 
-RUN dotnet restore "ContableAI.slnx"
+RUN dotnet restore "src/ContableAI.API/ContableAI.API.csproj"
 
 # Copy the rest of the source code and publish
 COPY . .
