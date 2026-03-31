@@ -49,6 +49,7 @@ export class JournalPage {
   isExporting         = signal(false);
   isExportingHolistor = signal(false);
   isExportingBejerman = signal(false);
+  isExportingCsv      = signal(false);
   isDeletingAll       = signal(false);
   deletingId          = signal<string | null>(null);
   private loadSeq = 0;
@@ -368,6 +369,13 @@ export class JournalPage {
     const company = this.companyService.activeCompany();
     this.journalService.downloadBejerman(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined);
     setTimeout(() => this.isExportingBejerman.set(false), this.configService.config().exportCooldownMs);
+  }
+
+  exportCsv(): void {
+    this.isExportingCsv.set(true);
+    const company = this.companyService.activeCompany();
+    this.journalService.downloadCsv(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined);
+    setTimeout(() => this.isExportingCsv.set(false), this.configService.config().exportCooldownMs);
   }
 
   formatDate(dateStr: string): string {

@@ -126,6 +126,10 @@ export class JournalEntryService {
     this._downloadBlob(`${this.baseUrl}/export/bejerman`, 'csv', 'Bejerman', companyId, month, year);
   }
 
+  downloadCsv(companyId?: string, month?: number, year?: number): void {
+    this._downloadBlob(`${this.baseUrl}/export/csv`, 'csv', 'Asientos', companyId, month, year);
+  }
+
   private _downloadBlob(
     url: string,
     ext: string,

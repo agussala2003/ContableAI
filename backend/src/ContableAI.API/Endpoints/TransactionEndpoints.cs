@@ -1,8 +1,11 @@
+using ContableAI.API.Common;
+using ContableAI.Application.Features.Transactions.Commands;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
@@ -19,257 +22,23 @@ public static class TransactionEndpoints
             HttpContext httpCtx,
             [FromForm] string? bankCode,
             [FromForm] string? companyId,
-            [FromServices] IBankParserService parser,
-            [FromServices] IClassificationService classifier,
-            [FromServices] ICurrentTenantService currentTenant,
-            [FromServices] IQuotaService quotaSvc,
-            [FromServices] ContableAIDbContext dbContext) =>
+            ISender sender) =>
         {
             var files = httpCtx.Request.Form.Files;
-            if (files == null || files.Count == 0)
+            if (files is null || files.Count == 0)
                 return Results.BadRequest("No se subió ningún archivo.");
 
-            var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            var fileDataList = new List<FileData>();
+            foreach (var f in files)
             {
-                ".csv", ".xlsx", ".xls", ".pdf"
-            };
-            const long maxFileSizeBytes = 25 * 1024 * 1024;
-
-            Company? company = null;
-            if (Guid.TryParse(companyId, out var parsedCompanyId))
-                company = await dbContext.Companies.FindAsync(parsedCompanyId);
-
-            if (company != null && company.StudioTenantId != currentTenant.StudioTenantId)
-                return Results.Forbid();
-
-            // ── Parseo de todos los archivos ────────────────────────────────
-            var allParsed = new List<(IFormFile File, List<BankTransaction> Txs)>();
-            foreach (var file in files)
-            {
-                if (file.Length == 0) continue;
-                if (file.Length > maxFileSizeBytes)
-                    return Results.BadRequest($"El archivo '{file.FileName}' supera el máximo permitido de 25 MB.");
-
-                var ext = Path.GetExtension(file.FileName ?? string.Empty);
-                if (!allowedExtensions.Contains(ext))
-                    return Results.BadRequest($"Formato no soportado para '{file.FileName}'. Solo se permiten CSV, XLSX y PDF.");
-
-                using var stream = file.OpenReadStream();
-                // "AUTO" o null → "PDF" activa la detección automática de banco por el factory
-                var effectiveBankCode = (bankCode is null or "AUTO") ? "PDF" : bankCode;
-                var txs = parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf").ToList();
-                allParsed.Add((file, txs));
+                using var ms = new MemoryStream((int)Math.Max(0, f.Length));
+                await f.CopyToAsync(ms);
+                fileDataList.Add(new FileData(ms.ToArray(), f.FileName ?? "", f.Length));
             }
 
-            var totalParsed = allParsed.Sum(x => x.Txs.Count);
-
-            // ── Control de cuota: solo se cuentan las txs del mes en curso ──
-            // Los extractos históricos (fechas de otros meses) no consumen la cuota mensual
-            var tenantIdForQuota = currentTenant.StudioTenantId;
-            if (!string.IsNullOrEmpty(tenantIdForQuota) && totalParsed > 0)
-            {
-                var today = DateOnly.FromDateTime(DateTime.UtcNow);
-                var currentMonthCount = allParsed.Sum(x =>
-                    x.Txs.Count(t => t.Date.Year == today.Year && t.Date.Month == today.Month));
-
-                if (currentMonthCount > 0 &&
-                    !await quotaSvc.CanUploadTransactionsAsync(tenantIdForQuota, currentMonthCount))
-                    return Results.Json(
-                        new { Code = "QUOTA_EXCEEDED", Message = "Alcanzaste el límite mensual de transacciones de tu plan. Actualizá a Pro para continuar." },
-                        statusCode: 402);
-            }
-
-            var tenantFilter = company?.Id.ToString() ?? "ESTUDIO_DEFAULT";
-
-            DateOnly? minParsedDate = null;
-            DateOnly? maxParsedDate = null;
-            if (totalParsed > 0)
-            {
-                var parsedDates = allParsed.SelectMany(x => x.Txs).Select(t => t.Date);
-                minParsedDate = parsedDates.Min();
-                maxParsedDate = parsedDates.Max();
-            }
-
-            // ── Firmas existentes por rango de fechas (query única + HashSet) ─
-            var existingSignaturesQuery = dbContext.BankTransactions
-                .AsNoTracking()
-                .AsQueryable();
-
-            existingSignaturesQuery = company != null
-                ? existingSignaturesQuery.Where(t => t.CompanyId == company.Id)
-                : existingSignaturesQuery.Where(t => t.TenantId == "ESTUDIO_DEFAULT");
-
-            if (minParsedDate.HasValue && maxParsedDate.HasValue)
-                existingSignaturesQuery = existingSignaturesQuery
-                    .Where(t => t.Date >= minParsedDate.Value && t.Date <= maxParsedDate.Value);
-
-            var existingSignatures = await existingSignaturesQuery
-                .Select(t => new { t.Date, t.Description, t.Amount, t.Type, t.ExternalId })
-                .ToListAsync();
-
-            var existingSignatureHashes = existingSignatures
-                .Select(s => s.ExternalId != null
-                    ? $"EXT|{s.ExternalId}|{s.Date}|{s.Amount}|{s.Description}|{s.Type}"
-                    : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}")
-                .ToHashSet(StringComparer.Ordinal);
-
-            // ── Reglas de clasificación (cargadas una sola vez) ─────────────
-            var companyRulesForBatch = company != null
-                ? await dbContext.AccountingRules
-                    .AsNoTracking()
-                    .Where(r => r.CompanyId == company.Id)
-                    .OrderBy(r => r.Priority)
-                    .ToListAsync()
-                : new List<AccountingRule>();
-
-            var globalRulesForBatch = await dbContext.AccountingRules
-                .AsNoTracking()
-                .Where(r => r.CompanyId == null)
-                .OrderBy(r => r.Priority)
-                .ToListAsync();
-
-            var allRulesForBatch = companyRulesForBatch.Concat(globalRulesForBatch).ToList();
-
-            // ── Candidatos UNION en BD (query única para todo el lote) ───────
-            var existingUnionCandidates = new List<(DateOnly Date, string Description, decimal Amount)>();
-            if (company != null && minParsedDate.HasValue && maxParsedDate.HasValue)
-            {
-                var unionMinDate = minParsedDate.Value.AddDays(-3);
-                var unionMaxDate = maxParsedDate.Value.AddDays(3);
-
-                var existingUnionRaw = await dbContext.BankTransactions
-                    .AsNoTracking()
-                    .Where(t => t.CompanyId == company.Id && t.Date >= unionMinDate && t.Date <= unionMaxDate)
-                    .Select(t => new { t.Date, t.Description, t.Amount })
-                    .ToListAsync();
-
-                existingUnionCandidates = existingUnionRaw
-                    .Select(x => (x.Date, x.Description, x.Amount))
-                    .ToList();
-            }
-
-            // ── Procesamiento por archivo ───────────────────────────────────
-            var allClassified    = new List<BankTransaction>();
-            int totalDuplicates  = 0;
-            var perFileResults   = new List<object>();
-
-            var acceptedInBatchSignatures = new HashSet<string>(StringComparer.Ordinal);
-            int globalSortOrder   = 0;
-
-            foreach (var (file, parsedTransactions) in allParsed)
-            {
-                var classified   = new List<BankTransaction>();
-                int fileDups     = 0;
-
-                foreach (var tx in parsedTransactions)
-                {
-                    var sig = tx.ExternalId != null
-                        ? $"EXT|{tx.ExternalId}|{tx.Date}|{tx.Amount}|{tx.Description}|{tx.Type}"
-                        : $"{tx.Date}|{tx.Description}|{tx.Amount}|{tx.Type}";
-
-                    // O(1): duplicado si ya existe en BD o ya fue aceptado dentro de este lote.
-                    if (existingSignatureHashes.Contains(sig) || !acceptedInBatchSignatures.Add(sig))
-                    {
-                        fileDups++;
-                        totalDuplicates++;
-                        continue;
-                    }
-
-                    tx.TenantId   = tenantFilter;
-                    tx.CompanyId  = company?.Id;
-                    tx.SortOrder  = globalSortOrder++;
-
-                    var result = await classifier.ClassifyAsync(tx, allRulesForBatch, company?.SplitChequeTax ?? false);
-                    classified.Add(result);
-                }
-
-                // Detección de posibles duplicados UNION en este archivo
-                if (classified.Any())
-                {
-                    var unionBatch = classified
-                        .Where(t => UnionKeywords.All.Any(k => t.Description.Contains(k, StringComparison.OrdinalIgnoreCase)))
-                        .ToList();
-
-                    if (unionBatch.Any() && company != null)
-                    {
-                        var currentBatchView = allClassified.Concat(classified).ToList();
-
-                        foreach (var tx in unionBatch)
-                        {
-                            var kw = UnionKeywords.All.FirstOrDefault(k =>
-                                tx.Description.Contains(k, StringComparison.OrdinalIgnoreCase));
-                            if (kw == null) continue;
-
-                            bool dup = existingUnionCandidates.Any(e =>
-                                e.Amount == tx.Amount &&
-                                Math.Abs(e.Date.DayNumber - tx.Date.DayNumber) <= 2 &&
-                                e.Description.Contains(kw, StringComparison.OrdinalIgnoreCase));
-
-                            if (!dup)
-                                dup = currentBatchView
-                                    .Where(o => o != tx)
-                                    .Any(o => o.Amount == tx.Amount &&
-                                              Math.Abs(o.Date.DayNumber - tx.Date.DayNumber) <= 2 &&
-                                              o.Description.Contains(kw, StringComparison.OrdinalIgnoreCase));
-
-                            if (dup) tx.MarkPossibleDuplicate();
-                        }
-                    }
-                }
-
-                allClassified.AddRange(classified);
-                perFileResults.Add(new
-                {
-                    FileName          = file.FileName,
-                    Processed         = classified.Count,
-                    DuplicatesSkipped = fileDups,
-                });
-            }
-
-            if (allClassified.Any())
-            {
-                await dbContext.BankTransactions.AddRangeAsync(allClassified);
-                await dbContext.SaveChangesAsync();
-            }
-
-            // ── Log acumulativo de parseo (para análisis y generación de reglas) ──
-            try
-            {
-                var logDir = Path.Combine(Directory.GetCurrentDirectory(), "logs");
-                Directory.CreateDirectory(logDir);
-                var logPath = Path.Combine(logDir, "parse-log.jsonl");
-                var parsedAt = DateTime.UtcNow.ToString("o");
-                var sb = new System.Text.StringBuilder();
-                foreach (var (file, txs) in allParsed)
-                {
-                    foreach (var tx in txs)
-                    {
-                        sb.AppendLine(System.Text.Json.JsonSerializer.Serialize(new
-                        {
-                            parsedAt,
-                            file          = file.FileName,
-                            bank          = tx.SourceBank,
-                            date          = tx.Date.ToString("yyyy-MM-dd"),
-                            description   = tx.Description,
-                            amount        = tx.Amount,
-                            type          = tx.Type.ToString(),
-                            externalId    = tx.ExternalId,
-                            assignedAccount = tx.AssignedAccount,
-                        }));
-                    }
-                }
-                await File.AppendAllTextAsync(logPath, sb.ToString());
-            }
-            catch { /* no romper el flujo si el log falla */ }
-
-            return Results.Ok(new
-            {
-                TotalFiles        = files.Count,
-                TotalProcessed    = allClassified.Count,
-                DuplicatesSkipped = totalDuplicates,
-                CompanyName       = company?.Name ?? "Sin empresa",
-                PerFile           = perFileResults,
-            });
+            Guid? cId = Guid.TryParse(companyId, out var g) ? g : null;
+            var result = await sender.Send(new UploadBankStatementCommand(fileDataList, cId, bankCode));
+            return result.ToHttpResult();
         })
         .DisableAntiforgery()
         .WithName("UploadBankStatement")

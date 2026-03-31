@@ -68,6 +68,13 @@
           @else { <lucide-icon name="file-down" class="w-3.5 h-3.5"></lucide-icon> }
           <span class="hidden sm:inline">Bejerman</span>
         </button>
+
+        <button (click)="exportCsv()" [disabled]="isExportingCsv() || filteredEntries().length === 0" title="Exportar CSV estándar (Fecha, Asiento Nro, Concepto, Cuenta, Debe, Haber)"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:opacity-50 transition-colors shadow-sm">
+          @if (isExportingCsv()) { <lucide-icon name="loader" class="w-3.5 h-3.5 animate-spin"></lucide-icon> }
+          @else { <lucide-icon name="download" class="w-3.5 h-3.5"></lucide-icon> }
+          <span class="hidden sm:inline">CSV</span>
+        </button>
       </div>
     </div>
 

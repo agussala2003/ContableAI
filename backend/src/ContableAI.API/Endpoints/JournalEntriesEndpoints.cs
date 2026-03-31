@@ -1,5 +1,6 @@
 using ContableAI.API.Common;
 using ContableAI.Application.Features.JournalEntries.Commands;
+using ContableAI.Application.Features.JournalEntries.Queries;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
@@ -654,6 +655,30 @@ public static class JournalEntriesEndpoints
         .WithSummary("Exportar asientos en formato Bejerman (.csv).")
         .WithDescription("Genera un CSV compatible con el formato de importación de Bejerman. Query params: companyId (guid), month (int), year (int).")
         .Produces(200)
+        .Produces(404);
+
+
+        app.MapGet("/api/journal-entries/export/csv", async (
+            ISender sender,
+            [FromQuery] Guid    companyId,
+            [FromQuery] int?    month,
+            [FromQuery] int?    year) =>
+        {
+            var result = await sender.Send(new ExportJournalEntriesQuery(companyId, month, year));
+            if (!result.IsSuccess)
+                return result.StatusCode == 404
+                    ? Results.NotFound(result.Error)
+                    : Results.Problem(title: "Error", detail: result.Error, statusCode: result.StatusCode);
+
+            var file = result.Value!;
+            return Results.File(file.Content, file.ContentType, file.FileName);
+        })
+        .RequireAuthorization()
+        .WithName("ExportJournalEntriesCsv")
+        .WithTags("Libro Diario")
+        .WithSummary("Exportar asientos a CSV estándar (Fecha, Asiento Nro, Concepto, Cuenta, Debe, Haber).")
+        .WithDescription("Query params: companyId (guid, requerido), month (int), year (int). Genera un CSV con una fila por línea contable, listo para importar en cualquier software contable.")
+        .Produces(200, contentType: "text/csv")
         .Produces(404);
     }
 
