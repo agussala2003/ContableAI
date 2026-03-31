@@ -1,5 +1,6 @@
 import { Component, inject, signal, computed, effect } from '@angular/core';
 import { DecimalPipe, NgClass } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
 import { CompanyService } from '../../../../core/services/company.service';
 import { DashboardService, DashboardStats } from '../../dashboard.service';
@@ -19,25 +20,36 @@ const MONTH_NAMES = [
   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre',
 ];
 
+const CURRENT_YEAR = new Date().getFullYear();
+
 @Component({
   selector: 'app-dashboard-page',
   standalone: true,
-  imports: [LucideAngularModule, DecimalPipe, NgClass],
+  imports: [LucideAngularModule, DecimalPipe, NgClass, FormsModule],
   templateUrl: './dashboard-page.html',
 })
 export class DashboardPage {
-  private companyService  = inject(CompanyService);
+  private companyService   = inject(CompanyService);
   private dashboardService = inject(DashboardService);
 
   loading = signal(false);
   stats   = signal<DashboardStats | null>(null);
   error   = signal<string | null>(null);
 
-  protected periodLabel = computed(() => {
-    const s = this.stats();
-    if (!s) return '';
-    return `${MONTH_NAMES[s.month - 1]} ${s.year}`;
-  });
+  // ── Period filters ───────────────────────────────────────────────────────
+  selectedMonth = signal<number>(new Date().getMonth() + 1);
+  selectedYear  = signal<number>(CURRENT_YEAR);
+
+  readonly monthOptions = MONTH_NAMES.map((label, i) => ({ value: i + 1, label }));
+  readonly availableYears: number[] = Array.from(
+    { length: CURRENT_YEAR - 2022 },
+    (_, i) => CURRENT_YEAR + 1 - i   // current+1 down to 2023
+  );
+
+  // ── Derived display ──────────────────────────────────────────────────────
+  protected periodLabel = computed(() =>
+    `${MONTH_NAMES[this.selectedMonth() - 1]} ${this.selectedYear()}`
+  );
 
   protected cards = computed((): KpiCard[] => {
     const s = this.stats();
@@ -85,11 +97,13 @@ export class DashboardPage {
   protected skeletonCards = Array.from({ length: 4 });
 
   constructor() {
-    // Reactively reload stats whenever the active company changes.
+    // Re-fetch whenever company, month, or year changes.
     effect(() => {
       const company = this.companyService.activeCompany();
+      const month   = this.selectedMonth();
+      const year    = this.selectedYear();
       if (company) {
-        this.load(company.id);
+        this.load(company.id, month, year);
       } else {
         this.stats.set(null);
         this.loading.set(false);
@@ -103,13 +117,13 @@ export class DashboardPage {
 
   protected refresh(): void {
     const id = this.companyService.activeCompany()?.id;
-    if (id) this.load(id);
+    if (id) this.load(id, this.selectedMonth(), this.selectedYear());
   }
 
-  private load(companyId: string): void {
+  private load(companyId: string, month: number, year: number): void {
     this.loading.set(true);
     this.error.set(null);
-    this.dashboardService.getStats(companyId).subscribe({
+    this.dashboardService.getStats(companyId, month, year).subscribe({
       next: data => {
         this.stats.set(data);
         this.loading.set(false);

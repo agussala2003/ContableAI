@@ -9,10 +9,8 @@
       @if (companyName) {
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
           {{ companyName }}
-          @if (periodLabel()) {
-            <span class="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
-            <span class="font-medium text-slate-600 dark:text-slate-300">{{ periodLabel() }}</span>
-          }
+          <span class="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
+          <span class="font-medium text-slate-600 dark:text-slate-300">{{ periodLabel() }}</span>
         </p>
       } @else {
         <p class="mt-1 text-sm text-slate-400 dark:text-slate-500 italic">
@@ -21,24 +19,58 @@
       }
     </div>
 
-    <!-- Refresh button -->
+    <!-- Period selectors + Refresh button -->
     @if (companyName) {
-      <button
-        (click)="refresh()"
-        [disabled]="loading()"
-        class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg
-               text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800
-               border border-slate-200 dark:border-slate-700
-               hover:bg-slate-50 dark:hover:bg-slate-700/60
-               disabled:opacity-50 disabled:cursor-not-allowed
-               transition-colors shadow-sm">
-        <lucide-icon
-          name="refresh-cw"
-          [size]="15"
-          color="currentColor"
-          [class.animate-spin]="loading()" />
-        Actualizar
-      </button>
+      <div class="flex items-center gap-2">
+
+        <!-- Month selector -->
+        <select
+          [ngModel]="selectedMonth()"
+          (ngModelChange)="selectedMonth.set($event)"
+          class="appearance-none pl-3 pr-8 py-1.5 rounded-lg text-sm font-medium
+                 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800
+                 border border-slate-200 dark:border-slate-700
+                 hover:bg-slate-50 dark:hover:bg-slate-700/60
+                 focus:outline-none focus:ring-2 focus:ring-indigo-500/30
+                 transition-colors shadow-sm cursor-pointer">
+          @for (m of monthOptions; track m.value) {
+            <option [value]="m.value">{{ m.label }}</option>
+          }
+        </select>
+
+        <!-- Year selector -->
+        <select
+          [ngModel]="selectedYear()"
+          (ngModelChange)="selectedYear.set($event)"
+          class="appearance-none pl-3 pr-8 py-1.5 rounded-lg text-sm font-medium
+                 text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800
+                 border border-slate-200 dark:border-slate-700
+                 hover:bg-slate-50 dark:hover:bg-slate-700/60
+                 focus:outline-none focus:ring-2 focus:ring-indigo-500/30
+                 transition-colors shadow-sm cursor-pointer">
+          @for (y of availableYears; track y) {
+            <option [value]="y">{{ y }}</option>
+          }
+        </select>
+
+        <!-- Refresh button -->
+        <button
+          (click)="refresh()"
+          [disabled]="loading()"
+          class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg
+                 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800
+                 border border-slate-200 dark:border-slate-700
+                 hover:bg-slate-50 dark:hover:bg-slate-700/60
+                 disabled:opacity-50 disabled:cursor-not-allowed
+                 transition-colors shadow-sm">
+          <lucide-icon
+            name="refresh-cw"
+            [size]="15"
+            color="currentColor"
+            [class.animate-spin]="loading()" />
+          Actualizar
+        </button>
+      </div>
     }
   </div>
 
