@@ -37,6 +37,10 @@ export const routes: Routes = [
         path: 'journal',
         loadComponent: () => import('./features/journal/pages/journal-page/journal-page').then(m => m.JournalPage),
       },
+      {
+        path: 'dashboard',
+        loadComponent: () => import('./features/dashboard/pages/dashboard-page/dashboard-page').then(m => m.DashboardPage),
+      },
     ],
   },
 ];

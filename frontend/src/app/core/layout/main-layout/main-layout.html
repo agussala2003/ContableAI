@@ -45,6 +45,16 @@
         @if (sidebarOpen()) { <span class="whitespace-nowrap">Inicio</span> }
       </a>
 
+      <a routerLink="/dashboard"
+         routerLinkActive="bg-white/20 text-white"
+         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                hover:text-white hover:bg-white/10 transition-colors"
+         [class.justify-center]="!sidebarOpen()"
+         title="Dashboard">
+        <lucide-icon name="bar-chart-3" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Dashboard</span> }
+      </a>
+
       <a routerLink="/journal"
          routerLinkActive="bg-white/20 text-white"
          class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70

@@ -1,0 +1,163 @@
+<div class="max-w-5xl mx-auto">
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <div class="flex items-start justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
+        Dashboard
+      </h1>
+      @if (companyName) {
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          {{ companyName }}
+          @if (periodLabel()) {
+            <span class="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
+            <span class="font-medium text-slate-600 dark:text-slate-300">{{ periodLabel() }}</span>
+          }
+        </p>
+      } @else {
+        <p class="mt-1 text-sm text-slate-400 dark:text-slate-500 italic">
+          Seleccioná una empresa para ver los datos
+        </p>
+      }
+    </div>
+
+    <!-- Refresh button -->
+    @if (companyName) {
+      <button
+        (click)="refresh()"
+        [disabled]="loading()"
+        class="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg
+               text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800
+               border border-slate-200 dark:border-slate-700
+               hover:bg-slate-50 dark:hover:bg-slate-700/60
+               disabled:opacity-50 disabled:cursor-not-allowed
+               transition-colors shadow-sm">
+        <lucide-icon
+          name="refresh-cw"
+          [size]="15"
+          color="currentColor"
+          [class.animate-spin]="loading()" />
+        Actualizar
+      </button>
+    }
+  </div>
+
+  <!-- ── Error state ───────────────────────────────────────────────────────── -->
+  @if (error()) {
+    <div class="flex items-center gap-3 px-4 py-3.5 rounded-xl
+                bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60
+                text-rose-700 dark:text-rose-400 text-sm mb-6">
+      <lucide-icon name="circle-alert" [size]="16" color="currentColor" class="shrink-0" />
+      {{ error() }}
+    </div>
+  }
+
+  <!-- ── No company selected ──────────────────────────────────────────────── -->
+  @if (!companyName && !loading()) {
+    <div class="flex flex-col items-center justify-center py-24 text-center">
+      <div class="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4">
+        <lucide-icon name="building-2" [size]="26" class="text-slate-400" color="currentColor" />
+      </div>
+      <p class="text-slate-600 dark:text-slate-400 font-medium">Sin empresa seleccionada</p>
+      <p class="text-slate-400 dark:text-slate-500 text-sm mt-1">
+        Seleccioná una empresa desde el menú lateral para ver los KPIs.
+      </p>
+    </div>
+  }
+
+  <!-- ── KPI Cards ─────────────────────────────────────────────────────────── -->
+  @if (companyName) {
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+
+      <!-- Skeleton state -->
+      @if (loading()) {
+        @for (sk of skeletonCards; track $index) {
+          <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70
+                      shadow-sm p-6 animate-pulse"
+               [style.animation-delay]="$index * 60 + 'ms'">
+            <div class="flex items-center justify-between mb-4">
+              <div class="h-3.5 w-28 rounded-full bg-slate-200 dark:bg-slate-700"></div>
+              <div class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800"></div>
+            </div>
+            <div class="h-9 w-20 rounded-lg bg-slate-200 dark:bg-slate-700 mb-2"></div>
+            <div class="h-3 w-36 rounded-full bg-slate-100 dark:bg-slate-800"></div>
+          </div>
+        }
+      }
+
+      <!-- Loaded state -->
+      @if (!loading()) {
+        @for (card of cards(); track card.label) {
+          <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70
+                      shadow-sm hover:shadow-md transition-shadow duration-200 p-6">
+
+            <!-- Label + Icon -->
+            <div class="flex items-center justify-between mb-4">
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                {{ card.label }}
+              </span>
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center"
+                   [ngClass]="card.iconBg">
+                <lucide-icon
+                  [name]="card.icon"
+                  [size]="18"
+                  [color]="card.iconColor" />
+              </div>
+            </div>
+
+            <!-- Value -->
+            <p class="text-4xl font-bold tracking-tight"
+               [ngClass]="card.colorClass">
+              {{ card.value }}
+            </p>
+
+            <!-- Description -->
+            <p class="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+              {{ card.description }}
+            </p>
+
+          </div>
+        }
+      }
+
+    </div>
+
+    <!-- ── Progress bar: classification rate ──────────────────────────────── -->
+    @if (!loading() && stats()) {
+      <div class="mt-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70
+                  shadow-sm p-6">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">
+            Tasa de clasificación
+          </span>
+          @if (stats()!.totalTransactions > 0) {
+            <span class="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+              {{ ((stats()!.classified / stats()!.totalTransactions) * 100) | number:'1.0-0' }}%
+            </span>
+          } @else {
+            <span class="text-sm text-slate-400">—</span>
+          }
+        </div>
+
+        <div class="w-full h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+          @if (stats()!.totalTransactions > 0) {
+            <div
+              class="h-full rounded-full bg-emerald-500 dark:bg-emerald-500 transition-all duration-700 ease-out"
+              [style.width.%]="(stats()!.classified / stats()!.totalTransactions) * 100">
+            </div>
+          }
+        </div>
+
+        <div class="flex items-center justify-between mt-2">
+          <span class="text-xs text-slate-400 dark:text-slate-500">
+            {{ stats()!.classified }} clasificadas
+          </span>
+          <span class="text-xs text-slate-400 dark:text-slate-500">
+            {{ stats()!.pendingClassification }} pendientes
+          </span>
+        </div>
+      </div>
+    }
+  }
+
+</div>

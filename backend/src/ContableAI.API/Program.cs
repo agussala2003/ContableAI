@@ -106,6 +106,7 @@ app.MapChartOfAccountsEndpoints();
 app.MapJournalEntriesEndpoints();
 app.MapAuditEndpoints();
 app.MapPeriodEndpoints();
+app.MapDashboardEndpoints();
 
 app.MapGet("/api/banks", (BankParserFactory factory) =>
     Results.Ok(factory.AvailableBanks.Select(b => new { code = b.Code, displayName = b.DisplayName })))

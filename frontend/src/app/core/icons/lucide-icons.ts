@@ -1,5 +1,6 @@
 import {
   Activity,
+  Clock,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
@@ -63,6 +64,7 @@ import {
 
 export const APP_LUCIDE_ICONS = {
   Activity,
+  Clock,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
