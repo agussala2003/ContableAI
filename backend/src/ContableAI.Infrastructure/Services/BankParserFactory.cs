@@ -1,5 +1,6 @@
 ﻿using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
+using Microsoft.Extensions.Logging;
 using OfficeOpenXml;
 using System.Globalization;
 using System.Text;
@@ -815,7 +816,7 @@ public class BankParserFactory : IBankParserService
 {
     private readonly Dictionary<string, IBankParser> _parsers;
 
-    public BankParserFactory()
+    public BankParserFactory(ILoggerFactory loggerFactory)
     {
         var list = new IBankParser[]
         {
@@ -827,7 +828,7 @@ public class BankParserFactory : IBankParserService
             new MercadoPagoParser(),
             new UalaParser(),
             new CredicoopParser(),
-            new PdfBankParser(),
+            new PdfBankParser(loggerFactory.CreateLogger<PdfBankParser>()),
         };
 
         _parsers = list.ToDictionary(
