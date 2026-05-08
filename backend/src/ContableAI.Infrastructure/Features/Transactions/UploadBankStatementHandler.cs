@@ -99,7 +99,6 @@ public sealed class UploadBankStatementHandler
             return Result<UploadBankStatementResponse>.Failure(
                 $"No se pudo procesar ningún archivo. {parseErrors[0]}");
 
-
         var totalParsed = allParsed.Sum(x => x.Txs.Count);
 
         // ── Quota check (only current-month transactions count) ────────────────

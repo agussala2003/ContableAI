@@ -1621,13 +1621,13 @@ public class PdfBankParser : IBankParser
 
                     if (minDist > 80) { descParts.Add(txt); continue; }
 
-                    string colName;
-                    if (distSaldo  == minDist) { colName = "SALDO";   /* ignorar */ }
-                    else if (distDebit  == minDist) { colName = "DEBITO";  debitAmt  = amt; }
-                    else                            { colName = "CREDITO"; creditAmt = amt; }
-                    logger.LogDebug("[CIUDAD]   importe {Amt} → col={Col} (dD={DD:F0} dC={DC:F0} dS={DS:F0} cell.Right={R:F0})",
-                        amt, colName, distDebit, distCredit, distSaldo, cell.Right);
-                    if (distSaldo == minDist) continue; // saldo → ignorar
+                    if (distSaldo == minDist)
+                    {
+                        logger.LogDebug("[CIUDAD]   importe {Amt} → SALDO (ignorado, dS={DS:F0} cell.Right={R:F0})", amt, distSaldo, cell.Right);
+                        continue;
+                    }
+                    if (distDebit == minDist) { debitAmt  = amt; logger.LogDebug("[CIUDAD]   importe {Amt} → DEBITO  (dD={DD:F0} cell.Right={R:F0})", amt, distDebit,  cell.Right); }
+                    else                      { creditAmt = amt; logger.LogDebug("[CIUDAD]   importe {Amt} → CREDITO (dC={DC:F0} cell.Right={R:F0})", amt, distCredit, cell.Right); }
                 }
                 else if (cell.X >= leftRef - 15 && cell.X < rightDebit - 20)
                 {
