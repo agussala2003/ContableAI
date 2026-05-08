@@ -52,9 +52,19 @@ public static class AfipEndpoints
                 existingKeys.Select(e => (e.Date, e.Amount, e.TaxName)));
 
             int addedCount = 0;
+            var skippedDuplicates = new List<object>();
             foreach (var p in presentations)
             {
-                if (!seenKeys.Add((p.Date, p.Amount, p.TaxName))) continue;
+                if (!seenKeys.Add((p.Date, p.Amount, p.TaxName)))
+                {
+                    skippedDuplicates.Add(new
+                    {
+                        date        = p.Date,
+                        amount      = p.Amount,
+                        description = p.TaxName ?? string.Empty,
+                    });
+                    continue;
+                }
 
                 dbContext.AfipVouchers.Add(new AfipVoucher
                 {
@@ -74,7 +84,7 @@ public static class AfipEndpoints
             // Encolar el job de cruce (corre aunque addedCount sea 0 — puede haber nuevas txs)
             backgroundJobClient.Enqueue<AfipMatchingJob>(job => job.RunAsync(companyId));
 
-            return Results.Ok(addedCount);
+            return Results.Ok(new { added = addedCount, skippedDuplicates });
         })
         .DisableAntiforgery()
         .RequireRateLimiting("afip")

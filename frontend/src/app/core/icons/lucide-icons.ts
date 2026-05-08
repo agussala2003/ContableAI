@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertCircle,
   ArrowRightCircle,
   BookMarked,
   CaseSensitive,
@@ -74,6 +75,7 @@ import {
   Upload,
   User,
   Users,
+  PauseCircle,
   PlayCircle,
   WandSparkles,
   X,
@@ -82,6 +84,7 @@ import {
 
 export const APP_LUCIDE_ICONS = {
   Activity,
+  AlertCircle,
   ArrowRightCircle,
   BookMarked,
   CaseSensitive,
@@ -156,6 +159,7 @@ export const APP_LUCIDE_ICONS = {
   User,
   Users,
   Keyboard,
+  PauseCircle,
   PlayCircle,
   WandSparkles,
   X,

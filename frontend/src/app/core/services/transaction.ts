@@ -53,6 +53,12 @@ export interface TransactionQueryParams {
   pageSize?:     number;
 }
 
+export interface SkippedDuplicate {
+  date: string;
+  amount: number;
+  description: string;
+}
+
 export interface PerFileResult {
   fileName: string;
   processed: number;
@@ -67,6 +73,8 @@ export interface UploadResponse {
   reappliedToExisting?: number;
   companyName: string;
   perFile: PerFileResult[];
+  skippedDuplicates?: SkippedDuplicate[];
+  parseErrors?: string[];
 }
 
 export interface UpdateTransactionResponse {

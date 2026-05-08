@@ -9,6 +9,9 @@ public sealed record FileData(byte[] Content, string FileName, long Length);
 /// <summary>Per-file result included in the upload response.</summary>
 public sealed record FileUploadResult(string FileName, int Processed, int DuplicatesSkipped);
 
+/// <summary>Details of a single transaction that was skipped as a duplicate.</summary>
+public sealed record SkippedDuplicateItem(DateOnly Date, decimal Amount, string Description);
+
 /// <summary>
 /// Command to parse, classify, deduplicate and persist one or more bank statement files.
 /// </summary>
@@ -26,5 +29,7 @@ public sealed record UploadBankStatementResponse(
     int DuplicatesSkipped,
     int ReappliedToExisting,
     string CompanyName,
-    IReadOnlyList<FileUploadResult> PerFile
+    IReadOnlyList<FileUploadResult> PerFile,
+    IReadOnlyList<SkippedDuplicateItem> SkippedDuplicates,
+    IReadOnlyList<string> ParseErrors
 );

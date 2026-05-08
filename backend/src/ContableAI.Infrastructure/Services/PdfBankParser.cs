@@ -1,5 +1,7 @@
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PDFtoImage;
 using SkiaSharp;
 using System.Globalization;
@@ -18,6 +20,11 @@ namespace ContableAI.Infrastructure.Services;
 /// </summary>
 public class PdfBankParser : IBankParser
 {
+    private readonly ILogger<PdfBankParser> _logger;
+
+    public PdfBankParser(ILogger<PdfBankParser> logger) { _logger = logger; }
+    public PdfBankParser() { _logger = NullLogger<PdfBankParser>.Instance; }
+
     #region Constantes y Expresiones Regulares
 
     public string BankCode    => "PDF";
@@ -82,20 +89,38 @@ public class PdfBankParser : IBankParser
             var pages = doc.GetPages().ToList();
 
             var totalWords = pages.Take(3).Sum(p => p.GetWords().Count());
+            _logger.LogDebug("[PDF] '{File}' — {Pages} pags, {Words} palabras digitales en primeras 3 pags",
+                fileName, pages.Count, totalWords);
 
             List<PdfRow> rows;
             string bank;
 
-            if (totalWords >= 10)
+            if (totalWords >= 30)
             {
                 // PDF digital: extracción de texto directa
                 bank = DetectBank(pages, fileName);
+                _logger.LogDebug("[PDF] Ruta DIGITAL — banco detectado: {Bank}", bank);
                 rows = ExtractPositionalRows(pages);
+                _logger.LogDebug("[PDF] Filas posicionales extraídas: {RowCount}", rows.Count);
             }
             else
             {
                 // PDF escaneado: pipeline OCR
-                rows = ExtractRowsViaOcr(pdfBytes);
+                _logger.LogDebug("[PDF] Ruta OCR — {Words} palabras insuficientes para ruta digital", totalWords);
+                try
+                {
+                    var tessPath = GetTessDataPath();
+                    _logger.LogDebug("[PDF] tessdata path: {Path} — existe: {Exists}", tessPath, Directory.Exists(tessPath));
+                    rows = ExtractRowsViaOcr(pdfBytes);
+                    _logger.LogDebug("[PDF] OCR completado — {RowCount} filas extraídas", rows.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[PDF] OCR falló para '{File}': {Msg}", fileName, ex.Message);
+                    throw new InvalidOperationException(
+                        $"OCR no disponible o falló al procesar el PDF escaneado (palabras digitales detectadas: {totalWords}). " +
+                        $"Detalle: {ex.Message}", ex);
+                }
 
                 if (rows.Count == 0)
                     throw new InvalidOperationException(
@@ -105,10 +130,11 @@ public class PdfBankParser : IBankParser
                 bank = DetectBankFromRows(rows, fileName);
             }
 
+            _logger.LogDebug("[PDF] Banco final: {Bank} — total filas: {Rows}", bank, rows.Count);
             return bank switch
             {
                 BankMercadoPago => ParseMercadoPago(rows),
-                BankCiudad      => ParseBancoCiudad(rows),
+                BankCiudad      => ParseBancoCiudad(rows, _logger),
                 _               => ParseStateful(rows, bank, fileName)
             };
         }
@@ -1481,7 +1507,7 @@ public class PdfBankParser : IBankParser
     /// Fechas:   dd/MM/yyyy (año completo incluido en cada fila)
     /// Importes: formato US (coma=miles, punto=decimal): 1,234.56
     /// </summary>
-    private static List<BankTransaction> ParseBancoCiudad(List<PdfRow> rows)
+    private static List<BankTransaction> ParseBancoCiudad(List<PdfRow> rows, ILogger logger)
     {
         var txs = new List<BankTransaction>();
         bool inTable = false;
@@ -1506,23 +1532,64 @@ public class PdfBankParser : IBankParser
                 foreach (var cell in row.Cells)
                 {
                     var cu = cell.Text.ToUpperInvariant();
-                    if (cu.Contains("DEBITO"))     rightDebit  = cell.Right;
+                    if (cu.Contains("DEBITO"))       rightDebit  = cell.Right;
                     else if (cu.Contains("CREDITO")) rightCredit = cell.Right;
                     else if (cu == "SALDO")          rightSaldo  = cell.Right;
                     else if (cu == "REFERENCIA")     leftRef     = cell.X;
                 }
+                logger.LogDebug("[CIUDAD] Header detectado — rightDebit={D} rightCredit={C} rightSaldo={S} leftRef={R}",
+                    rightDebit, rightCredit, rightSaldo, leftRef);
                 continue;
+            }
+
+            // "INT Y GSTOS BANCARIOS" es una sección separada que marca el fin del cuerpo de
+            // transacciones — todo lo que sigue son cargos fiscales fuera del total DEBITOS/CREDITOS.
+            // DEBITO FISCAL IVA e IMPUESTO A LOS DEBITOS aparecen como filas con fecha dentro de la
+            // tabla; se omiten con continue (no break) para no cortar el parsing de fechas posteriores.
+            if (inTable)
+            {
+                bool esSectionEnd = upperLine.Contains("INT Y GSTOS BANCARIOS") ||
+                                    upperLine.Contains("INTERESES Y GASTOS BANCARIOS") ||
+                                    upperLine.Contains("INTERES Y GASTOS BANCARIOS") ||
+                                    upperLine.Contains("INTERES. GRALES") ||
+                                    upperLine.Contains("GTOS. BANCARIOS") ||
+                                    (upperLine.Contains("GSTOS") && upperLine.Contains("BANCARIO"));
+                if (esSectionEnd)
+                {
+                    logger.LogDebug("[CIUDAD] BREAK — encabezado de sección fiscal: '{Line}'", lineText);
+                    break;
+                }
+
+                bool esFilaFiscal = upperLine.Contains("DEBITO FISCAL IVA") ||
+                                    upperLine.Contains("CREDITO FISCAL IVA") ||
+                                    upperLine.Contains("IMPUESTO A LOS DEBITOS") ||
+                                    upperLine.Contains("IMPUESTO A LOS DÉBITOS");
+                if (esFilaFiscal)
+                {
+                    logger.LogDebug("[CIUDAD] SKIP (fila fiscal excluida del total banco): '{Line}'", lineText);
+                    continue;
+                }
             }
 
             if (!inTable) continue;
 
             // Filtro principal: la primera celda debe ser una fecha dd/MM/yyyy
             if (!DateOnly.TryParseExact(row.Cells[0].Text.Trim(), "dd/MM/yyyy", out var date))
+            {
+                logger.LogDebug("[CIUDAD] SKIP (sin fecha) — '{Line}'", lineText);
                 continue;
+            }
 
-            // Saltar filas de saldo diario/final (los importes caen en la columna SALDO de todas formas)
-            if (upperLine.Contains("SALDO FINAL"))
+            // Saltar filas de saldo (INICIAL, ANTERIOR, FINAL) — son balances, no transacciones.
+            if (upperLine.Contains("SALDO FINAL") ||
+                upperLine.Contains("SALDO INICIAL") ||
+                upperLine.Contains("SALDO ANTERIOR"))
+            {
+                logger.LogDebug("[CIUDAD] SKIP (saldo) — '{Line}'", lineText);
                 continue;
+            }
+
+            logger.LogDebug("[CIUDAD] Fila en tabla con fecha {Date} — '{Line}'", date, lineText);
 
             decimal debitAmt = 0, creditAmt = 0;
             var descParts = new List<string>();
@@ -1535,16 +1602,32 @@ public class PdfBankParser : IBankParser
 
                 if (IsCiudadAmount(txt))
                 {
-                    var amt = Math.Abs(ParseCiudadAmount(txt));
+                    var rawAmt = ParseCiudadAmount(txt);
+                    // Negative amounts only appear in the SALDO column (running balance).
+                    // DEBITOS and CREDITOS are always positive — a negative value here
+                    // means the column classifier would misidentify SALDO INICIAL/ANTERIOR
+                    // as a debit. Skip it unconditionally.
+                    if (rawAmt < 0)
+                    {
+                        logger.LogDebug("[CIUDAD]   importe NEGATIVO {Amt} en cell.Right={R} — ignorado (saldo)", rawAmt, cell.Right);
+                        continue;
+                    }
+
+                    var amt = rawAmt;
                     double distDebit  = Math.Abs(cell.Right - rightDebit);
                     double distCredit = Math.Abs(cell.Right - rightCredit);
                     double distSaldo  = Math.Abs(cell.Right - rightSaldo);
                     double minDist    = Math.Min(distDebit, Math.Min(distCredit, distSaldo));
 
                     if (minDist > 80) { descParts.Add(txt); continue; }
-                    if (distSaldo  == minDist) continue; // saldo → ignorar
-                    if (distDebit  == minDist) debitAmt  = amt;
-                    else                       creditAmt = amt;
+
+                    if (distSaldo == minDist)
+                    {
+                        logger.LogDebug("[CIUDAD]   importe {Amt} → SALDO (ignorado, dS={DS:F0} cell.Right={R:F0})", amt, distSaldo, cell.Right);
+                        continue;
+                    }
+                    if (distDebit == minDist) { debitAmt  = amt; logger.LogDebug("[CIUDAD]   importe {Amt} → DEBITO  (dD={DD:F0} cell.Right={R:F0})", amt, distDebit,  cell.Right); }
+                    else                      { creditAmt = amt; logger.LogDebug("[CIUDAD]   importe {Amt} → CREDITO (dC={DC:F0} cell.Right={R:F0})", amt, distCredit, cell.Right); }
                 }
                 else if (cell.X >= leftRef - 15 && cell.X < rightDebit - 20)
                 {
@@ -1560,7 +1643,11 @@ public class PdfBankParser : IBankParser
                 // else: zona entre REFERENCIA y DEBITOS → ignorar
             }
 
-            if (debitAmt == 0 && creditAmt == 0) continue;
+            if (debitAmt == 0 && creditAmt == 0)
+            {
+                logger.LogDebug("[CIUDAD] SKIP (sin importe) — {Date} '{Line}'", date, lineText);
+                continue;
+            }
 
             var rawDesc = Regex.Replace(string.Join(" ", descParts), @"\s+", " ").Trim();
 
@@ -1569,17 +1656,22 @@ public class PdfBankParser : IBankParser
 
             if (string.IsNullOrWhiteSpace(rawDesc)) rawDesc = "Movimiento Ciudad";
 
+            var txType = debitAmt > 0 ? TransactionType.Debit : TransactionType.Credit;
+            var txAmt  = debitAmt > 0 ? debitAmt : creditAmt;
+            logger.LogDebug("[CIUDAD] TX — {Date} | {Type} | {Amount} | '{Desc}'", date, txType, txAmt, rawDesc);
+
             txs.Add(new BankTransaction
             {
                 Date        = date,
                 Description = rawDesc,
-                Amount      = debitAmt > 0 ? debitAmt : creditAmt,
-                Type        = debitAmt > 0 ? TransactionType.Debit : TransactionType.Credit,
+                Amount      = txAmt,
+                Type        = txType,
                 SourceBank  = BankCiudad,
                 ExternalId  = referencia,
             });
         }
 
+        logger.LogDebug("[CIUDAD] Total transacciones parseadas: {Count}", txs.Count);
         return txs.OrderBy(t => t.Date).ToList();
     }
 

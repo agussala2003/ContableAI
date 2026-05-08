@@ -2,6 +2,7 @@ import { Component, inject, input, output, signal, effect, computed } from '@ang
 import { DecimalPipe, DatePipe } from '@angular/common';
 import { AfipService, AfipVoucher } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
+import { SkippedDuplicate } from '../../../../core/services/transaction';
 import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
@@ -15,8 +16,9 @@ export class AfipZone {
   private afipService = inject(AfipService);
   private toast = inject(ToastService);
 
-  companyId = input<string | undefined>(undefined);
-  uploadComplete = output<number>();
+  companyId         = input<string | undefined>(undefined);
+  uploadComplete    = output<number>();
+  skippedDuplicates = output<SkippedDuplicate[]>();
 
   isLoading     = signal(false);
   isLoadingList = signal(false);
@@ -88,16 +90,20 @@ export class AfipZone {
     this.isLoading.set(true);
 
     this.afipService.uploadVouchers(id, files).subscribe({
-      next: (addedCount) => {
+      next: (result) => {
         this.isLoading.set(false);
         this.selectedFiles.set([]);
-        this.uploadComplete.emit(addedCount);
+        this.uploadComplete.emit(result.added);
         this.loadVouchers(id);
 
-        if (addedCount > 0) {
-          this.toast.success(`¡${addedCount} comprobante${addedCount > 1 ? 's' : ''} cargado${addedCount > 1 ? 's' : ''}! El cruce se procesa en segundo plano.`);
-        } else {
-          this.toast.info('No se agregaron comprobantes nuevos (posibles duplicados o archivos no válidos).');
+        if (result.added > 0) {
+          this.toast.success(`¡${result.added} comprobante${result.added > 1 ? 's' : ''} cargado${result.added > 1 ? 's' : ''}! El cruce se procesa en segundo plano.`);
+        } else if (!result.skippedDuplicates?.length) {
+          this.toast.info('No se encontraron comprobantes válidos en los archivos subidos.');
+        }
+
+        if (result.skippedDuplicates?.length) {
+          this.skippedDuplicates.emit(result.skippedDuplicates);
         }
       },
       error: () => {

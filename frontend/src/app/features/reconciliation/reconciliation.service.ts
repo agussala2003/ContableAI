@@ -1,7 +1,7 @@
 import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer, switchMap, takeWhile } from 'rxjs';
-import { BankTransaction, Transaction, UploadResponse } from '../../core/services/transaction';
+import { BankTransaction, Transaction, UploadResponse, SkippedDuplicate } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
 import { CompanyService } from '../../core/services/company.service';
@@ -46,6 +46,7 @@ export class ReconciliationService {
   private _availableMonths        = signal<number[]>([]);
   private _availableYears         = signal<number[]>([]);
   private _pendingAfipCount       = signal<number>(0);
+  private _skippedDuplicates      = signal<SkippedDuplicate[]>([]);
 
   // ── Undo Stack ─────────────────────────────────────────────────────────
   private _undoStack: Array<{ id: string; oldAccount: string }> = [];
@@ -65,6 +66,7 @@ export class ReconciliationService {
   readonly availableMonths   = this._availableMonths.asReadonly();
   readonly availableYears    = this._availableYears.asReadonly();
   readonly pendingAfipCount  = this._pendingAfipCount.asReadonly();
+  readonly skippedDuplicates = this._skippedDuplicates.asReadonly();
 
   // ── Computed ───────────────────────────────────────────────────────────
   readonly saldo = computed(() => this._totalIngresosFiltered() - this._totalEgresosFiltered());
@@ -96,6 +98,10 @@ export class ReconciliationService {
         this.refreshAfipCount();
       });
     });
+  }
+
+  clearSkippedDuplicates(): void {
+    this._skippedDuplicates.set([]);
   }
 
   refreshAfipCount(): void {
@@ -355,6 +361,15 @@ export class ReconciliationService {
               `¡Éxito${filesInfo}! Se procesaron ${response.totalProcessed} movimientos` +
               `${response.companyName ? ' para ' + response.companyName : ''}. ` +
               `(${response.duplicatesSkipped} duplicados omitidos)`
+            );
+            if (response.skippedDuplicates?.length) {
+              this._skippedDuplicates.set(response.skippedDuplicates);
+            }
+          }
+          if (response.parseErrors?.length) {
+            const count = response.parseErrors.length;
+            this.toast.warning(
+              `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
             );
           }
           if (reapplied) {
