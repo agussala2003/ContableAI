@@ -1542,15 +1542,25 @@ public class PdfBankParser : IBankParser
                 continue;
             }
 
-            // "INT Y GSTOS BANCARIOS" (Intereses y Gastos Bancarios) es una sección separada
-            // del extracto de Ciudad cuyos importes (DEBITO FISCAL IVA, etc.) NO están incluidos
-            // en el total DEBITOS/CREDITOS del banco. Cortamos el parsing aquí.
-            if (upperLine.Contains("INT Y GSTOS BANCARIOS") ||
-                upperLine.Contains("INTERESES Y GASTOS BANCARIOS") ||
-                upperLine.Contains("INTERES Y GASTOS BANCARIOS"))
+            // "INT Y GSTOS BANCARIOS" es una sección separada cuyos importes (DEBITO FISCAL IVA,
+            // IMPUESTO A LOS DEBITOS, etc.) NO están incluidos en el total DEBITOS/CREDITOS.
+            // Matcheamos varias variantes tipográficas del extracto de Ciudad.
+            if (inTable)
             {
-                logger.LogDebug("[CIUDAD] BREAK — sección fiscal detectada: '{Line}'", lineText);
-                break;
+                bool esFiscal = upperLine.Contains("INT Y GSTOS BANCARIOS") ||
+                                upperLine.Contains("INTERESES Y GASTOS BANCARIOS") ||
+                                upperLine.Contains("INTERES Y GASTOS BANCARIOS") ||
+                                upperLine.Contains("INTERES. GRALES") ||
+                                upperLine.Contains("GTOS. BANCARIOS") ||
+                                (upperLine.Contains("GSTOS") && upperLine.Contains("BANCARIO")) ||
+                                upperLine.Contains("DEBITO FISCAL IVA") ||
+                                upperLine.Contains("IMPUESTO A LOS DEBITOS") ||
+                                upperLine.Contains("IMPUESTO A LOS DÉBITOS");
+                if (esFiscal)
+                {
+                    logger.LogDebug("[CIUDAD] BREAK — sección fiscal detectada: '{Line}'", lineText);
+                    break;
+                }
             }
 
             if (!inTable) continue;
