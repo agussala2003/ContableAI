@@ -99,6 +99,7 @@
         <app-afip-zone
           [companyId]="companyService.activeCompany()?.id"
           (uploadComplete)="svc.refreshAfipCount()"
+          (skippedDuplicates)="onAfipSkippedDuplicates($event)"
           class="block" />
       </div>
     </div>
@@ -478,7 +479,15 @@
 @if (showUploadModal()) {
 <app-upload-modal [isLoading]="svc.isLoading()" [companyId]="companyService.activeCompany()?.id"
   [pendingCount]="svc.pendingTaxCount()" (close)="showUploadModal.set(false)" (fileDropped)="onFileDropped($event)"
-  (matchComplete)="svc.loadData()" (refreshAfipCount)="svc.refreshAfipCount()" />
+  (matchComplete)="svc.loadData()" (refreshAfipCount)="svc.refreshAfipCount()"
+  (skippedDuplicates)="onAfipSkippedDuplicates($event)" />
+}
+
+@if (showDuplicatesModal()) {
+<app-duplicates-modal
+  [duplicates]="pendingDuplicates()"
+  (close)="closeDuplicatesModal()"
+/>
 }
 
 @if (showOnboarding()) {

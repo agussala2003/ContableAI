@@ -2,6 +2,7 @@ import { Component, input, output } from '@angular/core';
 import { UploadZone } from '../upload-zone/upload-zone';
 import { AfipZone } from '../afip-zone/afip-zone';
 import { LucideAngularModule } from 'lucide-angular';
+import { SkippedDuplicate } from '../../../../core/services/transaction';
 
 @Component({
   selector: 'app-upload-modal',
@@ -18,4 +19,5 @@ export class UploadModal {
   fileDropped        = output<{ files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean }>();
   matchComplete      = output<void>();
   refreshAfipCount   = output<void>();
+  skippedDuplicates  = output<SkippedDuplicate[]>();
 }

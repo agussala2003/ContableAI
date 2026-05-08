@@ -182,12 +182,13 @@ public sealed class UploadBankStatementHandler
         }
 
         // ── Process each file ──────────────────────────────────────────────────
-        var allClassified   = new List<BankTransaction>();
-        int totalDuplicates = 0;
-        var perFileResults  = new List<FileUploadResult>();
-        var acceptedInBatch = new HashSet<string>(StringComparer.Ordinal);
-        int globalSortOrder = 0;
-        int totalReapplied  = 0;
+        var allClassified        = new List<BankTransaction>();
+        int totalDuplicates      = 0;
+        var perFileResults       = new List<FileUploadResult>();
+        var acceptedInBatch      = new HashSet<string>(StringComparer.Ordinal);
+        int globalSortOrder      = 0;
+        int totalReapplied       = 0;
+        var allSkippedDuplicates = new List<SkippedDuplicateItem>();
 
         foreach (var (file, parsedTransactions) in allParsed)
         {
@@ -221,6 +222,7 @@ public sealed class UploadBankStatementHandler
                     {
                         fileDups++;
                         totalDuplicates++;
+                        allSkippedDuplicates.Add(new SkippedDuplicateItem(tx.Date, tx.Amount, tx.Description));
                     }
                     continue;
                 }
@@ -229,6 +231,7 @@ public sealed class UploadBankStatementHandler
                 {
                     fileDups++;
                     totalDuplicates++;
+                    allSkippedDuplicates.Add(new SkippedDuplicateItem(tx.Date, tx.Amount, tx.Description));
                     continue;
                 }
 
@@ -294,12 +297,13 @@ public sealed class UploadBankStatementHandler
             command.Files.Count, allClassified.Count + totalDuplicates, totalDuplicates, totalReapplied);
 
         return Result<UploadBankStatementResponse>.Success(new UploadBankStatementResponse(
-            TotalFiles:        command.Files.Count,
-            TotalProcessed:    allClassified.Count,
-            DuplicatesSkipped: totalDuplicates,
+            TotalFiles:          command.Files.Count,
+            TotalProcessed:      allClassified.Count,
+            DuplicatesSkipped:   totalDuplicates,
             ReappliedToExisting: totalReapplied,
-            CompanyName:       company?.Name ?? "Sin empresa",
-            PerFile:           perFileResults
+            CompanyName:         company?.Name ?? "Sin empresa",
+            PerFile:             perFileResults,
+            SkippedDuplicates:   allSkippedDuplicates
         ));
     }
 }

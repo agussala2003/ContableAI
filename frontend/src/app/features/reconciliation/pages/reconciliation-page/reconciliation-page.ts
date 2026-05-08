@@ -13,8 +13,10 @@ import { TransactionSkeleton } from '../../../../shared/components/transaction-s
 import { UploadModal } from '../../components/upload-modal/upload-modal';
 import { AfipZone } from '../../components/afip-zone/afip-zone';
 import { CompanyModal } from '../../components/company-modal/company-modal';
+import { DuplicatesModal } from '../../components/duplicates-modal/duplicates-modal';
 import { OnboardingModal } from '../../../../core/components/onboarding-modal/onboarding-modal';
 import { RuleService, SaveRuleRequest, AccountingRule } from '../../../../core/services/rule.service';
+import { SkippedDuplicate } from '../../../../core/services/transaction';
 import { KeyboardService } from '../../../../core/services/keyboard.service';
 import { AfipService } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -54,6 +56,7 @@ const DEMO_CSV = `Fecha,Referencia,Descripcion,Numero,Importe
     UploadModal,
     AfipZone,
     CompanyModal,
+    DuplicatesModal,
     OnboardingModal,
     LucideAngularModule,
   ],
@@ -73,9 +76,11 @@ export class ReconciliationPage implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
 
   // ── UI-only signals (not business state) ────────────────────────────────
-  isAfipRematching = signal(false);
-  showUploadModal  = signal(false);
-  showCompanyModal = signal(false);
+  isAfipRematching    = signal(false);
+  showUploadModal     = signal(false);
+  showCompanyModal    = signal(false);
+  pendingDuplicates   = signal<SkippedDuplicate[]>([]);
+  showDuplicatesModal = computed(() => this.pendingDuplicates().length > 0);
   howItWorksOpen   = signal(false);
   showQuickRuleModal = signal(false);
   showBulkRuleModal = signal(false);
@@ -127,6 +132,10 @@ export class ReconciliationPage implements OnInit {
     effect(() => {
       const tick = this.ruleService.transactionRefreshTick();
       if (tick > 0) this.svc.loadData();
+    });
+    effect(() => {
+      const dups = this.svc.skippedDuplicates();
+      if (dups.length) this.pendingDuplicates.set(dups);
     });
   }
 
@@ -420,6 +429,15 @@ export class ReconciliationPage implements OnInit {
         }
       },
     });
+  }
+
+  onAfipSkippedDuplicates(dups: SkippedDuplicate[]): void {
+    this.pendingDuplicates.set(dups);
+  }
+
+  closeDuplicatesModal(): void {
+    this.pendingDuplicates.set([]);
+    this.svc.clearSkippedDuplicates();
   }
 
   logout(): void {
