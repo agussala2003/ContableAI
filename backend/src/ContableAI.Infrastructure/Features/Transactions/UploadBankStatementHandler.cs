@@ -132,15 +132,22 @@ public sealed class UploadBankStatementHandler
 
         var existingSignaturesList = await existingSignaturesQuery.ToListAsync(ct);
 
-        var existingSignatures = new Dictionary<string, BankTransaction>(StringComparer.Ordinal);
-        
+        // Frequency map: allows N identical transactions if DB already has N copies of the same signature.
+        // This fixes false duplicates for legitimately-identical same-day transactions (e.g. two $1M transfers).
+        var existingFrequencies = new Dictionary<string, int>(StringComparer.Ordinal);
+        var existingFirstMatch  = new Dictionary<string, BankTransaction>(StringComparer.Ordinal);
+
         foreach (var s in existingSignaturesList)
         {
             var sig = s.ExternalId != null
                 ? $"EXT|{s.ExternalId}|{s.Date}|{s.Amount}|{s.Description}|{s.Type}"
                 : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}";
-            existingSignatures[sig] = s;
+            existingFrequencies[sig] = existingFrequencies.GetValueOrDefault(sig, 0) + 1;
+            existingFirstMatch.TryAdd(sig, s);
         }
+
+        // Mutable budget depleted as duplicates are consumed; copied so existingFrequencies stays intact.
+        var remainingDbCount = new Dictionary<string, int>(existingFrequencies, StringComparer.Ordinal);
 
         // ── Classification rules (loaded once for the whole batch) ─────────────
         var companyRules = company != null
@@ -185,7 +192,6 @@ public sealed class UploadBankStatementHandler
         var allClassified        = new List<BankTransaction>();
         int totalDuplicates      = 0;
         var perFileResults       = new List<FileUploadResult>();
-        var acceptedInBatch      = new HashSet<string>(StringComparer.Ordinal);
         int globalSortOrder      = 0;
         int totalReapplied       = 0;
         var allSkippedDuplicates = new List<SkippedDuplicateItem>();
@@ -201,9 +207,15 @@ public sealed class UploadBankStatementHandler
                     ? $"EXT|{tx.ExternalId}|{tx.Date}|{tx.Amount}|{tx.Description}|{tx.Type}"
                     : $"{tx.Date}|{tx.Description}|{tx.Amount}|{tx.Type}";
 
-                if (existingSignatures.TryGetValue(sig, out var existingTx))
+                // Consume one DB "slot" for this signature if available; only then it's a duplicate.
+                // This allows N identical transactions if the DB has fewer than N copies.
+                if (remainingDbCount.GetValueOrDefault(sig, 0) > 0)
                 {
-                    if (command.ForceReapplyRules && existingTx.JournalEntryId == null)
+                    remainingDbCount[sig]--;
+
+                    if (command.ForceReapplyRules &&
+                        existingFirstMatch.TryGetValue(sig, out var existingTx) &&
+                        existingTx.JournalEntryId == null)
                     {
                         var reclassified = await _classifier.ClassifyAsync(tx, allRules, company?.SplitChequeTax ?? false, ct);
                         if (existingTx.AssignedAccount != reclassified.AssignedAccount || existingTx.ClassificationSource != reclassified.ClassificationSource)
@@ -224,14 +236,6 @@ public sealed class UploadBankStatementHandler
                         totalDuplicates++;
                         allSkippedDuplicates.Add(new SkippedDuplicateItem(tx.Date, tx.Amount, tx.Description));
                     }
-                    continue;
-                }
-
-                if (!acceptedInBatch.Add(sig))
-                {
-                    fileDups++;
-                    totalDuplicates++;
-                    allSkippedDuplicates.Add(new SkippedDuplicateItem(tx.Date, tx.Amount, tx.Description));
                     continue;
                 }
 

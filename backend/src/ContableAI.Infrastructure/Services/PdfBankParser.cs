@@ -81,12 +81,15 @@ public class PdfBankParser : IBankParser
             using var doc = PdfDocument.Open(pdfBytes);
             var pages = doc.GetPages().ToList();
 
+            // Threshold raised to 30: scanned PDFs can embed 10-20 metadata words in PdfPig
+            // without those words being actual transaction text. 30 reliably separates real
+            // digital content from embedded-metadata artifacts in scanned files.
             var totalWords = pages.Take(3).Sum(p => p.GetWords().Count());
 
             List<PdfRow> rows;
             string bank;
 
-            if (totalWords >= 10)
+            if (totalWords >= 30)
             {
                 // PDF digital: extracción de texto directa
                 bank = DetectBank(pages, fileName);
@@ -95,7 +98,16 @@ public class PdfBankParser : IBankParser
             else
             {
                 // PDF escaneado: pipeline OCR
-                rows = ExtractRowsViaOcr(pdfBytes);
+                try
+                {
+                    rows = ExtractRowsViaOcr(pdfBytes);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        $"OCR no disponible o falló al procesar el PDF escaneado (palabras digitales detectadas: {totalWords}). " +
+                        $"Detalle: {ex.Message}", ex);
+                }
 
                 if (rows.Count == 0)
                     throw new InvalidOperationException(
@@ -1520,8 +1532,11 @@ public class PdfBankParser : IBankParser
             if (!DateOnly.TryParseExact(row.Cells[0].Text.Trim(), "dd/MM/yyyy", out var date))
                 continue;
 
-            // Saltar filas de saldo diario/final (los importes caen en la columna SALDO de todas formas)
-            if (upperLine.Contains("SALDO FINAL"))
+            // Saltar filas de saldo (INICIAL, ANTERIOR, FINAL) — son balances, no transacciones.
+            // SALDO INICIAL/ANTERIOR solían procesarse incorrectamente sumando su monto como egreso.
+            if (upperLine.Contains("SALDO FINAL") ||
+                upperLine.Contains("SALDO INICIAL") ||
+                upperLine.Contains("SALDO ANTERIOR"))
                 continue;
 
             decimal debitAmt = 0, creditAmt = 0;
