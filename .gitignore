@@ -70,3 +70,4 @@ tests/
 docs/*
 !docs/**/*.md
 
+# Final of .gitignore
