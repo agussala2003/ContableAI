@@ -1,4 +1,4 @@
-import { Component, inject, signal, OnInit } from '@angular/core';
+import { Component, inject, signal, OnInit, output } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators, AbstractControl } from '@angular/forms';
 import { NgClass } from '@angular/common';
 import { Company, CompanyService, CreateCompanyRequest, UpdateCompanyRequest } from '../../../../core/services/company.service';
@@ -18,6 +18,8 @@ export class CompanyBar implements OnInit {
   private fb      = inject(FormBuilder);
   private toast   = inject(ToastService);
   private confirmDialog = inject(ConfirmDialogService);
+
+  readonly created = output<void>();
 
   showNewForm = signal(false);
   isSaving = signal(false);
@@ -84,6 +86,7 @@ export class CompanyBar implements OnInit {
           bankAccountName: '',
         });
         this.isSaving.set(false);
+        this.created.emit();
       },
       error: (err) => {
         const msg = err.status === 409
