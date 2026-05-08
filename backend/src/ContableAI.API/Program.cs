@@ -33,6 +33,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Formato: sección__clave  →  doble guión bajo como separador de jerarquía
 builder.Configuration.AddEnvironmentVariables();
 
+// Lotes de PDFs escaneados (OCR) superan el límite por defecto de 30 MB de Kestrel.
+builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = 150 * 1024 * 1024);
+
 // Reemplaza el logging por defecto de .NET con Serilog
 builder.Host.UseSerilog((ctx, services, config) => config
     .ReadFrom.Configuration(ctx.Configuration)

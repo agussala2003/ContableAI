@@ -1542,24 +1542,32 @@ public class PdfBankParser : IBankParser
                 continue;
             }
 
-            // "INT Y GSTOS BANCARIOS" es una sección separada cuyos importes (DEBITO FISCAL IVA,
-            // IMPUESTO A LOS DEBITOS, etc.) NO están incluidos en el total DEBITOS/CREDITOS.
-            // Matcheamos varias variantes tipográficas del extracto de Ciudad.
+            // "INT Y GSTOS BANCARIOS" es una sección separada que marca el fin del cuerpo de
+            // transacciones — todo lo que sigue son cargos fiscales fuera del total DEBITOS/CREDITOS.
+            // DEBITO FISCAL IVA e IMPUESTO A LOS DEBITOS aparecen como filas con fecha dentro de la
+            // tabla; se omiten con continue (no break) para no cortar el parsing de fechas posteriores.
             if (inTable)
             {
-                bool esFiscal = upperLine.Contains("INT Y GSTOS BANCARIOS") ||
-                                upperLine.Contains("INTERESES Y GASTOS BANCARIOS") ||
-                                upperLine.Contains("INTERES Y GASTOS BANCARIOS") ||
-                                upperLine.Contains("INTERES. GRALES") ||
-                                upperLine.Contains("GTOS. BANCARIOS") ||
-                                (upperLine.Contains("GSTOS") && upperLine.Contains("BANCARIO")) ||
-                                upperLine.Contains("DEBITO FISCAL IVA") ||
-                                upperLine.Contains("IMPUESTO A LOS DEBITOS") ||
-                                upperLine.Contains("IMPUESTO A LOS DÉBITOS");
-                if (esFiscal)
+                bool esSectionEnd = upperLine.Contains("INT Y GSTOS BANCARIOS") ||
+                                    upperLine.Contains("INTERESES Y GASTOS BANCARIOS") ||
+                                    upperLine.Contains("INTERES Y GASTOS BANCARIOS") ||
+                                    upperLine.Contains("INTERES. GRALES") ||
+                                    upperLine.Contains("GTOS. BANCARIOS") ||
+                                    (upperLine.Contains("GSTOS") && upperLine.Contains("BANCARIO"));
+                if (esSectionEnd)
                 {
-                    logger.LogDebug("[CIUDAD] BREAK — sección fiscal detectada: '{Line}'", lineText);
+                    logger.LogDebug("[CIUDAD] BREAK — encabezado de sección fiscal: '{Line}'", lineText);
                     break;
+                }
+
+                bool esFilaFiscal = upperLine.Contains("DEBITO FISCAL IVA") ||
+                                    upperLine.Contains("CREDITO FISCAL IVA") ||
+                                    upperLine.Contains("IMPUESTO A LOS DEBITOS") ||
+                                    upperLine.Contains("IMPUESTO A LOS DÉBITOS");
+                if (esFilaFiscal)
+                {
+                    logger.LogDebug("[CIUDAD] SKIP (fila fiscal excluida del total banco): '{Line}'", lineText);
+                    continue;
                 }
             }
 
