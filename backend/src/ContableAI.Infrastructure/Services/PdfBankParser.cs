@@ -1550,7 +1550,14 @@ public class PdfBankParser : IBankParser
 
                 if (IsCiudadAmount(txt))
                 {
-                    var amt = Math.Abs(ParseCiudadAmount(txt));
+                    var rawAmt = ParseCiudadAmount(txt);
+                    // Negative amounts only appear in the SALDO column (running balance).
+                    // DEBITOS and CREDITOS are always positive — a negative value here
+                    // means the column classifier would misidentify SALDO INICIAL/ANTERIOR
+                    // as a debit. Skip it unconditionally.
+                    if (rawAmt < 0) continue;
+
+                    var amt = rawAmt;
                     double distDebit  = Math.Abs(cell.Right - rightDebit);
                     double distCredit = Math.Abs(cell.Right - rightCredit);
                     double distSaldo  = Math.Abs(cell.Right - rightSaldo);
