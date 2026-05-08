@@ -30,5 +30,6 @@ public sealed record UploadBankStatementResponse(
     int ReappliedToExisting,
     string CompanyName,
     IReadOnlyList<FileUploadResult> PerFile,
-    IReadOnlyList<SkippedDuplicateItem> SkippedDuplicates
+    IReadOnlyList<SkippedDuplicateItem> SkippedDuplicates,
+    IReadOnlyList<string> ParseErrors
 );

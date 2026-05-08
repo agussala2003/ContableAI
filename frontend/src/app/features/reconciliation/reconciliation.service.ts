@@ -366,6 +366,12 @@ export class ReconciliationService {
               this._skippedDuplicates.set(response.skippedDuplicates);
             }
           }
+          if (response.parseErrors?.length) {
+            const count = response.parseErrors.length;
+            this.toast.warning(
+              `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
+            );
+          }
           if (reapplied) {
             this.toast.success(`Se aplicaron tus reglas actualizadas a ${response.reappliedToExisting} transacciones existentes.`);
           }

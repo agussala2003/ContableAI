@@ -74,6 +74,7 @@ export interface UploadResponse {
   companyName: string;
   perFile: PerFileResult[];
   skippedDuplicates?: SkippedDuplicate[];
+  parseErrors?: string[];
 }
 
 export interface UpdateTransactionResponse {

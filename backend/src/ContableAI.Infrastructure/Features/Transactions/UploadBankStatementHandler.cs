@@ -72,24 +72,33 @@ public sealed class UploadBankStatementHandler
             return Result<UploadBankStatementResponse>.Forbidden();
 
         // ── Parse all files ────────────────────────────────────────────────────
-        var allParsed = new List<(FileData File, List<BankTransaction> Txs)>();
+        var allParsed   = new List<(FileData File, List<BankTransaction> Txs)>();
+        var parseErrors = new List<string>();
+
         foreach (var file in command.Files)
         {
             if (file.Length == 0) continue;
             using var stream = new MemoryStream(file.Content);
             var effectiveBankCode = (command.BankCode is null or "AUTO") ? "PDF" : command.BankCode;
-            List<BankTransaction> txs;
             try
             {
-                txs = _parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf").ToList();
+                var txs = _parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf").ToList();
+                allParsed.Add((file, txs));
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex)
             {
-                return Result<UploadBankStatementResponse>.Failure(
-                    $"No se pudo procesar '{file.FileName}': {ex.Message}");
+                // Log and continue — one broken file shouldn't abort the whole batch.
+                var msg = ex is InvalidOperationException ? ex.Message : $"Error inesperado: {ex.Message}";
+                _logger.LogWarning("Could not parse '{FileName}': {Message}", file.FileName, msg);
+                parseErrors.Add($"{file.FileName}: {msg}");
             }
-            allParsed.Add((file, txs));
         }
+
+        // Fail only when every file failed (nothing to save).
+        if (allParsed.Count == 0 && parseErrors.Count > 0)
+            return Result<UploadBankStatementResponse>.Failure(
+                $"No se pudo procesar ningún archivo. {parseErrors[0]}");
+
 
         var totalParsed = allParsed.Sum(x => x.Txs.Count);
 
@@ -307,7 +316,8 @@ public sealed class UploadBankStatementHandler
             ReappliedToExisting: totalReapplied,
             CompanyName:         company?.Name ?? "Sin empresa",
             PerFile:             perFileResults,
-            SkippedDuplicates:   allSkippedDuplicates
+            SkippedDuplicates:   allSkippedDuplicates,
+            ParseErrors:         parseErrors
         ));
     }
 }

@@ -1526,6 +1526,14 @@ public class PdfBankParser : IBankParser
                 continue;
             }
 
+            // "INT Y GSTOS BANCARIOS" (Intereses y Gastos Bancarios) es una sección separada
+            // del extracto de Ciudad cuyos importes (DEBITO FISCAL IVA, etc.) NO están incluidos
+            // en el total DEBITOS/CREDITOS del banco. Cortamos el parsing aquí.
+            if (upperLine.Contains("INT Y GSTOS BANCARIOS") ||
+                upperLine.Contains("INTERESES Y GASTOS BANCARIOS") ||
+                upperLine.Contains("INTERES Y GASTOS BANCARIOS"))
+                break;
+
             if (!inTable) continue;
 
             // Filtro principal: la primera celda debe ser una fecha dd/MM/yyyy
