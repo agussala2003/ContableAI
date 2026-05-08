@@ -1,5 +1,6 @@
 using ContableAI.Application.Features.Dashboard.Queries;
 using ContableAI.API.Common;
+using ContableAI.Infrastructure.Services;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
@@ -26,5 +27,20 @@ public static class DashboardEndpoints
         .WithDescription("Retorna TotalTransactions, PendingClassification, Classified y LowConfidence para el mes/año indicado (o el mes actual si se omiten). Query params: companyId (requerido), month, year.")
         .Produces<DashboardStatsResponse>(200)
         .Produces<ProblemDetails>(401);
+
+        app.MapGet("/api/dashboard/limits", async (
+            ICurrentTenantService tenant,
+            IMediator             mediator) =>
+        {
+            var query  = new GetTenantQuotaQuery(tenant.StudioTenantId!);
+            var result = await mediator.Send(query);
+            return result.ToHttpResult();
+        })
+        .RequireAuthorization()
+        .WithName("GetDashboardLimits")
+        .WithTags("Dashboard")
+        .WithSummary("Consumo y límites del plan contratado.")
+        .WithDescription("Devuelve el estado de uso de empresas, reglas (según config) y el plan actual del estudio.")
+        .Produces<TenantQuotaResponse>(200);
     }
 }

@@ -13,5 +13,9 @@ public record GetCompanyQuery(Guid Id)
     : IRequest<Result<CompanyResponse>>;
 
 // ── Get rules assigned to a company ───────────────────────────────────────────
-public record GetCompanyRulesQuery(Guid CompanyId)
+public record GetCompanyRulesQuery(Guid CompanyId, bool IncludeInactive = false)
+    : IRequest<Result<List<RuleResponse>>>;
+
+// ── Get studio-level rules ─────────────────────────────────────────────────────
+public record GetStudioRulesQuery(string StudioTenantId, bool IncludeInactive = false)
     : IRequest<Result<List<RuleResponse>>>;

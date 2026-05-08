@@ -45,16 +45,6 @@
         @if (sidebarOpen()) { <span class="whitespace-nowrap">Inicio</span> }
       </a>
 
-      <a routerLink="/dashboard"
-         routerLinkActive="bg-white/20 text-white"
-         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
-                hover:text-white hover:bg-white/10 transition-colors"
-         [class.justify-center]="!sidebarOpen()"
-         title="Dashboard">
-        <lucide-icon name="bar-chart-3" [size]="16" color="currentColor" class="shrink-0" />
-        @if (sidebarOpen()) { <span class="whitespace-nowrap">Dashboard</span> }
-      </a>
-
       <a routerLink="/journal"
          routerLinkActive="bg-white/20 text-white"
          class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
@@ -75,6 +65,26 @@
         @if (sidebarOpen()) { <span class="whitespace-nowrap">Reglas</span> }
       </a>
 
+      <a routerLink="/studio-rules"
+         routerLinkActive="bg-white/20 text-white"
+         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                hover:text-white hover:bg-white/10 transition-colors"
+         [class.justify-center]="!sidebarOpen()"
+         title="Reglas del Estudio">
+        <lucide-icon name="library" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Reglas Estudio</span> }
+      </a>
+
+      <a routerLink="/chart-of-accounts"
+         routerLinkActive="bg-white/20 text-white"
+         class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                hover:text-white hover:bg-white/10 transition-colors"
+         [class.justify-center]="!sidebarOpen()"
+         title="Plan de Cuentas">
+        <lucide-icon name="layers" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Plan de Cuentas</span> }
+      </a>
+
       @if (isSystemAdmin) {
         <a routerLink="/admin"
            routerLinkActive="bg-white/20 text-white"
@@ -86,6 +96,49 @@
           @if (sidebarOpen()) { <span class="whitespace-nowrap">Admin</span> }
         </a>
       }
+
+      <!-- Help / tour button (only shown when current page has a tour) -->
+      @if (hasTour()) {
+        <button
+          (click)="startTour()"
+          class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+                 hover:text-white hover:bg-white/10 transition-colors w-full"
+          [class.justify-center]="!sidebarOpen()"
+          title="Guía interactiva de esta página">
+          <lucide-icon name="circle-help" [size]="16" color="currentColor" class="shrink-0" />
+          @if (sidebarOpen()) { <span class="whitespace-nowrap">Guía</span> }
+        </button>
+      }
+
+      <!-- Keyboard shortcuts button -->
+      <button
+        (click)="keyboardService.toggleShortcutsModal()"
+        class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+               hover:text-white hover:bg-white/10 transition-colors w-full"
+        [class.justify-center]="!sidebarOpen()"
+        title="Atajos de teclado (?)">
+        <lucide-icon name="keyboard" [size]="16" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Atajos</span> }
+      </button>
+
+      <!-- Suggestions button (always visible) -->
+      <button
+        (click)="showSuggestionsDrawer.set(true)"
+        class="relative flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+               hover:text-white hover:bg-white/10 transition-colors w-full"
+        [class.justify-center]="!sidebarOpen()"
+        title="Sugerencias de Aprendizaje Proactivo">
+        <span class="relative shrink-0">
+          <lucide-icon name="sparkles" [size]="16" color="currentColor" />
+          @if (ruleService.globalSuggestionCount() > 0) {
+            <span class="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 bg-rose-500 text-white text-[9px] font-bold
+                         rounded-full flex items-center justify-center px-1 leading-none shadow-sm">
+              {{ ruleService.globalSuggestionCount() > 9 ? '9+' : ruleService.globalSuggestionCount() }}
+            </span>
+          }
+        </span>
+        @if (sidebarOpen()) { <span class="whitespace-nowrap">Sugerencias</span> }
+      </button>
 
     </nav>
 
@@ -118,6 +171,18 @@
           </div>
         }
       }
+
+      <a routerLink="/plan"
+        routerLinkActive="bg-white/20 text-white"
+        class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
+               hover:text-white hover:bg-white/10 transition-colors w-full"
+        [class.justify-center]="!sidebarOpen()"
+        title="Plan y Suscripción">
+        <lucide-icon name="credit-card" [size]="14" color="currentColor" class="shrink-0" />
+        @if (sidebarOpen()) {
+          <span class="whitespace-nowrap">Plan y Suscripción</span>
+        }
+      </a>
 
       <button
         (click)="toggleTheme()"
@@ -160,6 +225,29 @@
 
   <!-- Confirm dialog (global) -->
   <app-confirm-dialog />
+
+  <!-- Global Tour Overlay (works across all pages) -->
+  <app-tour-overlay />
+
+  <!-- Global Keyboard Shortcuts Modal -->
+  @if (keyboardService.showShortcutsModal()) {
+    <app-keyboard-shortcuts-modal (close)="keyboardService.closeShortcutsModal()" />
+  }
+
+  <!-- Suggestions Drawer -->
+  <div
+    class="fixed inset-0 z-[200] bg-black/50 transition-opacity duration-300"
+    [class.opacity-0]="!showSuggestionsDrawer()"
+    [class.opacity-100]="showSuggestionsDrawer()"
+    [class.pointer-events-none]="!showSuggestionsDrawer()"
+    (click)="showSuggestionsDrawer.set(false)">
+  </div>
+  <div
+    class="fixed top-0 right-0 h-full w-96 z-[201] transition-transform duration-300 ease-in-out"
+    [class.translate-x-full]="!showSuggestionsDrawer()"
+    [class.translate-x-0]="showSuggestionsDrawer()">
+    <app-suggestions-drawer (closed)="showSuggestionsDrawer.set(false)" />
+  </div>
 
   @if (loadingService.isLoading()) {
     <div

@@ -1,207 +1,182 @@
-# ContableAI — Referencia de Comandos
+# ContableAI — Guía de Desarrollo y Operaciones
 
-> Todos los comandos asumen que estás parado en la raíz del repo (`ContableAI/`)  
+> Todos los comandos asumen que estás parado en la raíz del repo (`ContableAI/`)
 > a menos que se indique lo contrario.
+> Última actualización: 2026-05-07
 
 ---
 
 ## Índice
 
-1. [Infraestructura local (Docker)](#1-infraestructura-local-docker)
-2. [Backend .NET](#2-backend-net)
-3. [Migraciones EF Core](#3-migraciones-ef-core)
-4. [Tests](#4-tests)
+1. [Stack y entornos](#1-stack-y-entornos)
+2. [Setup inicial](#2-setup-inicial)
+3. [Levantar el proyecto localmente](#3-levantar-el-proyecto-localmente)
+4. [Backend .NET](#4-backend-net)
 5. [Frontend Angular](#5-frontend-angular)
-6. [Secretos y variables de entorno](#6-secretos-y-variables-de-entorno)
-7. [CI / CD — GitHub Actions](#7-ci--cd--github-actions)
-8. [Flujo de trabajo recomendado (día a día)](#8-flujo-de-trabajo-recomendado-día-a-día)
-9. [Checklists de deploy](#9-checklists-de-deploy)
+6. [Migraciones EF Core](#6-migraciones-ef-core)
+7. [Reset de base de datos](#7-reset-de-base-de-datos)
+8. [Variables de entorno y secretos](#8-variables-de-entorno-y-secretos)
+9. [Tests](#9-tests)
+10. [Deploy](#10-deploy)
+11. [Flujo de trabajo día a día](#11-flujo-de-trabajo-día-a-día)
+12. [Checklists](#12-checklists)
 
 ---
 
-## 1. Infraestructura local (Docker)
+## 1. Stack y entornos
 
-### Levantar servicios de soporte (SQL Server + Qdrant)
+### Stack
+
+| Capa | Tecnología |
+|------|-----------|
+| Backend | .NET 10, Clean Architecture (API / Application / Domain / Infrastructure) |
+| Frontend | Angular 21, Tailwind CSS 4 |
+| Base de datos | PostgreSQL 16 |
+| ORM | Entity Framework Core 10 + Npgsql |
+| Jobs | Hangfire (dashboard en `/hangfire`) |
+| Email | Resend (SMTP) |
+| Auth | JWT Bearer |
+| Logs | Serilog (archivos diarios + consola) |
+| OCR | Tesseract 4 (español) |
+
+### Entornos
+
+| Entorno | API | Frontend | Base de datos |
+|---------|-----|----------|---------------|
+| **Local** | `http://localhost:5284` | `http://localhost:4200` | Docker `localhost:5432` |
+| **Producción** | `https://contableai-api.onrender.com` | `https://contable-ai-sandy.vercel.app` | Neon PostgreSQL |
+
+### Cómo .NET elige la configuración
+
+ASP.NET Core carga los archivos en este orden (cada uno sobreescribe al anterior):
+
+```
+appsettings.json                ← base sin secretos (commiteado)
+appsettings.{ENVIRONMENT}.json  ← overrides por entorno (Development gitignoreado)
+Variables de entorno             ← máxima prioridad (formato: Section__Key)
+```
+
+- En **local** (`dotnet watch / run`): `ASPNETCORE_ENVIRONMENT=Development` → lee `appsettings.Development.json`
+- En **Render**: `ASPNETCORE_ENVIRONMENT=Production` → lee solo vars de entorno del dashboard
+
+---
+
+## 2. Setup inicial
+
+### Prerrequisitos
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 22+](https://nodejs.org)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop)
+- [dotnet-ef tools](https://learn.microsoft.com/en-us/ef/core/cli/dotnet)
+
 ```bash
+# Instalar dotnet-ef globalmente (una sola vez)
+dotnet tool install --global dotnet-ef
+
+# Verificar
+dotnet ef --version
+```
+
+### Primera vez en el repo
+
+```bash
+# 1. Clonar
+git clone <repo-url>
+cd ContableAI
+
+# 2. Instalar dependencias frontend
+cd frontend && npm ci && cd ..
+
+# 3. Restaurar paquetes backend
+cd backend && dotnet restore && cd ..
+
+# 4. Levantar PostgreSQL local
 docker compose up -d
+
+# 5. Aplicar migraciones y seed (corre automático al iniciar la API)
+# Ver sección "Levantar el proyecto" abajo
 ```
 
-### Ver estado de los contenedores
+---
+
+## 3. Levantar el proyecto localmente
+
+### PostgreSQL (Docker)
+
 ```bash
+# Levantar en background
+docker compose up -d
+
+# Ver estado
 docker compose ps
-```
 
-### Bajar los contenedores (mantiene los volúmenes)
-```bash
+# Ver logs de PostgreSQL
+docker compose logs -f postgres
+
+# Detener (conserva los datos)
 docker compose down
-```
 
-### Bajar y borrar los volúmenes (DB limpia — perderás los datos)
-```bash
+# Detener y borrar datos (DB limpia)
 docker compose down -v
 ```
 
-### Ver logs de SQL Server en tiempo real
+Credenciales locales:
+- Host: `localhost:5432`
+- DB: `contableai_dev`
+- Usuario: `postgres`
+- Password: `CHANGE_ME`
+
+### API .NET (con hot reload)
+
 ```bash
-docker compose logs -f sqlserver
-```
-
-### Conectarse a SQL Server desde la terminal
-```bash
-docker exec -it contableai-sqlserver-1 /opt/mssql-tools/bin/sqlcmd \
-  -S localhost -U sa -P "YourStrongPass123!"
-```
-
-### Qdrant Web UI
-```
-http://localhost:6333/dashboard
-```
-
----
-
-## 2. Backend .NET
-
-Todos los comandos desde `backend/`.
-
-### Restaurar paquetes
-```bash
-dotnet restore
-```
-
-### Compilar (modo desarrollo)
-```bash
-dotnet build
-```
-
-### Compilar (modo Release — igual que el CI)
-```bash
-dotnet build --configuration Release
-```
-
-### Ejecutar la API
-```bash
-dotnet run --project src/ContableAI.API
-# Escucha en: http://localhost:5284
-# Swagger/Scalar: http://localhost:5284/scalar/v1
-# Health check:  http://localhost:5284/healthz
-```
-
-### Ejecutar con hot reload
-```bash
+cd backend
 dotnet watch --project src/ContableAI.API
 ```
 
-### Verificar vulnerabilidades de packages
+Al iniciar, la API aplica las migraciones pendientes y ejecuta el seed automáticamente.
+
+URLs disponibles:
+- API: `http://localhost:5284`
+- Documentación (Scalar): `http://localhost:5284/scalar/v1`
+- Health check: `http://localhost:5284/healthz`
+- Hangfire: `http://localhost:5284/hangfire`
+
+### Frontend Angular
+
 ```bash
-dotnet list src/ContableAI.API/ContableAI.API.csproj package --vulnerable --include-transitive
-dotnet list src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj package --vulnerable --include-transitive
+cd frontend
+npx ng serve
+# http://localhost:4200
 ```
 
-### Actualizar un package
-```bash
-dotnet add src/ContableAI.API/ContableAI.API.csproj package <NombrePackage> --version <x.y.z>
-```
+El frontend apunta a `http://localhost:5284/api` en modo development (definido en `src/environments/environment.ts`).
 
 ---
 
-## 3. Migraciones EF Core
-
-Todos los comandos desde `backend/` con `--project src/ContableAI.Infrastructure --startup-project src/ContableAI.API`.
-
-### Ver estado de migraciones
-```bash
-dotnet ef migrations list \
-  --project src/ContableAI.Infrastructure \
-  --startup-project src/ContableAI.API
-```
-
-### Crear una nueva migración
-```bash
-dotnet ef migrations add <NombreMigracion> \
-  --project src/ContableAI.Infrastructure \
-  --startup-project src/ContableAI.API
-```
-> Usar nombres descriptivos en PascalCase, ej: `AddPasswordResetToken`, `AddPeriodClosing`
-
-### Aplicar migraciones pendientes a la DB
-```bash
-dotnet ef database update \
-  --project src/ContableAI.Infrastructure \
-  --startup-project src/ContableAI.API
-```
-> En producción esto lo hace el startup automáticamente (`await app.SeedDatabaseAsync()`).
-
-### Revertir a una migración anterior
-```bash
-dotnet ef database update <NombreMigracionDestino> \
-  --project src/ContableAI.Infrastructure \
-  --startup-project src/ContableAI.API
-```
-
-### Eliminar la última migración (si aún no fue aplicada)
-```bash
-dotnet ef migrations remove \
-  --project src/ContableAI.Infrastructure \
-  --startup-project src/ContableAI.API
-```
-
-### Generar script SQL para deploy en producción
-```bash
-dotnet ef migrations script \
-  --project src/ContableAI.Infrastructure \
-  --startup-project src/ContableAI.API \
-  --idempotent \
-  --output migrations.sql
-```
-> `--idempotent` genera un script que se puede ejecutar varias veces sin error.
-
----
-
-## 4. Tests
+## 4. Backend .NET
 
 Todos los comandos desde `backend/`.
 
-### Correr todos los tests
 ```bash
-dotnet test
-```
+# Restaurar paquetes
+dotnet restore
 
-### Correr tests con output detallado
-```bash
-dotnet test --verbosity normal
-```
+# Compilar (dev)
+dotnet build
 
-### Correr tests en Release (igual que CI)
-```bash
-dotnet test --configuration Release --verbosity normal
-```
+# Compilar (Release — igual que CI)
+dotnet build --configuration Release
 
-### Correr solo una clase de tests
-```bash
-dotnet test --filter "FullyQualifiedName~BankTransactionTests"
-```
+# Ejecutar sin hot reload
+dotnet run --project src/ContableAI.API
 
-### Correr tests con reporte de cobertura
-```bash
-dotnet test --collect:"XPlat Code Coverage"
-# Los resultados quedan en tests/ContableAI.Tests/TestResults/
-```
+# Ejecutar con hot reload (recomendado para desarrollo)
+dotnet watch --project src/ContableAI.API
 
-### Ver cobertura en consola (requiere reportgenerator)
-```bash
-# Instalar la tool globalmente (una sola vez)
-dotnet tool install -g dotnet-reportgenerator-globaltool
-
-# Generar reporte HTML
-reportgenerator \
-  -reports:"tests/ContableAI.Tests/TestResults/**/coverage.cobertura.xml" \
-  -targetdir:"coverage-report" \
-  -reporttypes:Html
-```
-
-### Correr tests en watch mode
-```bash
-dotnet watch test --project tests/ContableAI.Tests
+# Verificar vulnerabilidades en paquetes
+dotnet list src/ContableAI.API/ContableAI.API.csproj package --vulnerable --include-transitive
+dotnet list src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj package --vulnerable --include-transitive
 ```
 
 ---
@@ -210,203 +185,355 @@ dotnet watch test --project tests/ContableAI.Tests
 
 Todos los comandos desde `frontend/`.
 
-### Instalar dependencias
 ```bash
+# Instalar dependencias (usar ci en lugar de install para reproducibilidad)
 npm ci
-```
 
-### Servidor de desarrollo
-```bash
+# Servidor de desarrollo con hot reload
 npx ng serve
 # http://localhost:4200
-```
 
-### Build de desarrollo
-```bash
-npx ng build --configuration development
-```
-
-### Build de producción
-```bash
+# Build de producción
 npx ng build --configuration production
-# Artefactos en dist/frontend/browser/
-```
+# Artefactos en: dist/frontend/browser/
 
-### Correr tests unitarios
-```bash
-npx ng test
-```
+# Build de desarrollo
+npx ng build --configuration development
 
-### Correr tests sin browser (headless — para CI)
-```bash
-npx ng test --no-watch --browsers ChromeHeadless
-```
-
-### Verificar que no hay errores TypeScript sin compilar
-```bash
+# Verificar errores TypeScript sin compilar
 npx tsc --noEmit
-```
 
-### Analizar el bundle (tamaño de chunks)
-```bash
+# Analizar tamaño del bundle
 npx ng build --configuration production --stats-json
 npx webpack-bundle-analyzer dist/frontend/browser/stats.json
 ```
 
-### Actualizar Angular
-```bash
-npx ng update @angular/core @angular/cli
+### Cambiar la URL del API para apuntar a producción (temporal)
+
+Editar `src/environments/environment.production.ts`:
+```typescript
+export const environment = {
+  production: true,
+  apiUrl: 'https://contableai-api.onrender.com/api'
+};
 ```
 
 ---
 
-## 6. Secretos y variables de entorno
+## 6. Migraciones EF Core
 
-### Estructura de archivos de configuración
-```
-backend/src/ContableAI.API/
-├── appsettings.json              ← valores por defecto (commiteado, sin secretos)
-├── appsettings.Development.json  ← overrides locales (commiteado, sin secretos reales)
-└── appsettings.Production.json   ← NO commiteado (.gitignore lo excluye)
-```
+Todos los comandos desde `backend/`, siempre con los flags `--project` y `--startup-project`.
 
-### Variables que DEBEN configurarse en producción
-
-| Clave | Descripción |
-|-------|------------|
-| `ConnectionStrings:DefaultConnection` | Cadena de conexión a SQL Server de producción |
-| `Jwt:Key` | Mínimo 32 caracteres, generado aleatoriamente |
-| `OpenAI:ApiKey` | API key de OpenAI |
-| `Afip:Cuit` | CUIT del estudio contable |
-| `Afip:CertificatePath` | Ruta al `.p12` (en `backend/certs/`) |
-| `Afip:CertificatePassword` | Password del certificado digital AFIP |
-| `MercadoPago:AccessToken` | Access token de producción de MercadoPago |
-
-### Generar una JWT Key segura
 ```bash
-# PowerShell
-[Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }) -as [byte[]])
-
-# bash / Linux
-openssl rand -base64 48
-```
-
-### .NET User Secrets (para desarrollo local, sin archivos)
-```bash
-# Desde backend/src/ContableAI.API/
-dotnet user-secrets set "Jwt:Key" "mi-clave-local-secreta-de-mas-de-32-chars"
-dotnet user-secrets set "OpenAI:ApiKey" "sk-proj-..."
-dotnet user-secrets list
-```
-
----
-
-## 7. CI / CD — GitHub Actions
-
-El workflow está en `.github/workflows/ci.yml`.
-
-### Se dispara automáticamente en:
-- `push` a `main` o `develop`
-- `pull_request` hacia `main`
-
-### Jobs
-| Job | Pasos |
-|-----|-------|
-| **backend** | checkout → setup .NET 10 → `dotnet restore` → `dotnet build --Release` → `dotnet test --Release` → upload `.trx` |
-| **frontend** | checkout → setup Node 22 → `npm ci` → `ng build --development` → `ng build --production` |
-
-### Ejecutar el CI localmente con `act` (opcional)
-```bash
-# Instalar act: https://github.com/nektos/act
-act push --job backend
-act push --job frontend
-```
-
-### Agregar secretos al repositorio en GitHub
-```
-GitHub repo → Settings → Secrets and variables → Actions → New repository secret
-```
-Secretos recomendados para el CD futuro:
-- `PROD_CONNECTION_STRING`
-- `PROD_JWT_KEY`
-- `PROD_OPENAI_API_KEY`
-- `PROD_AFIP_CERT_PASSWORD`
-
----
-
-## 8. Flujo de trabajo recomendado (día a día)
-
-### Iniciar sesión de desarrollo
-```bash
-# 1. Levantar infraestructura
-docker compose up -d
-
-# 2. Terminal 1 — API con hot reload
-cd backend
-dotnet watch --project src/ContableAI.API
-
-# 3. Terminal 2 — Angular
-cd frontend
-npx ng serve
-
-# 4. (Opcional) Si modificaste el schema
-cd backend
-dotnet ef migrations add <NombreCambio> \
+# Ver estado de migraciones aplicadas
+dotnet ef migrations list \
   --project src/ContableAI.Infrastructure \
   --startup-project src/ContableAI.API
+
+# Crear una nueva migración
+dotnet ef migrations add <NombreMigracion> \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+# Usar PascalCase descriptivo: AddPasswordResetToken, AddClosedPeriods, etc.
+
+# Aplicar migraciones pendientes (local)
+dotnet ef database update \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+
+# Revertir a una migración específica
+dotnet ef database update <NombreMigracionDestino> \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+
+# Eliminar la última migración (solo si NO fue aplicada a la DB)
+dotnet ef migrations remove \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+
+# Generar script SQL idempotente para producción
+dotnet ef migrations script \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API \
+  --idempotent \
+  --output migrations.sql
+```
+
+### Aplicar migraciones en Neon (producción) desde CLI
+
+En producción las migraciones se aplican solas al iniciar la API en Render.
+Para forzarlas desde CLI sin deployar:
+
+```bash
+cd backend
+ASPNETCORE_ENVIRONMENT=Production \
+ConnectionStrings__DefaultConnection='<neon-string-sin-pooler>' \
+Jwt__Key='<jwt-key>' \
+Jwt__Issuer='ContableAI' \
+Jwt__Audience='ContableAI' \
 dotnet ef database update \
   --project src/ContableAI.Infrastructure \
   --startup-project src/ContableAI.API
 ```
 
-### Antes de hacer un commit
-```bash
-# Backend
-cd backend
-dotnet build
-dotnet test
+> Usar el endpoint **sin** `-pooler` para operaciones DDL: `ep-wandering-bread-a8wmn9bc.eastus2.azure.neon.tech`
 
-# Frontend
-cd frontend
-npx ng build --configuration development
+---
+
+## 7. Reset de base de datos
+
+### Reset local (Docker)
+
+```bash
+cd backend
+ASPNETCORE_ENVIRONMENT=Development dotnet ef database drop --force \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+
+ASPNETCORE_ENVIRONMENT=Development dotnet ef database update \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
 ```
 
-### Antes de mergear a main
+El seed (reglas globales + plan de cuentas) corre automáticamente al iniciar la API.
+
+### Reset Neon (producción) — DESTRUCTIVO
+
 ```bash
-# Backend — build Release + tests
 cd backend
-dotnet build --configuration Release
-dotnet test --configuration Release --verbosity normal
 
-# Frontend — build producción
-cd frontend
-npx ng build --configuration production
+# Drop
+ASPNETCORE_ENVIRONMENT=Production \
+ConnectionStrings__DefaultConnection='Host=ep-wandering-bread-a8wmn9bc.eastus2.azure.neon.tech; Database=neondb; Username=neondb_owner; Password=<pwd>; SSL Mode=VerifyFull;' \
+Jwt__Key='<jwt-key>' Jwt__Issuer='ContableAI' Jwt__Audience='ContableAI' \
+dotnet ef database drop --force \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
 
-# Verificar vulnerabilidades
-cd backend
-dotnet list src/ContableAI.API/ContableAI.API.csproj package --vulnerable --include-transitive
+# Recrear
+ASPNETCORE_ENVIRONMENT=Production \
+ConnectionStrings__DefaultConnection='Host=ep-wandering-bread-a8wmn9bc.eastus2.azure.neon.tech; Database=neondb; Username=neondb_owner; Password=<pwd>; SSL Mode=VerifyFull;' \
+Jwt__Key='<jwt-key>' Jwt__Issuer='ContableAI' Jwt__Audience='ContableAI' \
+dotnet ef database update \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+```
+
+> El seed en Neon corre en el próximo startup de la API en Render.
+
+---
+
+## 8. Variables de entorno y secretos
+
+### Archivos de configuración
+
+```
+backend/src/ContableAI.API/
+├── appsettings.json              ← base limpia sin secretos (commiteado)
+├── appsettings.Development.json  ← overrides locales Docker (gitignoreado)
+└── appsettings.Production.json   ← NO existe en repo (usar env vars en Render)
+```
+
+### Variables requeridas en producción (Render dashboard)
+
+| Variable de entorno | Descripción | Ejemplo |
+|---------------------|-------------|---------|
+| `ASPNETCORE_ENVIRONMENT` | Modo de ejecución | `Production` |
+| `ConnectionStrings__DefaultConnection` | Connection string Neon (con pooler) | `Host=ep-...pooler...; Database=neondb; ...` |
+| `Jwt__Key` | Clave JWT (mínimo 32 chars) | *(ver .env local)* |
+| `Jwt__Issuer` | Issuer del token | `ContableAI` |
+| `Jwt__Audience` | Audience del token | `ContableAI` |
+| `Smtp__Password` | API key de Resend | `re_...` |
+| `Frontend__BaseUrl` | URL del frontend para CORS | `https://contable-ai-sandy.vercel.app` |
+
+### Generar una JWT Key segura
+
+```bash
+# PowerShell
+[Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }) -as [byte[]])
+
+# bash / Linux / macOS
+openssl rand -base64 48
+```
+
+### Referencia de secretos locales (archivo .env — NO commiteado)
+
+El archivo `.env` en la raíz del repo tiene las credenciales de referencia para uso personal.
+Las claves están en el formato:
+```
+resend=<api-key>
+neon="<connection-string>"
+render=<url-api>
+front=<url-frontend>
 ```
 
 ---
 
-## 9. Checklists de deploy
+## 9. Tests
 
-### Nuevo entorno de producción
-- [ ] Crear `appsettings.Production.json` con todos los secretos reales
-- [ ] Generar JWT Key con `openssl rand -base64 48`
-- [ ] Copiar certificado AFIP a `backend/certs/afip.p12`
-- [ ] Levantar SQL Server (o apuntar a uno existente)
-- [ ] Levantar Qdrant (o configurar un hosted)
-- [ ] `dotnet publish --configuration Release --output ./publish`
-- [ ] Aplicar migraciones: la API las aplica sola en startup
-- [ ] Configurar HTTPS / certificado TLS
-- [ ] Verificar `/healthz` retorna `{ "status": "Healthy" }`
-- [ ] Cambiar `CORS` origin en `ServiceExtensions.cs` de `localhost:4200` a dominio real
+Todos los comandos desde `backend/`.
 
-### Actualización de producción
-- [ ] Correr tests localmente (`dotnet test --configuration Release`)
-- [ ] Verificar que no hay CVEs nuevos (`--vulnerable`)
-- [ ] Si hay migraciones: revisar el diff del SQL generado (`--idempotent`)
-- [ ] Deploy (la API aplica migraciones sola)
+```bash
+# Correr todos los tests
+dotnet test
+
+# Con output detallado
+dotnet test --verbosity normal
+
+# En Release (igual que CI)
+dotnet test --configuration Release --verbosity normal
+
+# Filtrar por clase
+dotnet test --filter "FullyQualifiedName~BankTransactionTests"
+
+# Con reporte de cobertura
+dotnet test --collect:"XPlat Code Coverage"
+# Resultados en: tests/ContableAI.Tests/TestResults/
+
+# Ver cobertura en HTML (requiere reportgenerator)
+dotnet tool install -g dotnet-reportgenerator-globaltool
+reportgenerator \
+  -reports:"tests/ContableAI.Tests/TestResults/**/coverage.cobertura.xml" \
+  -targetdir:"coverage-report" \
+  -reporttypes:Html
+
+# Watch mode
+dotnet watch test --project tests/ContableAI.Tests
+```
+
+### Tests frontend
+
+```bash
+cd frontend
+npx ng test
+
+# Headless (para CI)
+npx ng test --no-watch --browsers ChromeHeadless
+```
+
+---
+
+## 10. Deploy
+
+### Backend → Render
+
+El deploy en Render se activa automáticamente al hacer `push` a `main`.
+
+Render buildea la imagen Docker con el `backend/Dockerfile` y expone el puerto `8080`.
+
+**Para forzar un redeploy manual:** Ir al dashboard de Render → Manual Deploy.
+
+**Al iniciar, la API:**
+1. Lee env vars del dashboard de Render
+2. Aplica migraciones pendientes (`MigrateAsync`)
+3. Ejecuta el seed (upsert — nunca borra datos existentes)
+
+### Frontend → Vercel
+
+El deploy en Vercel se activa automáticamente al hacer `push` a `main`.
+
+Vercel buildea con `ng build --configuration production` y sirve el output.
+
+El archivo `frontend/vercel.json` redirige todas las rutas a `index.html` para el SPA routing.
+
+### Chequeo post-deploy
+
+```bash
+# Health check de la API
+curl https://contableai-api.onrender.com/healthz
+
+# Respuesta esperada
+{"status":"Healthy"}
+```
+
+---
+
+## 11. Flujo de trabajo día a día
+
+### Iniciar sesión de desarrollo
+
+```bash
+# Terminal 0: levantar PostgreSQL
+docker compose up -d
+
+# Terminal 1: API con hot reload
+cd backend
+dotnet watch --project src/ContableAI.API
+
+# Terminal 2: frontend
+cd frontend
+npx ng serve
+```
+
+### Hacer un commit
+
+```bash
+# Verificar que no hay errores
+cd backend && dotnet build && dotnet test
+cd frontend && npx tsc --noEmit
+
+# Stagear y commitear
+git add <archivos>
+git commit -m "tipo: descripción breve"
+```
+
+Prefijos de commits: `feat`, `fix`, `refactor`, `docs`, `chore`, `test`
+
+### Agregar un campo a la base de datos
+
+```bash
+# 1. Modificar la entidad en ContableAI.Domain/Entities/
+# 2. Agregar la configuración en ContableAI.Infrastructure/Persistence/
+
+cd backend
+dotnet ef migrations add <NombreDescriptivo> \
+  --project src/ContableAI.Infrastructure \
+  --startup-project src/ContableAI.API
+
+# La migración se aplica automáticamente al reiniciar la API
+dotnet watch --project src/ContableAI.API
+```
+
+### Pushear a producción
+
+```bash
+git push origin main
+# Render y Vercel deployarán automáticamente
+# Monitorear en: https://dashboard.render.com
+```
+
+---
+
+## 12. Checklists
+
+### Nuevo developer en el proyecto
+
+- [ ] Instalar .NET 10 SDK, Node 22, Docker Desktop
+- [ ] `dotnet tool install --global dotnet-ef`
+- [ ] `cd frontend && npm ci`
+- [ ] `cd backend && dotnet restore`
+- [ ] `docker compose up -d`
+- [ ] Verificar que `appsettings.Development.json` existe (gitignoreado — recrear si no está)
+- [ ] `cd backend && dotnet watch --project src/ContableAI.API` — la API hace el migration + seed sola
+- [ ] `cd frontend && npx ng serve`
+- [ ] Abrir `http://localhost:4200` y verificar que carga
+
+### Deploy a producción
+
+- [ ] Tests pasando: `cd backend && dotnet test --configuration Release`
+- [ ] Build frontend OK: `cd frontend && npx ng build --configuration production`
+- [ ] Si hay migraciones nuevas: revisar el SQL generado (`--idempotent`)
+- [ ] `git push origin main` → Render y Vercel deployarán solos
 - [ ] Verificar `/healthz` después del deploy
-- [ ] Revisar logs: `backend/logs/contableai-<fecha>.log`
+- [ ] Revisar logs en Render si algo falla
+
+### Configurar Render por primera vez (env vars)
+
+- [ ] `ASPNETCORE_ENVIRONMENT` = `Production`
+- [ ] `ConnectionStrings__DefaultConnection` = *(connection string Neon con pooler)*
+- [ ] `Jwt__Key` = *(key de 48+ chars — ver .env local)*
+- [ ] `Jwt__Issuer` = `ContableAI`
+- [ ] `Jwt__Audience` = `ContableAI`
+- [ ] `Smtp__Password` = *(API key de Resend — ver .env local)*
+- [ ] `Frontend__BaseUrl` = `https://contable-ai-sandy.vercel.app`
+- [ ] Hacer un redeploy manual y verificar `/healthz`

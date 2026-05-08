@@ -31,7 +31,6 @@ export class ConfigService {
         exportCooldownMs: this.toPositiveNumber(raw.exportCooldownMs, DEFAULT_CONFIG.exportCooldownMs),
       });
     } catch (error) {
-      console.warn('[ConfigService] No se pudo cargar /config.json. Se usara environment.ts como fallback.', error);
       this._config.set(DEFAULT_CONFIG);
     }
   }

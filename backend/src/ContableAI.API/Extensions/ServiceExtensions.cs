@@ -1,9 +1,12 @@
 using ContableAI.Application.Common;
 using ContableAI.Domain.Entities;
+using Hangfire;
+using Hangfire.PostgreSql;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Options;
 using ContableAI.Infrastructure.Services;
 using ContableAI.Infrastructure.Services.Classification;
+using ContableAI.Infrastructure.BackgroundJobs;
 using FluentValidation;
 using MediatR;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -91,6 +94,17 @@ public static class ServiceExtensions
             options.UseNpgsql(configuration.GetConnectionString("DefaultConnection"));
             options.AddInterceptors(sp.GetRequiredService<AuditInterceptor>());
         });
+
+        // ── Tareas en segundo plano (Background Services y Hangfire) ──────────
+        services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(configuration.GetConnectionString("DefaultConnection"))));
+
+        services.AddHangfireServer();
+
+        services.AddHostedService<ProactiveLearningService>();
 
         return services;
     }

@@ -6,18 +6,19 @@ import { LucideAngularModule } from 'lucide-angular';
   standalone: true,
   imports: [LucideAngularModule],
   templateUrl: './upload-zone.html',
-  styleUrl: './upload-zone.scss',
 })
 export class UploadZone {
 
   isLoading = input<boolean>(false);
   companyId = input<string | undefined>(undefined);
-  fileDropped = output<{ files: File[]; bankCode: string; companyId?: string }>();
+  fileDropped = output<{ files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean }>();
 
   private fileInput = viewChild.required<ElementRef<HTMLInputElement>>('fileInput');
 
   selectedFiles: File[] = [];
-  isDragging = signal(false);
+  isDragging        = signal(false);
+  withoutDateFilter = signal(false);
+  showAdvanced      = signal(false);
 
   removeFile(index: number) {
     this.selectedFiles = this.selectedFiles.filter((_, i) => i !== index);
@@ -32,7 +33,12 @@ export class UploadZone {
   onUploadClick() {
     if (this.selectedFiles.length) {
       // 'AUTO' le indica al backend que detecte el banco automáticamente del contenido
-      this.fileDropped.emit({ files: this.selectedFiles, bankCode: 'AUTO', companyId: this.companyId() });
+      this.fileDropped.emit({
+        files: this.selectedFiles,
+        bankCode: 'AUTO',
+        companyId: this.companyId(),
+        withoutDateFilter: this.withoutDateFilter(),
+      });
     }
   }
 

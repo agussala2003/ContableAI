@@ -55,6 +55,22 @@ export class AdminService {
     return this.http.get<AdminUserRow[]>(`${this.baseUrl}/users`);
   }
 
+  activateUser(id: string): Observable<{ message: string }> {
+    return this.http.put<{ message: string }>(`${this.baseUrl}/users/${id}/activate`, {});
+  }
+
+  suspendUser(id: string): Observable<{ message: string }> {
+    return this.http.put<{ message: string }>(`${this.baseUrl}/users/${id}/suspend`, {});
+  }
+
+  updatePlan(id: string, plan: string): Observable<{ id: string; email: string; plan: string }> {
+    return this.http.patch<{ id: string; email: string; plan: string }>(`${this.baseUrl}/users/${id}/plan`, { plan });
+  }
+
+  deleteUser(id: string): Observable<{ message: string }> {
+    return this.http.delete<{ message: string }>(`${this.baseUrl}/users/${id}`);
+  }
+
   resetDatabase(): Observable<DbResetResponse> {
     return this.http.post<DbResetResponse>(`${this.baseUrl}/db-reset`, {});
   }

@@ -2,6 +2,7 @@ using ContableAI.API.Endpoints;
 using ContableAI.API.Extensions;
 using ContableAI.API.Middleware;
 using ContableAI.Infrastructure.Services;
+using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Scalar.AspNetCore;
 using Serilog;
@@ -107,6 +108,9 @@ app.MapJournalEntriesEndpoints();
 app.MapAuditEndpoints();
 app.MapPeriodEndpoints();
 app.MapDashboardEndpoints();
+app.MapJobsEndpoints();
+
+app.UseHangfireDashboard("/hangfire");
 
 app.MapGet("/api/banks", (BankParserFactory factory) =>
     Results.Ok(factory.AvailableBanks.Select(b => new { code = b.Code, displayName = b.DisplayName })))

@@ -11,13 +11,13 @@ namespace ContableAI.Infrastructure.Services;
 public interface IExportService
 {
     byte[] ExportToExcel(IEnumerable<BankTransaction> transactions, string companyName, int month, int year);
-    byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null);
+    byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null, IReadOnlyDictionary<string, string>? externalCodes = null);
 
     /// <summary>Genera archivo TXT tab-delimitado compatible con Holistor.</summary>
-    byte[] ExportJournalEntriesToHolistor(IEnumerable<JournalEntry> entries);
+    byte[] ExportJournalEntriesToHolistor(IEnumerable<JournalEntry> entries, IReadOnlyDictionary<string, string>? externalCodes = null);
 
     /// <summary>Genera archivo CSV separado por punto y coma compatible con Bejerman.</summary>
-    byte[] ExportJournalEntriesToBejerman(IEnumerable<JournalEntry> entries);
+    byte[] ExportJournalEntriesToBejerman(IEnumerable<JournalEntry> entries, IReadOnlyDictionary<string, string>? externalCodes = null);
 }
 
 public class ExcelExportService : IExportService
@@ -179,7 +179,7 @@ public class ExcelExportService : IExportService
     // =========================================================================
     // LIBRO DIARIO (Journal Entries)
     // =========================================================================
-    public byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null)
+    public byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null, IReadOnlyDictionary<string, string>? externalCodes = null)
     {
         ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
@@ -211,8 +211,8 @@ public class ExcelExportService : IExportService
         ws1.Cells["A4"].Value = $"ASIENTOS:"; ws1.Cells["A4"].Style.Font.Bold = true;
         ws1.Cells["B4"].Value = entryList.Count;
 
-        // Column headers at row 6
-        var hdr1 = new[] { "Descripción", "Debe", "Haber" };
+        // Column headers at row 6: A=Descripción, B=Debe, C=Haber, D=Cód.Externo
+        var hdr1 = new[] { "Descripción", "Debe", "Haber", "Cód. Externo" };
         for (int i = 0; i < hdr1.Length; i++)
         {
             var c = ws1.Cells[6, i + 1];
@@ -247,7 +247,9 @@ public class ExcelExportService : IExportService
                 Debe    = g.Where(x => x.IsDebit).Sum(x => x.Amount),
                 Haber   = g.Where(x => !x.IsDebit).Sum(x => x.Amount),
             })
-            .OrderBy(g => g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty), StringComparer.OrdinalIgnoreCase)
+            // Mismo orden que la UI: cuentas con Debe primero, luego las de solo Haber
+            .OrderBy(g => g.Debe > 0 ? 0 : 1)
+            .ThenBy(g => g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty), StringComparer.OrdinalIgnoreCase)
             .ThenBy(g => g.Account.EndsWith("(Debe)", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(g => g.Account, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -257,10 +259,14 @@ public class ExcelExportService : IExportService
         foreach (var g in groups)
         {
             var bg1 = alt1 ? Color.FromArgb(240, 253, 251) : Color.White;
+            // Strip balance suffixes to look up the base account name
+            var baseName = g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty).Trim();
+            var extCode  = externalCodes?.GetValueOrDefault(baseName) ?? string.Empty;
             ws1.Cells[row1, 1].Value = g.Account;
             if (g.Debe  > 0) { ws1.Cells[row1, 2].Value = g.Debe;  ws1.Cells[row1, 2].Style.Numberformat.Format = "#,##0.00"; ws1.Cells[row1, 2].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right; }
             if (g.Haber > 0) { ws1.Cells[row1, 3].Value = g.Haber; ws1.Cells[row1, 3].Style.Numberformat.Format = "#,##0.00"; ws1.Cells[row1, 3].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right; }
-            for (int col = 1; col <= 3; col++)
+            if (!string.IsNullOrEmpty(extCode)) ws1.Cells[row1, 4].Value = extCode;
+            for (int col = 1; col <= 4; col++)
             {
                 ws1.Cells[row1, col].Style.Fill.PatternType = ExcelFillStyle.Solid;
                 ws1.Cells[row1, col].Style.Fill.BackgroundColor.SetColor(bg1);
@@ -284,7 +290,7 @@ public class ExcelExportService : IExportService
         ws1.Cells[row1, 3].Style.Numberformat.Format = "#,##0.00";
         ws1.Cells[row1, 2].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
         ws1.Cells[row1, 3].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
-        for (int col = 1; col <= 3; col++)
+        for (int col = 1; col <= 4; col++)
         {
             ws1.Cells[row1, col].Style.Fill.PatternType = ExcelFillStyle.Solid;
             ws1.Cells[row1, col].Style.Fill.BackgroundColor.SetColor(Color.FromArgb(226, 232, 240));
@@ -294,6 +300,7 @@ public class ExcelExportService : IExportService
         ws1.Column(1).Width = 40;
         ws1.Column(2).Width = 20;
         ws1.Column(3).Width = 20;
+        ws1.Column(4).Width = 15;
 
         // ── Sheet 2: Detalle (individual entries, original format) ───────────
         var ws2 = package.Workbook.Worksheets.Add($"Detalle {sheetLabel}");
@@ -304,7 +311,8 @@ public class ExcelExportService : IExportService
         ws2.Cells["A2"].Value = $"Libro Diario — {periodLabel}";
         ws2.Cells["A2"].Style.Font.Italic = true;
 
-        var hdr2 = new[] { "Fecha", "Descripción", "Cuenta Contable", "Debe", "Haber" };
+        // A=Fecha, B=Descripción, C=Cuenta, D=Cód.Externo, E=Debe, F=Haber
+        var hdr2 = new[] { "Fecha", "Descripción", "Cuenta Contable", "Cód. Externo", "Debe", "Haber" };
         for (int i = 0; i < hdr2.Length; i++)
         {
             var cell = ws2.Cells[4, i + 1];
@@ -324,15 +332,17 @@ public class ExcelExportService : IExportService
             bool first = true;
             foreach (var line in lines)
             {
-                var bg2 = alt2 ? Color.FromArgb(240, 253, 251) : Color.White;
+                var bg2     = alt2 ? Color.FromArgb(240, 253, 251) : Color.White;
+                var extCode = externalCodes?.GetValueOrDefault(line.Account) ?? string.Empty;
                 ws2.Cells[row2, 1].Value = first ? entry.Date.ToString("dd/MM/yyyy") : string.Empty;
                 ws2.Cells[row2, 2].Value = first ? entry.Description : string.Empty;
                 ws2.Cells[row2, 3].Value = (line.IsDebit ? string.Empty : "        ") + line.Account;
-                ws2.Cells[row2, 4].Value = line.IsDebit  ? line.Amount : (decimal?)null;
-                ws2.Cells[row2, 5].Value = !line.IsDebit ? line.Amount : (decimal?)null;
-                ws2.Cells[row2, 4].Style.Numberformat.Format = "#,##0.00";
+                ws2.Cells[row2, 4].Value = extCode;
+                ws2.Cells[row2, 5].Value = line.IsDebit  ? line.Amount : (decimal?)null;
+                ws2.Cells[row2, 6].Value = !line.IsDebit ? line.Amount : (decimal?)null;
                 ws2.Cells[row2, 5].Style.Numberformat.Format = "#,##0.00";
-                for (int col = 1; col <= 5; col++)
+                ws2.Cells[row2, 6].Style.Numberformat.Format = "#,##0.00";
+                for (int col = 1; col <= 6; col++)
                 {
                     ws2.Cells[row2, col].Style.Fill.PatternType = ExcelFillStyle.Solid;
                     ws2.Cells[row2, col].Style.Fill.BackgroundColor.SetColor(bg2);
@@ -348,17 +358,18 @@ public class ExcelExportService : IExportService
         ws2.Cells[row2, 2].Style.Font.Bold = true;
         if (entryList.Any())
         {
-            ws2.Cells[row2, 4].Formula = $"SUM(D5:D{row2 - 2})";
             ws2.Cells[row2, 5].Formula = $"SUM(E5:E{row2 - 2})";
+            ws2.Cells[row2, 6].Formula = $"SUM(F5:F{row2 - 2})";
         }
-        ws2.Cells[row2, 4].Style.Font.Bold = true;
         ws2.Cells[row2, 5].Style.Font.Bold = true;
-        ws2.Cells[row2, 4].Style.Numberformat.Format = "#,##0.00";
+        ws2.Cells[row2, 6].Style.Font.Bold = true;
         ws2.Cells[row2, 5].Style.Numberformat.Format = "#,##0.00";
+        ws2.Cells[row2, 6].Style.Numberformat.Format = "#,##0.00";
 
         ws2.Cells[ws2.Dimension.Address].AutoFitColumns();
         ws2.Column(2).Width = Math.Max(ws2.Column(2).Width, 40);
         ws2.Column(3).Width = Math.Max(ws2.Column(3).Width, 35);
+        ws2.Column(4).Width = Math.Max(ws2.Column(4).Width, 15);
 
         return package.GetAsByteArray();
     }
@@ -368,13 +379,13 @@ public class ExcelExportService : IExportService
     // Formato: FECHA \t NRO_ASIENTO \t SUBCUENTA \t DEBE \t HABER \t GLOSA
     // Los importes usan punto como separador decimal (formato invariant).
     // =========================================================================
-    public byte[] ExportJournalEntriesToHolistor(IEnumerable<JournalEntry> entries)
+    public byte[] ExportJournalEntriesToHolistor(IEnumerable<JournalEntry> entries, IReadOnlyDictionary<string, string>? externalCodes = null)
     {
         var sb  = new StringBuilder();
         var inv = CultureInfo.InvariantCulture;
 
         // Encabezado
-        sb.AppendLine("FECHA\tNRO_ASIENTO\tSUBCUENTA\tDEBE\tHABER\tGLOSA");
+        sb.AppendLine("FECHA\tNRO_ASIENTO\tSUBCUENTA\tCOD_EXTERNO\tDEBE\tHABER\tGLOSA");
 
         int nro = 1;
         foreach (var entry in entries.OrderBy(e => e.Date))
@@ -382,11 +393,11 @@ public class ExcelExportService : IExportService
             // Dr primero, Cr después
             foreach (var line in entry.Lines.OrderByDescending(l => l.IsDebit))
             {
-                var debe  = line.IsDebit  ? line.Amount.ToString("F2", inv) : "0.00";
-                var haber = !line.IsDebit ? line.Amount.ToString("F2", inv) : "0.00";
-                // Sanear descripción: quitar tabulaciones
-                var glosa = entry.Description.Replace("\t", " ");
-                sb.AppendLine($"{entry.Date:dd/MM/yyyy}\t{nro}\t{line.Account}\t{debe}\t{haber}\t{glosa}");
+                var debe     = line.IsDebit  ? line.Amount.ToString("F2", inv) : "0.00";
+                var haber    = !line.IsDebit ? line.Amount.ToString("F2", inv) : "0.00";
+                var glosa    = entry.Description.Replace("\t", " ");
+                var extCode  = externalCodes?.GetValueOrDefault(line.Account) ?? string.Empty;
+                sb.AppendLine($"{entry.Date:dd/MM/yyyy}\t{nro}\t{line.Account}\t{extCode}\t{debe}\t{haber}\t{glosa}");
             }
             nro++;
         }
@@ -399,24 +410,24 @@ public class ExcelExportService : IExportService
     // Formato: Fecha;NroAsiento;Cuenta;Debe;Haber;Descripcion
     // Los importes usan coma como separador decimal (cultura es-AR).
     // =========================================================================
-    public byte[] ExportJournalEntriesToBejerman(IEnumerable<JournalEntry> entries)
+    public byte[] ExportJournalEntriesToBejerman(IEnumerable<JournalEntry> entries, IReadOnlyDictionary<string, string>? externalCodes = null)
     {
         var sb      = new StringBuilder();
         var culture = new CultureInfo("es-AR"); // coma decimal
 
         // Encabezado
-        sb.AppendLine("Fecha;NroAsiento;Cuenta;Debe;Haber;Descripcion");
+        sb.AppendLine("Fecha;NroAsiento;Cuenta;CodExterno;Debe;Haber;Descripcion");
 
         int nro = 1;
         foreach (var entry in entries.OrderBy(e => e.Date))
         {
             foreach (var line in entry.Lines.OrderByDescending(l => l.IsDebit))
             {
-                var debe  = line.IsDebit  ? line.Amount.ToString("N2", culture) : "0,00";
-                var haber = !line.IsDebit ? line.Amount.ToString("N2", culture) : "0,00";
-                // Sanear descripción: quitar punto y coma
-                var desc  = entry.Description.Replace(";", " ");
-                sb.AppendLine($"{entry.Date:dd/MM/yyyy};{nro};{line.Account};{debe};{haber};{desc}");
+                var debe    = line.IsDebit  ? line.Amount.ToString("N2", culture) : "0,00";
+                var haber   = !line.IsDebit ? line.Amount.ToString("N2", culture) : "0,00";
+                var desc    = entry.Description.Replace(";", " ");
+                var extCode = externalCodes?.GetValueOrDefault(line.Account) ?? string.Empty;
+                sb.AppendLine($"{entry.Date:dd/MM/yyyy};{nro};{line.Account};{extCode};{debe};{haber};{desc}");
             }
             nro++;
         }

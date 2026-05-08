@@ -16,10 +16,25 @@ public sealed class HardRuleStrategy : IClassificationStrategy
         bool                          splitChequeTax,
         CancellationToken             ct = default)
     {
+        // Check that each keyword word appears in the description in order,
+        // so "COELSA EMPRESA SA" matches "COELSA 12345 EMPRESA SA" even with digit-words in between
+        static bool DescriptionMatchesKeyword(string description, string keyword)
+        {
+            int pos = 0;
+            foreach (var word in keyword.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int idx = description.IndexOf(word, pos, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) return false;
+                pos = idx + word.Length;
+            }
+            return true;
+        }
+
         bool Matches(BankTransaction transaction, AccountingRule rule) =>
-            transaction.Description.Contains(rule.Keyword, StringComparison.OrdinalIgnoreCase)
+            DescriptionMatchesKeyword(transaction.Description, rule.Keyword)
             && (rule.Direction is null || rule.Direction == transaction.Type);
 
+        // Precedence: Company > Studio > System
         var companyRule = tx.CompanyId.HasValue
             ? allRules
                 .Where(r => r.CompanyId == tx.CompanyId)
@@ -27,9 +42,17 @@ public sealed class HardRuleStrategy : IClassificationStrategy
                 .FirstOrDefault(r => Matches(tx, r))
             : null;
 
+        var studioRule = companyRule is null
+            ? allRules
+                .Where(r => r.CompanyId == null && r.StudioTenantId != null)
+                .OrderBy(r => r.Priority)
+                .FirstOrDefault(r => Matches(tx, r))
+            : null;
+
         var rule = companyRule
+            ?? studioRule
             ?? allRules
-                .Where(r => r.CompanyId == null)
+                .Where(r => r.CompanyId == null && r.StudioTenantId == null)
                 .OrderBy(r => r.Priority)
                 .FirstOrDefault(r => Matches(tx, r));
 

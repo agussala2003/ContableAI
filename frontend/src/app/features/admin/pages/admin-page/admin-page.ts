@@ -1,6 +1,8 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, DestroyRef } from '@angular/core';
 import { DecimalPipe, DatePipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AdminService, AdminStats, AdminUserRow } from '../../../../core/services/admin.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.service';
@@ -8,7 +10,7 @@ import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.s
 @Component({
   selector: 'app-admin-page',
   standalone: true,
-  imports: [DecimalPipe, DatePipe, LucideAngularModule],
+  imports: [DecimalPipe, DatePipe, LucideAngularModule, FormsModule],
   templateUrl: './admin-page.html',
 })
 export class AdminPage {
@@ -16,11 +18,22 @@ export class AdminPage {
   private adminService = inject(AdminService);
   private toast = inject(ToastService);
   private confirmDialog = inject(ConfirmDialogService);
+  private readonly destroyRef = inject(DestroyRef);
 
   stats = signal<AdminStats | null>(null);
   users = signal<AdminUserRow[]>([]);
   isLoading = signal(false);
   isResetting = signal(false);
+  actionInProgress = signal<string | null>(null);
+
+  readonly plans = ['Free', 'Pro', 'Enterprise'];
+
+  readonly statusLabel: Record<number, string> = { 0: 'Pendiente', 1: 'Activo', 2: 'Suspendido' };
+  readonly statusClass: Record<number, string> = {
+    0: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+    1: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+    2: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+  };
 
   constructor() {
     this.reload();
@@ -28,28 +41,56 @@ export class AdminPage {
 
   reload(): void {
     this.isLoading.set(true);
-    this.adminService.getStats().subscribe({
-      next: stats => {
-        this.stats.set(stats);
-        this.loadUsers();
-      },
-      error: () => {
-        this.isLoading.set(false);
-        this.toast.error('No se pudieron cargar las métricas de administración.');
-      },
+    this.adminService.getStats().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: stats => { this.stats.set(stats); this.loadUsers(); },
+      error: () => { this.isLoading.set(false); this.toast.error('No se pudieron cargar las métricas.'); },
     });
   }
 
   private loadUsers(): void {
-    this.adminService.getUsers().subscribe({
-      next: users => {
-        this.users.set(users);
-        this.isLoading.set(false);
-      },
-      error: () => {
-        this.isLoading.set(false);
-        this.toast.error('No se pudo cargar el registro de usuarios.');
-      },
+    this.adminService.getUsers().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: users => { this.users.set(users); this.isLoading.set(false); },
+      error: () => { this.isLoading.set(false); this.toast.error('No se pudo cargar el registro de usuarios.'); },
+    });
+  }
+
+  activate(user: AdminUserRow): void {
+    this.actionInProgress.set(user.id);
+    this.adminService.activateUser(user.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.toast.success(`${user.email} activado.`); this.reload(); },
+      error: () => { this.actionInProgress.set(null); this.toast.error('No se pudo activar el usuario.'); },
+    });
+  }
+
+  suspend(user: AdminUserRow): void {
+    this.actionInProgress.set(user.id);
+    this.adminService.suspendUser(user.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.toast.success(`${user.email} suspendido.`); this.reload(); },
+      error: () => { this.actionInProgress.set(null); this.toast.error('No se pudo suspender el usuario.'); },
+    });
+  }
+
+  changePlan(user: AdminUserRow, plan: string): void {
+    if (plan === user.plan) return;
+    this.actionInProgress.set(user.id + '-plan');
+    this.adminService.updatePlan(user.id, plan).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.toast.success(`Plan de ${user.email} cambiado a ${plan}.`); this.reload(); },
+      error: () => { this.actionInProgress.set(null); this.toast.error('No se pudo cambiar el plan.'); },
+    });
+  }
+
+  async deleteUser(user: AdminUserRow): Promise<void> {
+    const ok = await this.confirmDialog.confirm({
+      title: `¿Eliminar a ${user.displayName}?`,
+      message: `Se borrarán todos los datos del estudio de ${user.email}. Esta acción es irreversible.`,
+      confirmLabel: 'Sí, eliminar',
+    });
+    if (!ok) return;
+
+    this.actionInProgress.set(user.id + '-delete');
+    this.adminService.deleteUser(user.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => { this.toast.success(`Usuario ${user.email} eliminado.`); this.reload(); },
+      error: () => { this.actionInProgress.set(null); this.toast.error('No se pudo eliminar el usuario.'); },
     });
   }
 
@@ -62,16 +103,11 @@ export class AdminPage {
     if (!ok) return;
 
     this.isResetting.set(true);
-    this.adminService.resetDatabase().subscribe({
-      next: (res) => {
-        this.isResetting.set(false);
-        this.toast.success(res.message);
-        this.reload();
-      },
+    this.adminService.resetDatabase().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (res) => { this.isResetting.set(false); this.toast.success(res.message); this.reload(); },
       error: (err) => {
         this.isResetting.set(false);
-        const detail: string = err?.error?.detail ?? err?.error?.message ?? 'No se pudo vaciar la base de datos.';
-        this.toast.error(detail);
+        this.toast.error(err?.error?.detail ?? err?.error?.message ?? 'No se pudo vaciar la base de datos.');
       },
     });
   }

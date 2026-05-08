@@ -1,28 +1,64 @@
 using ContableAI.Domain.Entities;
+using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ContableAI.API.Extensions;
 
 public static class SeedExtensions
 {
     /// <summary>
-    /// Ejecuta migraciones pendientes y siembra datos iniciales (reglas globales + plan de cuentas).
+    /// Ejecuta migraciones pendientes y siembra datos iniciales (reglas globales + plan de cuentas + admin).
     /// Usa upsert: añade solo lo que no existe, nunca borra datos existentes.
     /// </summary>
     public static async Task SeedDatabaseAsync(this WebApplication app)
     {
         using var scope = app.Services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ContableAIDbContext>();
+        var db      = scope.ServiceProvider.GetRequiredService<ContableAIDbContext>();
+        var hasher  = scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>();
+        var logger  = app.Logger;
 
         await db.Database.MigrateAsync();
 
-        await SeedGlobalRulesAsync(db);
-        await SeedChartOfAccountsAsync(db);
+        // Habilitar extensión unaccent para búsqueda sin distinción de tildes
+        try { await db.Database.ExecuteSqlRawAsync("CREATE EXTENSION IF NOT EXISTS unaccent;"); }
+        catch { /* Si no hay permisos o la extensión no está disponible, continuar */ }
+
+        await SeedAdminUserAsync(db, hasher, logger);
+        await SeedGlobalRulesAsync(db, logger);
+        await SeedChartOfAccountsAsync(db, logger);
     }
 
-    private static async Task SeedGlobalRulesAsync(ContableAIDbContext db)
+    private static async Task SeedAdminUserAsync(ContableAIDbContext db, IPasswordHasher<User> hasher, ILogger logger)
+    {
+        const string adminEmail = "admin@contableai.com";
+        if (await db.Users.AnyAsync(u => u.Email == adminEmail))
+            return;
+
+        // Password leído de env var; fallback a default solo en entornos de desarrollo
+        var adminPassword = Environment.GetEnvironmentVariable("SEED_ADMIN_PASSWORD") ?? "Admin123!";
+
+        var admin = new User
+        {
+            Email          = adminEmail,
+            DisplayName    = "Admin",
+            StudioTenantId = "system",
+            Role           = UserRole.SystemAdmin,
+            AccountStatus  = AccountStatus.Active,
+            IsActive       = true,
+            Plan           = StudioPlan.Enterprise,
+        };
+        admin.PasswordHash = hasher.HashPassword(admin, adminPassword);
+
+        db.Users.Add(admin);
+        await db.SaveChangesAsync();
+        logger.LogInformation("[Seed] Usuario admin creado: {Email}", adminEmail);
+    }
+
+    private static async Task SeedGlobalRulesAsync(ContableAIDbContext db, ILogger logger)
     {
         // Upsert: insertar solo las reglas cuya combinación (Keyword, Direction) no existe aún.
         var existing = await db.AccountingRules
@@ -51,11 +87,11 @@ public static class SeedExtensions
         {
             db.AccountingRules.AddRange(toAdd);
             await db.SaveChangesAsync();
-            Console.WriteLine($"[Seed] {toAdd.Count} nuevas reglas globales insertadas.");
+            logger.LogInformation("[Seed] {Count} nuevas reglas globales insertadas.", toAdd.Count);
         }
     }
 
-    private static async Task SeedChartOfAccountsAsync(ContableAIDbContext db)
+    private static async Task SeedChartOfAccountsAsync(ContableAIDbContext db, ILogger logger)
     {
         // Upsert: insertar solo las cuentas que no existen aún por nombre.
         var existing = await db.ChartOfAccounts
@@ -72,7 +108,7 @@ public static class SeedExtensions
         {
             db.ChartOfAccounts.AddRange(toAdd);
             await db.SaveChangesAsync();
-            Console.WriteLine($"[Seed] {toAdd.Count} nuevas cuentas del plan de cuentas insertadas.");
+            logger.LogInformation("[Seed] {Count} nuevas cuentas del plan de cuentas insertadas.", toAdd.Count);
         }
     }
 }

@@ -1,0 +1,67 @@
+<div class="relative flex flex-col h-[calc(100vh-121px)] overflow-hidden">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-4 shrink-0">
+    <div>
+      <h1 class="text-lg font-semibold text-slate-900 dark:text-slate-100">Reglas del Estudio</h1>
+      <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+        Reglas globales que aplican a todas las empresas del estudio. Tienen prioridad sobre las reglas de sistema pero ceden ante reglas propias de empresa.
+      </p>
+    </div>
+    <button
+      (click)="openCreate()"
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all duration-200 shrink-0">
+      <lucide-icon name="plus" [size]="16"></lucide-icon>
+      Nueva regla
+    </button>
+  </div>
+
+  <!-- Search + filter bar -->
+  <div class="flex items-center gap-2 mb-3 shrink-0">
+    <div class="relative flex-1 max-w-xs">
+      <lucide-icon name="search" [size]="14" class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+      <input
+        type="text"
+        placeholder="Buscar por keyword o cuenta..."
+        [value]="searchQuery()"
+        (input)="searchQuery.set($any($event.target).value)"
+        class="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+      />
+    </div>
+    <label class="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+      <input type="checkbox" [checked]="showInactive()" (change)="showInactive.set($any($event.target).checked)" class="rounded" />
+      Mostrar inactivas
+    </label>
+  </div>
+
+  <!-- Table -->
+  <div class="flex-1 min-h-0 overflow-hidden">
+    <app-rules-table class="block h-full min-h-0"
+      [rules]="rules()"
+      [isLoading]="isLoading()"
+      [searchQuery]="searchQuery()"
+      filterType="all"
+      [deletingId]="deletingId()"
+      [overrideMapByOwnRule]="{}"
+      [overrideMapByGlobalRule]="{}"
+      (createRequested)="openCreate()"
+      (editRequested)="openEdit($event)"
+      (deleteRequested)="confirmDelete($event)"
+      (toggleStatusRequested)="toggleRuleStatus($event)"
+    />
+  </div>
+
+  <app-rule-form-slideover
+    [open]="panelOpen()"
+    [title]="panelTitle()"
+    [form]="form()"
+    [isSaving]="isSaving()"
+    [isEditing]="!!editingRule()"
+    [applyRetroactive]="false"
+    [accounts]="chartOfAccountService.accountNames()"
+    (closeRequested)="closePanel()"
+    (saveRequested)="saveRule()"
+    (formFieldChanged)="onFormFieldChange($event)"
+    (applyRetroactiveChange)="noop()"
+  />
+</div>

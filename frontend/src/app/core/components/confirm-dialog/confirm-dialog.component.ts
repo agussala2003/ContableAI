@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, OnDestroy } from '@angular/core';
 import { ConfirmDialogService } from '../../services/confirm-dialog.service';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -8,14 +8,19 @@ import { LucideAngularModule } from 'lucide-angular';
   imports: [LucideAngularModule],
   templateUrl: './confirm-dialog.component.html',
 })
-export class ConfirmDialogComponent {
-  protected svc      = inject(ConfirmDialogService);
+export class ConfirmDialogComponent implements OnDestroy {
+  protected svc       = inject(ConfirmDialogService);
   protected isLeaving = signal(false);
 
+  private closeTimer?: ReturnType<typeof setTimeout>;
+
+  ngOnDestroy(): void {
+    clearTimeout(this.closeTimer);
+  }
+
   private close(accepted: boolean) {
-    // Kick off exit animation
     this.isLeaving.set(true);
-    setTimeout(() => {
+    this.closeTimer = setTimeout(() => {
       this.isLeaving.set(false);
       accepted ? this.svc.accept() : this.svc.cancel();
     }, 180);

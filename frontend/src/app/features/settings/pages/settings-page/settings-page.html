@@ -1,0 +1,82 @@
+<div class="h-full flex flex-col bg-slate-50 dark:bg-slate-950 p-6 md:p-8 overflow-y-auto">
+  <div class="max-w-4xl w-full mx-auto space-y-6">
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-100 tracking-tight">Mi Plan y Suscripción</h1>
+    </div>
+
+    @if (loading()) {
+      <div class="animate-pulse space-y-4">
+        <div class="h-32 bg-slate-200 dark:bg-slate-800 rounded-xl"></div>
+        <div class="h-32 bg-slate-200 dark:bg-slate-800 rounded-xl"></div>
+      </div>
+    } @else if (quota(); as q) {
+      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-6 relative overflow-hidden">
+        <div class="absolute right-0 top-0 w-32 h-32 bg-indigo-500/10 blur-3xl rounded-full"></div>
+        <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">Plan Actual</h2>
+        <div class="flex items-baseline gap-2 mb-6">
+          <span class="text-4xl font-black bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600 dark:from-indigo-400 dark:to-violet-400 tracking-tight">{{ q.plan }}</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+          <!-- Companies Limit -->
+          <div>
+            <div class="flex justify-between items-end mb-2">
+              <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">Empresas Activas</span>
+              <span class="text-xs font-bold font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                {{ q.companiesUsed }} / {{ q.maxCompanies === -1 ? 'Ilimitado' : q.maxCompanies }}
+              </span>
+            </div>
+            <div class="w-full bg-slate-100 dark:bg-slate-800/80 rounded-full h-2.5 overflow-hidden shadow-inner">
+              <div class="h-full rounded-full transition-all duration-500 ease-out" 
+                   [ngClass]="(q.maxCompanies !== -1 && q.companiesUsed >= q.maxCompanies) ? 'bg-rose-500' : 'bg-gradient-to-r from-indigo-500 to-indigo-400'"
+                   [style.width.%]="q.maxCompanies === -1 ? 100 : (q.companiesUsed / q.maxCompanies * 100)">
+              </div>
+            </div>
+            @if (q.maxCompanies !== -1 && q.companiesUsed >= q.maxCompanies) {
+              <p class="text-[11px] text-rose-500 mt-1.5 flex items-center gap-1">
+                <lucide-icon name="alert-circle" class="w-3 h-3"></lucide-icon> Límite alcanzado
+              </p>
+            }
+          </div>
+
+          <!-- Rules per Company Limit -->
+          <div>
+            <div class="flex justify-between items-end mb-2">
+              <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">Reglas Automáticas</span>
+              <span class="text-xs font-bold font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+                {{ q.totalRulesUsed }} / {{ q.maxRules === -1 ? 'Ilimitadas' : q.maxRules }}
+              </span>
+            </div>
+            <div class="w-full bg-slate-100 dark:bg-slate-800/80 rounded-full h-2.5 overflow-hidden shadow-inner">
+              <div class="h-full rounded-full transition-all duration-500 ease-out"
+                   [ngClass]="(q.maxRules !== -1 && q.totalRulesUsed >= q.maxRules) ? 'bg-rose-500' : 'bg-gradient-to-r from-emerald-500 to-emerald-400'"
+                   [style.width.%]="q.maxRules === -1 ? 100 : (q.totalRulesUsed / q.maxRules * 100)">
+              </div>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+
+      <!-- Upgrade Prompt -->
+      @if (q.plan !== 'Enterprise') {
+        <div class="mt-4 bg-gradient-to-br from-slate-900 to-indigo-950 rounded-2xl p-8 text-white shadow-xl relative overflow-hidden group">
+          <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          <div class="absolute -right-10 -top-10 w-40 h-40 bg-indigo-500/20 blur-3xl rounded-full"></div>
+          <div class="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div class="text-center md:text-left">
+              <div class="flex items-center gap-3 justify-center md:justify-start mb-2">
+                <lucide-icon name="zap" class="w-6 h-6 text-amber-400 fill-amber-400"></lucide-icon>
+                <h3 class="text-xl font-bold tracking-tight text-white">Desbloqueá tu estudio al máximo</h3>
+              </div>
+              <p class="text-indigo-200/90 text-sm max-w-md">Olvidate de los topes. Con Enterprise tenés empresas infinitas e integración de IA preferencial.</p>
+            </div>
+            <button class="bg-white text-indigo-900 text-sm font-bold px-6 py-3 rounded-xl shadow-lg hover:bg-slate-50 hover:scale-105 transition-all whitespace-nowrap">
+              Contactar para Upgrade
+            </button>
+          </div>
+        </div>
+      }
+    }
+  </div>
+</div>

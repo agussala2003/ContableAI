@@ -36,6 +36,16 @@ public record CreateCompanyRuleCommand(
     string  StudioTenantId)
     : IRequest<Result<RuleResponse>>;
 
+// ── Create accounting rule at studio level ────────────────────────────────────
+public record CreateStudioRuleCommand(
+    string  StudioTenantId,
+    string  Keyword,
+    string  TargetAccount,
+    string? Direction,
+    int?    Priority,
+    bool?   RequiresTaxMatching)
+    : IRequest<Result<RuleResponse>>;
+
 // ── Shared response types ──────────────────────────────────────────────────────
 public record CompanyResponse(
     Guid    Id,
@@ -49,10 +59,12 @@ public record CompanyResponse(
 public record RuleResponse(
     Guid    Id,
     Guid?   CompanyId,
+    Guid?   StudioTenantId,
     string  Keyword,
     string  TargetAccount,
     string? Direction,
     int     Priority,
-    bool    RequiresTaxMatching);
+    bool    RequiresTaxMatching,
+    bool    IsActive);
 
 public record DeletedResponse(string Message);

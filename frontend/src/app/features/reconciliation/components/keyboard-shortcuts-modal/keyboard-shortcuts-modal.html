@@ -1,0 +1,116 @@
+<div class="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 sm:p-0">
+  <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-200 dark:border-slate-800 animate-slide-up">
+
+    <div class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <div class="p-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg">
+          <lucide-icon name="keyboard" class="w-4 h-4"></lucide-icon>
+        </div>
+        <h3 class="font-semibold text-slate-800 dark:text-slate-200">Atajos de teclado</h3>
+      </div>
+      <button (click)="onClose()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md">
+        <lucide-icon name="x" class="w-4 h-4"></lucide-icon>
+      </button>
+    </div>
+
+    <div class="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+
+      <!-- Navegación global -->
+      <div>
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">
+          Navegación global
+        </p>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Ir a Conciliación</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">G</kbd><span class="text-slate-400 text-xs">luego</span><kbd class="kbd">R</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Ir a Asientos</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">G</kbd><span class="text-slate-400 text-xs">luego</span><kbd class="kbd">J</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Ir a Reglas</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">G</kbd><span class="text-slate-400 text-xs">luego</span><kbd class="kbd">E</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Ir a Reglas del Estudio</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">G</kbd><span class="text-slate-400 text-xs">luego</span><kbd class="kbd">T</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Ir a Plan de Cuentas</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">G</kbd><span class="text-slate-400 text-xs">luego</span><kbd class="kbd">C</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Abrir panel de Sugerencias</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">G</kbd><span class="text-slate-400 text-xs">luego</span><kbd class="kbd">S</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Mostrar atajos</span>
+            <kbd class="kbd">?</kbd>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Cerrar paneles / modales</span>
+            <kbd class="kbd">Esc</kbd>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grilla de movimientos -->
+      <div>
+        <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">
+          Grilla de movimientos
+        </p>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Confirmar cuenta y avanzar fila</span>
+            <kbd class="kbd">Enter</kbd>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Cancelar edición</span>
+            <kbd class="kbd">Esc</kbd>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Deshacer última acción</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">Ctrl</kbd><span class="text-slate-400 dark:text-slate-600">+</span><kbd class="kbd">Z</kbd>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Selección múltiple individual</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">Ctrl</kbd><span class="text-slate-400 dark:text-slate-600">+</span>
+              <span class="text-sm text-slate-600 dark:text-slate-400 font-medium">Clic</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-600 dark:text-slate-400">Seleccionar rango de filas</span>
+            <div class="flex items-center gap-1">
+              <kbd class="kbd">Shift</kbd><span class="text-slate-400 dark:text-slate-600">+</span>
+              <span class="text-sm text-slate-600 dark:text-slate-400 font-medium">Clic</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="px-6 py-4 bg-slate-50 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-800">
+      <button (click)="onClose()" class="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm">
+        Entendido
+      </button>
+    </div>
+  </div>
+</div>

@@ -24,15 +24,15 @@ export class RulesTable {
   createRequested = output<void>();
   editRequested = output<AccountingRule>();
   deleteRequested = output<AccountingRule>();
+  toggleStatusRequested = output<AccountingRule>();
 
   readonly displayedRules = computed(() => {
     const q = this.searchQuery().toLowerCase().trim();
     const type = this.filterType();
+    const scopeOrder = (r: AccountingRule) => r.companyId != null ? 0 : r.studioTenantId != null ? 1 : 2;
     let list = [...this.rules()].sort((a, b) => {
-      const aGlobal = a.companyId == null ? 1 : 0;
-      const bGlobal = b.companyId == null ? 1 : 0;
-      if (aGlobal !== bGlobal) return aGlobal - bGlobal;
-      return a.priority - b.priority;
+      const diff = scopeOrder(a) - scopeOrder(b);
+      return diff !== 0 ? diff : a.priority - b.priority;
     });
 
     if (type === 'own') list = list.filter(r => r.companyId != null);
@@ -56,24 +56,42 @@ export class RulesTable {
     this.deleteRequested.emit(rule);
   }
 
-  typeLabel(rule: AccountingRule): 'General' | 'Propia' {
-    return rule.companyId == null ? 'General' : 'Propia';
+  onToggleStatus(rule: AccountingRule): void {
+    this.toggleStatusRequested.emit(rule);
+  }
+
+  ruleScope(rule: AccountingRule): 'company' | 'studio' | 'system' {
+    if (rule.companyId != null) return 'company';
+    if (rule.studioTenantId != null) return 'studio';
+    return 'system';
+  }
+
+  typeLabel(rule: AccountingRule): string {
+    const scope = this.ruleScope(rule);
+    if (scope === 'company') return 'Propia';
+    if (scope === 'studio') return 'Estudio';
+    return 'Sistema';
   }
 
   typeBadgeClass(rule: AccountingRule): string {
-    return rule.companyId == null
-      ? 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/30'
-      : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30';
+    const scope = this.ruleScope(rule);
+    if (scope === 'company') return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30';
+    if (scope === 'studio') return 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/30';
+    return 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/30';
   }
 
   evaluationBadge(rule: AccountingRule): string {
-    return rule.companyId == null ? 'Prioridad Baja' : 'Prioridad Alta';
+    const scope = this.ruleScope(rule);
+    if (scope === 'company') return 'Prioridad Alta';
+    if (scope === 'studio') return 'Prioridad Media';
+    return 'Prioridad Baja';
   }
 
   evaluationBadgeClass(rule: AccountingRule): string {
-    return rule.companyId == null
-      ? 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600'
-      : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30';
+    const scope = this.ruleScope(rule);
+    if (scope === 'company') return 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30';
+    if (scope === 'studio') return 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/30';
+    return 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600';
   }
 
   directionLabel(d: RuleDirection): string {

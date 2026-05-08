@@ -15,6 +15,57 @@ public interface IAfipParserService
 
 public class PdfAfipParserService : IAfipParserService
 {
+    // ORDER MATTERS: most specific patterns first. PdfPig can output the full PDF text as a
+    // single line (no newlines), so when the description regex over-captures, we must hit the
+    // correct mapping before a generic one (e.g. "VCON" before "GANANCIAS").
+    private static readonly (string Pattern, string ShortName)[] TaxNameMap =
+    [
+        ("VCON",             "VEP Consolidado"),   // before CONSOLIDADO and GANANCIAS
+        ("CONSOLIDADO",      "VEP Consolidado"),   // Tipo de Pago fallback: "Vep Consolidado ARCA"
+        ("HEF",              "Honorarios Fiscales"),
+        ("IVA DJ",           "IVA A Pagar"),       // before generic "IVA"
+        ("IVA DG",           "IVA A Pagar"),
+        ("IMP LEY 25413",    "Imp. Ley 25413"),
+        ("IMP.LEY 25413",    "Imp. Ley 25413"),
+        ("SIJP",             "Cargas Sociales"),
+        ("SICOSS",           "Cargas Sociales"),
+        ("CARGAS SOCIALES",  "Cargas Sociales"),
+        ("SIRCREB",          "Pago IIBB"),
+        ("CM-PY",            "Pago IIBB"),
+        ("IIBB",             "Pago IIBB"),
+        ("GANANCIAS",        "Impuesto Ganancias"),
+    ];
+
+    // Secondary scan: looks for known obligation lines in the full PDF body text
+    // Used when Descripción Reducida / Tipo de Pago aren't recognized (e.g. ARCA06/25, MF01/26)
+    private static readonly (string Pattern, string ShortName)[] BodyTaxHints =
+    [
+        ("ASEG.RIESGO",           "Seg. Riesgo Trabajo"),
+        ("GANANCIAS SOCIEDADES",  "Impuesto Ganancias"),
+        ("IVA (30)",              "IVA A Pagar"),
+        ("CONTRIBUCIONES SEG",    "Cargas Sociales"),
+        ("EMPLEADOR-APORTES",     "Cargas Sociales"),
+        ("FACILIDADES",           "Plan de Facilidades"),
+    ];
+
+    private static string NormalizeTaxName(string raw)
+    {
+        var upper = raw.ToUpperInvariant();
+        foreach (var (pattern, shortName) in TaxNameMap)
+            if (upper.Contains(pattern, StringComparison.Ordinal))
+                return shortName;
+        return raw;
+    }
+
+    private static string? ScanBodyForTaxName(string fullText)
+    {
+        var upper = fullText.ToUpperInvariant();
+        foreach (var (pattern, name) in BodyTaxHints)
+            if (upper.Contains(pattern, StringComparison.Ordinal))
+                return name;
+        return null;
+    }
+
     /// <summary>
     /// Parsea un comprobante de pago VEP descargado desde AFIP/ARCA en formato PDF.
     /// Soporta:
@@ -72,14 +123,29 @@ public class PdfAfipParserService : IAfipParserService
                 yield break;
 
             // ── Nombre del impuesto ────────────────────────────────────────
-            // Preferimos Descripción Reducida (tiene periodo: "IVA DJ07/25", "HEF-RF", etc.)
-            // Fallback a Tipo de Pago si no existe.
-            var nameMatch = Regex.Match(text, @"Descripci[oó]n Reducida:\s*(.+)", RegexOptions.IgnoreCase);
+            // PdfPig puede concatenar todo el texto de la página en una sola línea larga.
+            // Usamos un lookahead para cortar antes del próximo campo conocido (CUIT:, Concepto:, etc.)
+            // y evitar que (.+) capture texto de otras secciones (ej: "GANANCIAS SOCIEDADES").
+            var nameMatch = Regex.Match(text,
+                @"Descripci[oó]n Reducida:\s*(.+?)(?=\s+(?:CUIT[:\s]|Concepto:|Per[ií]odo:|Generado|Datos del))",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
             if (!nameMatch.Success)
-                nameMatch = Regex.Match(text, @"Tipo de Pago:\s*(.+)", RegexOptions.IgnoreCase);
+                // Fallback: captura hasta fin de línea real (PDFs con saltos de línea correctos)
+                nameMatch = Regex.Match(text, @"Descripci[oó]n Reducida:\s*([^\r\n]+)", RegexOptions.IgnoreCase);
+            if (!nameMatch.Success)
+                nameMatch = Regex.Match(text,
+                    @"Tipo de Pago:\s*(.+?)(?=\s+(?:Descripci|CUIT[:\s]|Concepto:))",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (!nameMatch.Success)
+                nameMatch = Regex.Match(text, @"Tipo de Pago:\s*([^\r\n]+)", RegexOptions.IgnoreCase);
             if (!nameMatch.Success) yield break;
 
-            var taxName = nameMatch.Groups[1].Value.Trim();
+            var rawName = nameMatch.Groups[1].Value.Trim();
+            var taxName = NormalizeTaxName(rawName);
+            // If Descripción Reducida/Tipo de Pago didn't map to a known category (ARCA06/25,
+            // AFIP03/24, MF01/26, etc.), scan the PDF body for recognizable obligation lines.
+            if (taxName == rawName)
+                taxName = ScanBodyForTaxName(text) ?? rawName;
             yield return new AfipPresentation(date, taxName, amount);
         }
     }

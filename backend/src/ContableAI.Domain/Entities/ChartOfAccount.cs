@@ -17,4 +17,16 @@ public class ChartOfAccount
     /// <c>Guid</c> = cuenta personalizada del estudio contable.
     /// </summary>
     public Guid? StudioTenantId  { get; set; }  = null;
+
+    /// <summary>
+    /// Código de cuenta en el sistema externo del contador (Tango, Bejerman, Oracle, etc.).
+    /// Nullable — solo se completa si el estudio lo requiere.
+    /// </summary>
+    public string? ExternalCode  { get; set; }  = null;
+
+    /// <summary>
+    /// Indica si la cuenta está activa. Las cuentas inactivas se ocultan en los selectores
+    /// pero conservan sus relaciones históricas (movimientos, asientos, reglas).
+    /// </summary>
+    public bool IsActive { get; set; } = true;
 }

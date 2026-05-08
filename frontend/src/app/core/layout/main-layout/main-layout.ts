@@ -1,10 +1,18 @@
-import { Component, inject, signal, OnInit } from '@angular/core';
-import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Component, inject, signal, computed, effect, HostListener, OnInit, DestroyRef } from '@angular/core';
+import { toSignal, takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { RouterOutlet, RouterLink, RouterLinkActive, Router, NavigationEnd } from '@angular/router';
+import { filter, map, startWith } from 'rxjs';
 import { ToastComponent } from '../../components/toast/toast.component';
 import { ConfirmDialogComponent } from '../../components/confirm-dialog/confirm-dialog.component';
+import { SuggestionsDrawer } from '../../components/suggestions-drawer/suggestions-drawer';
+import { TourOverlay } from '../../components/tour-overlay/tour-overlay';
+import { KeyboardShortcutsModal } from '../../../features/reconciliation/components/keyboard-shortcuts-modal/keyboard-shortcuts-modal';
 import { CompanyService } from '../../services/company.service';
 import { AuthService } from '../../services/auth.service';
 import { LoadingService } from '../../services/loading.service';
+import { RuleService } from '../../services/rule.service';
+import { KeyboardService } from '../../services/keyboard.service';
+import { TourService } from '../../services/tour.service';
 import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
@@ -13,19 +21,72 @@ import { LucideAngularModule } from 'lucide-angular';
   imports: [
     RouterOutlet, RouterLink, RouterLinkActive,
     ToastComponent, ConfirmDialogComponent,
+    SuggestionsDrawer,
+    TourOverlay,
+    KeyboardShortcutsModal,
     LucideAngularModule,
   ],
   templateUrl: './main-layout.html',
-  styleUrl: './main-layout.scss',
 })
 export class MainLayout implements OnInit {
-  isDark         = signal(false);
-  sidebarOpen    = signal(true);
-  companyService = inject(CompanyService);
-  authService    = inject(AuthService);
-  loadingService = inject(LoadingService);
+  isDark                  = signal(localStorage.getItem('theme') !== 'light');
+  sidebarOpen             = signal(localStorage.getItem('sidebar') !== 'closed');
+  showSuggestionsDrawer   = signal(false);
+  companyService          = inject(CompanyService);
+  authService             = inject(AuthService);
+  loadingService          = inject(LoadingService);
+  ruleService             = inject(RuleService);
+  keyboardService         = inject(KeyboardService);
+  tourService             = inject(TourService);
+  private router          = inject(Router);
+  private readonly destroyRef = inject(DestroyRef);
 
-  // Lucide icons
+  private currentPath = toSignal(
+    this.router.events.pipe(
+      filter(e => e instanceof NavigationEnd),
+      map(() => this.router.url.split('?')[0]),
+      startWith(this.router.url.split('?')[0]),
+    )
+  );
+
+  hasTour = computed(() => {
+    const path = this.currentPath();
+    return path ? this.tourService.hasTour(path) : false;
+  });
+
+  constructor() {
+    // Reload global suggestion count whenever the active company changes
+    effect(() => {
+      const company = this.companyService.activeCompany();
+      if (company) {
+        this.ruleService.loadGlobalSuggestions(company.id);
+      } else {
+        this.ruleService.clearGlobalSuggestions();
+      }
+    });
+
+    // Keep drawer in sync whenever any component triggers a suggestion refresh
+    effect(() => {
+      const tick = this.ruleService.suggestionRefreshTick();
+      const company = this.companyService.activeCompany();
+      if (tick > 0 && company) {
+        this.ruleService.loadGlobalSuggestions(company.id);
+      }
+    });
+
+    // Open suggestions drawer when keyboard shortcut G+S is pressed
+    effect(() => {
+      const tick = this.keyboardService.openSuggestionsTick();
+      if (tick > 0) this.showSuggestionsDrawer.set(true);
+    });
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    if (this.showSuggestionsDrawer()) {
+      this.showSuggestionsDrawer.set(false);
+    }
+  }
 
   get isStudioOwner() {
     return this.authService.isStudioOwnerOrAdmin();
@@ -36,18 +97,10 @@ export class MainLayout implements OnInit {
   }
 
   ngOnInit() {
-    const saved = localStorage.getItem('theme');
-    if (saved !== 'light') {
+    if (this.isDark()) {
       document.documentElement.classList.add('dark');
-      this.isDark.set(true);
     }
-    if (localStorage.getItem('sidebar') === 'closed') {
-      this.sidebarOpen.set(false);
-    }
-
-    // Restore persisted active company on every page load so that /journal
-    // and /rules keep the selection after a browser refresh.
-    this.companyService.loadCompanies().subscribe();
+    setTimeout(() => this.companyService.loadCompanies().pipe(takeUntilDestroyed(this.destroyRef)).subscribe());
   }
 
   toggleTheme() {
@@ -64,6 +117,11 @@ export class MainLayout implements OnInit {
   toggleSidebar() {
     this.sidebarOpen.update(v => !v);
     localStorage.setItem('sidebar', this.sidebarOpen() ? 'open' : 'closed');
+  }
+
+  startTour(): void {
+    const path = this.router.url.split('?')[0];
+    this.tourService.start(path);
   }
 
   roleLabel(role: string): string {

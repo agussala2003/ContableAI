@@ -1,13 +1,14 @@
 <div class="max-w-7xl mx-auto px-4 py-4 space-y-4">
+
+  <!-- Header -->
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-xl font-semibold text-slate-900 dark:text-white inline-flex items-center gap-2">
         <lucide-icon name="shield" class="w-5 h-5 text-indigo-500"></lucide-icon>
         Admin
       </h1>
-      <p class="text-sm text-slate-500 dark:text-slate-400">Registro de usuarios, métricas globales y mantenimiento.</p>
+      <p class="text-sm text-slate-500 dark:text-slate-400">Gestión de usuarios, planes y métricas globales.</p>
     </div>
-
     <button (click)="reload()" [disabled]="isLoading()"
       class="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition-colors">
       <lucide-icon name="refresh-cw" [class]="isLoading() ? 'w-3.5 h-3.5 animate-spin' : 'w-3.5 h-3.5'"></lucide-icon>
@@ -15,11 +16,13 @@
     </button>
   </div>
 
+  <!-- Métricas -->
   @if (stats(); as s) {
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
       <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
         <p class="text-[11px] uppercase tracking-wide text-slate-500">Usuarios</p>
         <p class="text-lg font-semibold text-slate-900 dark:text-white">{{ s.totalUsers }}</p>
+        <p class="text-[11px] text-slate-400">{{ s.activeUsers }} activos · {{ s.pendingUsers }} pendientes</p>
       </div>
       <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
         <p class="text-[11px] uppercase tracking-wide text-slate-500">Empresas</p>
@@ -34,43 +37,132 @@
         <p class="text-lg font-semibold text-slate-900 dark:text-white">{{ s.totalJournalEntries | number:'1.0-0' }}</p>
       </div>
     </div>
+
+    <!-- Distribución de planes -->
+    @if (s.planDistribution.length) {
+      <div class="flex gap-2 flex-wrap">
+        @for (p of s.planDistribution; track p.plan) {
+          <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+            {{ p.plan }}: {{ p.count }}
+          </span>
+        }
+      </div>
+    }
   }
 
+  <!-- Tabla de usuarios -->
   <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
     <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
       <lucide-icon name="users" class="w-4 h-4 text-slate-500"></lucide-icon>
-      <h2 class="text-sm font-semibold text-slate-800 dark:text-slate-100">Registro de usuarios</h2>
+      <h2 class="text-sm font-semibold text-slate-800 dark:text-slate-100">Usuarios</h2>
     </div>
 
     @if (isLoading()) {
       <div class="px-4 py-6 text-sm text-slate-500">Cargando...</div>
     } @else if (users().length === 0) {
-      <div class="px-4 py-6 text-sm text-slate-500">No hay usuarios para mostrar.</div>
+      <div class="px-4 py-6 text-sm text-slate-500">No hay usuarios.</div>
     } @else {
       <div class="overflow-auto">
         <table class="min-w-full text-xs">
-          <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 uppercase tracking-wide">
+          <thead class="bg-slate-50 dark:bg-slate-800 text-slate-500 uppercase tracking-wide text-[10px]">
             <tr>
               <th class="px-3 py-2 text-left">Usuario</th>
-              <th class="px-3 py-2 text-left">Rol</th>
+              <th class="px-3 py-2 text-left">Estado</th>
               <th class="px-3 py-2 text-left">Plan</th>
               <th class="px-3 py-2 text-right">Empresas</th>
               <th class="px-3 py-2 text-right">Tx Mes</th>
               <th class="px-3 py-2 text-left">Alta</th>
+              <th class="px-3 py-2 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
             @for (u of users(); track u.id; let odd = $odd) {
               <tr [class]="odd ? 'bg-slate-50/60 dark:bg-slate-800/20' : 'bg-white dark:bg-slate-900'">
-                <td class="px-3 py-2">
+
+                <!-- Usuario -->
+                <td class="px-3 py-2.5">
                   <p class="font-medium text-slate-800 dark:text-slate-100">{{ u.displayName }}</p>
                   <p class="text-slate-500">{{ u.email }}</p>
+                  <p class="text-slate-400">{{ u.role }}</p>
                 </td>
-                <td class="px-3 py-2 text-slate-700 dark:text-slate-300">{{ u.role }}</td>
-                <td class="px-3 py-2 text-slate-700 dark:text-slate-300">{{ u.plan }}</td>
-                <td class="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{{ u.companiesCount }} / {{ u.maxCompanies }}</td>
-                <td class="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{{ u.monthlyTxUsed }} / {{ u.maxMonthlyTransactions }}</td>
-                <td class="px-3 py-2 text-slate-500">{{ u.createdAt | date:'dd/MM/yyyy' }}</td>
+
+                <!-- Estado -->
+                <td class="px-3 py-2.5">
+                  <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                    [class]="statusClass[u.accountStatus]">
+                    {{ statusLabel[u.accountStatus] }}
+                  </span>
+                </td>
+
+                <!-- Plan (selector) -->
+                <td class="px-3 py-2.5">
+                  @if (u.role !== 'SystemAdmin') {
+                    <select
+                      [ngModel]="u.plan"
+                      (ngModelChange)="changePlan(u, $event)"
+                      [disabled]="actionInProgress() === u.id + '-plan'"
+                      class="text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50">
+                      @for (p of plans; track p) {
+                        <option [value]="p">{{ p }}</option>
+                      }
+                    </select>
+                  } @else {
+                    <span class="text-slate-400">—</span>
+                  }
+                </td>
+
+                <!-- Empresas -->
+                <td class="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300">
+                  {{ u.companiesCount }} / {{ u.maxCompanies === -1 ? '∞' : u.maxCompanies }}
+                </td>
+
+                <!-- Tx Mes -->
+                <td class="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300">
+                  {{ u.monthlyTxUsed }} / {{ u.maxMonthlyTransactions === -1 ? '∞' : u.maxMonthlyTransactions }}
+                </td>
+
+                <!-- Alta -->
+                <td class="px-3 py-2.5 text-slate-500">{{ u.createdAt | date:'dd/MM/yy' }}</td>
+
+                <!-- Acciones -->
+                <td class="px-3 py-2.5 text-right">
+                  @if (u.role !== 'SystemAdmin') {
+                    <div class="inline-flex items-center gap-1">
+
+                      <!-- Activar (Pendiente o Suspendido) -->
+                      @if (u.accountStatus !== 1) {
+                        <button (click)="activate(u)"
+                          [disabled]="actionInProgress() === u.id"
+                          title="Activar cuenta"
+                          class="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-40 transition-colors">
+                          <lucide-icon name="check-circle" class="w-4 h-4"></lucide-icon>
+                        </button>
+                      }
+
+                      <!-- Suspender (Activo) -->
+                      @if (u.accountStatus === 1) {
+                        <button (click)="suspend(u)"
+                          [disabled]="actionInProgress() === u.id"
+                          title="Suspender cuenta"
+                          class="p-1.5 rounded-md text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/30 disabled:opacity-40 transition-colors">
+                          <lucide-icon name="pause-circle" class="w-4 h-4"></lucide-icon>
+                        </button>
+                      }
+
+                      <!-- Eliminar -->
+                      <button (click)="deleteUser(u)"
+                        [disabled]="actionInProgress() === u.id + '-delete'"
+                        title="Eliminar usuario"
+                        class="p-1.5 rounded-md text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors">
+                        <lucide-icon name="trash-2" class="w-4 h-4"></lucide-icon>
+                      </button>
+
+                    </div>
+                  } @else {
+                    <span class="text-slate-400 text-[10px]">sistema</span>
+                  }
+                </td>
+
               </tr>
             }
           </tbody>
@@ -79,6 +171,7 @@
     }
   </div>
 
+  <!-- Mantenimiento BD -->
   <div class="rounded-xl border border-amber-300/70 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-900/15 p-4">
     <div class="flex items-start justify-between gap-3">
       <div>
@@ -87,10 +180,9 @@
           Mantenimiento de base de datos
         </h3>
         <p class="text-xs text-amber-700/90 dark:text-amber-400/90 mt-1">
-          Vacía la BD y re-semilla datos base. Solo disponible para SystemAdmin en Development.
+          Vacía la BD y re-siembra datos base. Solo disponible en Development.
         </p>
       </div>
-
       <button (click)="resetDatabase()" [disabled]="isResetting()"
         class="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 transition-colors">
         <lucide-icon name="database" [class]="isResetting() ? 'w-3.5 h-3.5 animate-pulse' : 'w-3.5 h-3.5'"></lucide-icon>
@@ -98,4 +190,5 @@
       </button>
     </div>
   </div>
+
 </div>

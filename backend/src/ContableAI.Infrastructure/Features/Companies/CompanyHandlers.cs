@@ -59,16 +59,48 @@ public sealed class GetCompanyRulesHandler
 
     public async Task<Result<List<RuleResponse>>> Handle(GetCompanyRulesQuery q, CancellationToken ct)
     {
-        var rules = await _db.AccountingRules
-            .AsNoTracking()
-            .Where(r => r.CompanyId == q.CompanyId || r.CompanyId == null)
-            .OrderBy(r => r.CompanyId == null ? 1 : 0)
+        var company = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == q.CompanyId, ct);
+
+        Guid? studioGuid = company != null && Guid.TryParse(company.StudioTenantId, out var g) ? g : null;
+
+        var query = _db.AccountingRules.AsNoTracking()
+            .Where(r => r.CompanyId == q.CompanyId
+                        || (r.CompanyId == null && r.StudioTenantId == studioGuid)
+                        || (r.CompanyId == null && r.StudioTenantId == null));
+
+        if (!q.IncludeInactive)
+            query = query.Where(r => r.IsActive);
+
+        var rules = await query
+            .OrderBy(r => r.CompanyId != null ? 0 : r.StudioTenantId != null ? 1 : 2)
             .ThenBy(r => r.Priority)
             .ToListAsync(ct);
 
-        var ruleResponses = rules.Select(Projections.ToRuleResponse).ToList();
+        return Result<List<RuleResponse>>.Success(rules.Select(Projections.ToRuleResponse).ToList());
+    }
+}
 
-        return Result<List<RuleResponse>>.Success(ruleResponses);
+// ── Get Studio Rules ───────────────────────────────────────────────────────────
+public sealed class GetStudioRulesHandler
+    : IRequestHandler<GetStudioRulesQuery, Result<List<RuleResponse>>>
+{
+    private readonly ContableAIDbContext _db;
+    public GetStudioRulesHandler(ContableAIDbContext db) => _db = db;
+
+    public async Task<Result<List<RuleResponse>>> Handle(GetStudioRulesQuery q, CancellationToken ct)
+    {
+        if (!Guid.TryParse(q.StudioTenantId, out var studioGuid))
+            return Result<List<RuleResponse>>.Success([]);
+
+        var query = _db.AccountingRules.AsNoTracking()
+            .Where(r => r.CompanyId == null && r.StudioTenantId == studioGuid);
+
+        if (!q.IncludeInactive)
+            query = query.Where(r => r.IsActive);
+
+        var rules = await query.OrderBy(r => r.Priority).ToListAsync(ct);
+        return Result<List<RuleResponse>>.Success(rules.Select(Projections.ToRuleResponse).ToList());
     }
 }
 
@@ -152,6 +184,42 @@ public sealed class DeleteCompanyHandler
     }
 }
 
+// ── Create Studio Rule ─────────────────────────────────────────────────────────
+public sealed class CreateStudioRuleHandler
+    : IRequestHandler<CreateStudioRuleCommand, Result<RuleResponse>>
+{
+    private readonly ContableAIDbContext _db;
+    public CreateStudioRuleHandler(ContableAIDbContext db) => _db = db;
+
+    public async Task<Result<RuleResponse>> Handle(CreateStudioRuleCommand cmd, CancellationToken ct)
+    {
+        if (!Guid.TryParse(cmd.StudioTenantId, out var studioGuid))
+            return Result<RuleResponse>.Failure("StudioTenantId inválido.");
+
+        TransactionType? direction = cmd.Direction?.ToUpper() switch
+        {
+            "DEBIT"  => TransactionType.Debit,
+            "CREDIT" => TransactionType.Credit,
+            _        => null,
+        };
+
+        var rule = new AccountingRule
+        {
+            Keyword             = cmd.Keyword,
+            Direction           = direction,
+            TargetAccount       = cmd.TargetAccount,
+            Priority            = cmd.Priority ?? 100,
+            RequiresTaxMatching = cmd.RequiresTaxMatching ?? false,
+            CompanyId           = null,
+            StudioTenantId      = studioGuid,
+        };
+
+        _db.AccountingRules.Add(rule);
+        await _db.SaveChangesAsync(ct);
+        return Result<RuleResponse>.Success(Projections.ToRuleResponse(rule), 201);
+    }
+}
+
 // ── Create Company Rule ────────────────────────────────────────────────────────
 public sealed class CreateCompanyRuleHandler
     : IRequestHandler<CreateCompanyRuleCommand, Result<RuleResponse>>
@@ -206,5 +274,5 @@ file static class Projections
         c.Id, c.Name, c.Cuit, c.BusinessType, c.SplitChequeTax, c.BankAccountName, c.StudioTenantId);
 
     internal static RuleResponse ToRuleResponse(AccountingRule r) => new(
-        r.Id, r.CompanyId, r.Keyword, r.TargetAccount, r.Direction?.ToString(), r.Priority, r.RequiresTaxMatching);
+        r.Id, r.CompanyId, r.StudioTenantId, r.Keyword, r.TargetAccount, r.Direction?.ToString(), r.Priority, r.RequiresTaxMatching, r.IsActive);
 }

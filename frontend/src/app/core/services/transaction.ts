@@ -37,15 +37,20 @@ export interface PagedResult<T> {
 }
 
 export interface TransactionQueryParams {
-  companyId?: string;
-  month?: number;
-  year?: number;
-  search?: string;
-  account?: string;
-  sortBy?: string;
-  sortDir?: 'asc' | 'desc';
-  page?: number;
-  pageSize?: number;
+  companyId?:    string;
+  month?:        number;
+  year?:         number;
+  search?:       string;
+  account?:      string;
+  direction?:    'debit' | 'credit';
+  sortBy?:       string;
+  sortDir?:      'asc' | 'desc';
+  strictSearch?: boolean;
+  minAmount?:    number;
+  maxAmount?:    number;
+  exactAmount?:  number;
+  page?:         number;
+  pageSize?:     number;
 }
 
 export interface PerFileResult {
@@ -59,14 +64,23 @@ export interface UploadResponse {
   totalFiles: number;
   totalProcessed: number;
   duplicatesSkipped: number;
+  reappliedToExisting?: number;
   companyName: string;
   perFile: PerFileResult[];
+}
+
+export interface UpdateTransactionResponse {
+  transaction: BankTransaction;
+  newSuggestionKeyword: string | null;
 }
 
 export interface BulkUpdateResponse {
   updatedCount: number;
   assignedAccount: string;
+  appliedRuleId?: string | null;
+  classificationSource?: string;
   transactions: BankTransaction[];
+  newSuggestionKeywords?: string[];
 }
 
 export interface AfipMatchResponse {
@@ -88,11 +102,13 @@ export class Transaction {
     return this.configService.config().apiUrl;
   }
 
-  uploadFiles(files: File[], bankCode: string, companyId?: string): Observable<UploadResponse> {
+  uploadFiles(files: File[], bankCode: string, companyId?: string, withoutDateFilter = false, forceReapplyRules = false): Observable<UploadResponse> {
     const formData = new FormData();
     for (const file of files) formData.append('files', file, file.name);
     if (bankCode) formData.append('bankCode', bankCode);
     if (companyId) formData.append('companyId', companyId);
+    formData.append('withoutDateFilter', withoutDateFilter ? 'true' : 'false');
+    formData.append('forceReapplyRules', forceReapplyRules ? 'true' : 'false');
     return this.http.post<UploadResponse>(`${this.apiUrl}/upload`, formData);
   }
 
@@ -103,19 +119,25 @@ export class Transaction {
     if (params.year)         httpParams = httpParams.set('year', params.year.toString());
     if (params.search)       httpParams = httpParams.set('search', params.search);
     if (params.account)      httpParams = httpParams.set('account', params.account);
-    if (params.sortBy)       httpParams = httpParams.set('sortBy', params.sortBy);
-    if (params.sortDir)      httpParams = httpParams.set('sortDir', params.sortDir);
-    if (params.page)         httpParams = httpParams.set('page', params.page.toString());
-    if (params.pageSize)     httpParams = httpParams.set('pageSize', params.pageSize.toString());
+    if (params.sortBy)                       httpParams = httpParams.set('sortBy', params.sortBy);
+    if (params.sortDir)                      httpParams = httpParams.set('sortDir', params.sortDir);
+    if (params.strictSearch)                 httpParams = httpParams.set('strictSearch', 'true');
+    if (params.direction === 'debit')        httpParams = httpParams.set('type', '0');
+    if (params.direction === 'credit')       httpParams = httpParams.set('type', '1');
+    if (params.minAmount !== undefined)      httpParams = httpParams.set('minAmount', params.minAmount.toString());
+    if (params.maxAmount !== undefined)      httpParams = httpParams.set('maxAmount', params.maxAmount.toString());
+    if (params.exactAmount !== undefined)    httpParams = httpParams.set('exactAmount', params.exactAmount.toString());
+    if (params.page)                         httpParams = httpParams.set('page', params.page.toString());
+    if (params.pageSize)                     httpParams = httpParams.set('pageSize', params.pageSize.toString());
     return this.http.get<PagedResult<BankTransaction>>(this.apiUrl, { params: httpParams });
   }
 
-  updateTransactionAccount(id: string, newAccount: string): Observable<BankTransaction> {
-    return this.http.put<BankTransaction>(`${this.apiUrl}/${id}`, { assignedAccount: newAccount });
+  updateTransactionAccount(id: string, newAccount: string): Observable<UpdateTransactionResponse> {
+    return this.http.put<UpdateTransactionResponse>(`${this.apiUrl}/${id}`, { assignedAccount: newAccount });
   }
 
-  bulkUpdate(ids: string[], assignedAccount: string): Observable<BulkUpdateResponse> {
-    return this.http.put<BulkUpdateResponse>(`${this.apiUrl}/bulk`, { ids, assignedAccount });
+  bulkUpdate(ids: string[], assignedAccount: string, ruleId?: string): Observable<BulkUpdateResponse> {
+    return this.http.put<BulkUpdateResponse>(`${this.apiUrl}/bulk`, { ids, assignedAccount, ruleId: ruleId ?? null });
   }
 
   /** Devuelve todos los IDs de transacciones con cuenta asignada y sin asiento (sin páginación). */

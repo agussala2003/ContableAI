@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, OnDestroy } from '@angular/core';
 import { ToastService, ToastType } from '../../services/toast.service';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -12,22 +12,29 @@ import { LucideAngularModule } from 'lucide-angular';
   },
   templateUrl: './toast.component.html',
 })
-export class ToastComponent {
+export class ToastComponent implements OnDestroy {
   protected toastService = inject(ToastService);
   protected dismissingIds = signal<Set<number>>(new Set());
 
+  private timers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  ngOnDestroy(): void {
+    this.timers.forEach(t => clearTimeout(t));
+    this.timers.clear();
+  }
+
   dismiss(id: number): void {
-    // Flag as leaving so exit animation starts
     this.dismissingIds.update(s => new Set([...s, id]));
-    // Remove from service after animation completes (220ms matches slide-out-right)
-    setTimeout(() => {
+    const t = setTimeout(() => {
       this.toastService.dismiss(id);
       this.dismissingIds.update(s => {
         const next = new Set(s);
         next.delete(id);
         return next;
       });
+      this.timers.delete(id);
     }, 240);
+    this.timers.set(id, t);
   }
 
   isLeaving(id: number): boolean {

@@ -26,6 +26,7 @@ export class RuleFormSlideover {
   isSaving = input<boolean>(false);
   isEditing = input<boolean>(false);
   applyRetroactive = input<boolean>(true);
+  accounts = input<string[]>([]);
 
   closeRequested = output<void>();
   saveRequested = output<void>();

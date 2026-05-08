@@ -29,6 +29,10 @@ export const routes: Routes = [
         loadComponent: () => import('./features/rules/pages/rules-page/rules-page').then(m => m.RulesPage),
       },
       {
+        path: 'studio-rules',
+        loadComponent: () => import('./features/rules/pages/studio-rules-page/studio-rules-page').then(m => m.StudioRulesPage),
+      },
+      {
         path: 'admin',
         loadComponent: () => import('./features/admin/pages/admin-page/admin-page').then(m => m.AdminPage),
         canActivate: [adminGuard],
@@ -39,7 +43,15 @@ export const routes: Routes = [
       },
       {
         path: 'dashboard',
-        loadComponent: () => import('./features/dashboard/pages/dashboard-page/dashboard-page').then(m => m.DashboardPage),
+        redirectTo: '',
+      },
+      {
+        path: 'chart-of-accounts',
+        loadComponent: () => import('./features/chart-of-accounts/pages/chart-of-accounts-page/chart-of-accounts-page').then(m => m.ChartOfAccountsPage),
+      },
+      {
+        path: 'plan',
+        loadComponent: () => import('./features/settings/pages/settings-page/settings-page').then(m => m.SettingsPage),
       },
     ],
   },

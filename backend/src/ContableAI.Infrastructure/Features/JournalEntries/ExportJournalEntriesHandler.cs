@@ -50,6 +50,14 @@ public sealed class ExportJournalEntriesHandler
         if (entries.Count == 0)
             return Result<CsvFileResult>.NotFound("No hay asientos para el período seleccionado.");
 
+        // ── Lookup de códigos externos ─────────────────────────────────────────
+        Guid.TryParse(company.StudioTenantId, out var studioGuid);
+        var externalCodes = await _db.ChartOfAccounts
+            .AsNoTracking()
+            .Where(a => a.ExternalCode != null
+                     && (a.StudioTenantId == null || a.StudioTenantId == studioGuid))
+            .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!, StringComparer.OrdinalIgnoreCase, ct);
+
         // ── Build CSV ──────────────────────────────────────────────────────────
         static string Esc(string? value)
         {
@@ -60,7 +68,7 @@ public sealed class ExportJournalEntriesHandler
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine("Fecha,Asiento Nro,Concepto,Cuenta,Debe,Haber");
+        sb.AppendLine("Fecha,Asiento Nro,Concepto,Cuenta,Codigo Externo,Debe,Haber");
 
         int entryNumber = 1;
         foreach (var entry in entries)
@@ -74,11 +82,13 @@ public sealed class ExportJournalEntriesHandler
             {
                 var debe  = line.IsDebit  ? line.Amount.ToString("0.00", CultureInfo.InvariantCulture) : "";
                 var haber = !line.IsDebit ? line.Amount.ToString("0.00", CultureInfo.InvariantCulture) : "";
+                var extCode = externalCodes.GetValueOrDefault(line.Account) ?? "";
                 sb.AppendLine(string.Join(",",
                     fecha,
                     entryNumber.ToString(CultureInfo.InvariantCulture),
                     concepto,
                     Esc(line.Account),
+                    Esc(extCode),
                     debe,
                     haber));
             }

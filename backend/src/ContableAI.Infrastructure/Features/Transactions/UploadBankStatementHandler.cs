@@ -2,10 +2,13 @@ using ContableAI.Application.Common;
 using ContableAI.Application.Features.Transactions.Commands;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
+using ContableAI.Infrastructure.Features.Afip;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using Hangfire;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace ContableAI.Infrastructure.Features.Transactions;
 
@@ -17,24 +20,30 @@ public sealed class UploadBankStatementHandler
 
     private const long MaxFileSizeBytes = 25 * 1024 * 1024;
 
-    private readonly ContableAIDbContext   _db;
-    private readonly IBankParserService    _parser;
+    private readonly ContableAIDbContext    _db;
+    private readonly IBankParserService     _parser;
     private readonly IClassificationService _classifier;
     private readonly ICurrentTenantService  _tenant;
     private readonly IQuotaService          _quota;
+    private readonly IBackgroundJobClient   _jobs;
+    private readonly ILogger<UploadBankStatementHandler> _logger;
 
     public UploadBankStatementHandler(
         ContableAIDbContext    db,
         IBankParserService     parser,
         IClassificationService classifier,
         ICurrentTenantService  tenant,
-        IQuotaService          quota)
+        IQuotaService          quota,
+        IBackgroundJobClient   jobs,
+        ILogger<UploadBankStatementHandler> logger)
     {
         _db         = db;
         _parser     = parser;
         _classifier = classifier;
         _tenant     = tenant;
         _quota      = quota;
+        _jobs       = jobs;
+        _logger     = logger;
     }
 
     public async Task<Result<UploadBankStatementResponse>> Handle(
@@ -69,7 +78,16 @@ public sealed class UploadBankStatementHandler
             if (file.Length == 0) continue;
             using var stream = new MemoryStream(file.Content);
             var effectiveBankCode = (command.BankCode is null or "AUTO") ? "PDF" : command.BankCode;
-            var txs = _parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf").ToList();
+            List<BankTransaction> txs;
+            try
+            {
+                txs = _parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf").ToList();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Result<UploadBankStatementResponse>.Failure(
+                    $"No se pudo procesar '{file.FileName}': {ex.Message}");
+            }
             allParsed.Add((file, txs));
         }
 
@@ -102,8 +120,8 @@ public sealed class UploadBankStatementHandler
             maxParsedDate = parsedDates.Max();
         }
 
-        // ── Existing signatures (single query + HashSet for O(1) lookup) ───────
-        var existingSignaturesQuery = _db.BankTransactions.AsNoTracking().AsQueryable();
+        // ── Existing signatures (O(1) lookup dictionary) ───────
+        var existingSignaturesQuery = _db.BankTransactions.AsQueryable(); // Tracking if we want to mutate
         existingSignaturesQuery = company != null
             ? existingSignaturesQuery.Where(t => t.CompanyId == company.Id)
             : existingSignaturesQuery.Where(t => t.TenantId == "ESTUDIO_DEFAULT");
@@ -112,15 +130,17 @@ public sealed class UploadBankStatementHandler
             existingSignaturesQuery = existingSignaturesQuery
                 .Where(t => t.Date >= minParsedDate.Value && t.Date <= maxParsedDate.Value);
 
-        var existingSignatures = await existingSignaturesQuery
-            .Select(t => new { t.Date, t.Description, t.Amount, t.Type, t.ExternalId })
-            .ToListAsync(ct);
+        var existingSignaturesList = await existingSignaturesQuery.ToListAsync(ct);
 
-        var existingSignatureHashes = existingSignatures
-            .Select(s => s.ExternalId != null
+        var existingSignatures = new Dictionary<string, BankTransaction>(StringComparer.Ordinal);
+        
+        foreach (var s in existingSignaturesList)
+        {
+            var sig = s.ExternalId != null
                 ? $"EXT|{s.ExternalId}|{s.Date}|{s.Amount}|{s.Description}|{s.Type}"
-                : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}")
-            .ToHashSet(StringComparer.Ordinal);
+                : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}";
+            existingSignatures[sig] = s;
+        }
 
         // ── Classification rules (loaded once for the whole batch) ─────────────
         var companyRules = company != null
@@ -130,12 +150,21 @@ public sealed class UploadBankStatementHandler
                 .ToListAsync(ct)
             : new List<AccountingRule>();
 
-        var globalRules = await _db.AccountingRules.AsNoTracking()
-            .Where(r => r.CompanyId == null)
+        Guid? studioGuid = company != null && Guid.TryParse(company.StudioTenantId, out var sg) ? sg : null;
+
+        var studioRules = studioGuid.HasValue
+            ? await _db.AccountingRules.AsNoTracking()
+                .Where(r => r.CompanyId == null && r.StudioTenantId == studioGuid)
+                .OrderBy(r => r.Priority)
+                .ToListAsync(ct)
+            : new List<AccountingRule>();
+
+        var systemRules = await _db.AccountingRules.AsNoTracking()
+            .Where(r => r.CompanyId == null && r.StudioTenantId == null)
             .OrderBy(r => r.Priority)
             .ToListAsync(ct);
 
-        var allRules = companyRules.Concat(globalRules).ToList();
+        var allRules = companyRules.Concat(studioRules).Concat(systemRules).ToList();
 
         // ── Union-duplicate candidates (single query for the batch date range) ──
         var existingUnionCandidates = new List<(DateOnly Date, string Description, decimal Amount)>();
@@ -158,6 +187,7 @@ public sealed class UploadBankStatementHandler
         var perFileResults  = new List<FileUploadResult>();
         var acceptedInBatch = new HashSet<string>(StringComparer.Ordinal);
         int globalSortOrder = 0;
+        int totalReapplied  = 0;
 
         foreach (var (file, parsedTransactions) in allParsed)
         {
@@ -170,7 +200,32 @@ public sealed class UploadBankStatementHandler
                     ? $"EXT|{tx.ExternalId}|{tx.Date}|{tx.Amount}|{tx.Description}|{tx.Type}"
                     : $"{tx.Date}|{tx.Description}|{tx.Amount}|{tx.Type}";
 
-                if (existingSignatureHashes.Contains(sig) || !acceptedInBatch.Add(sig))
+                if (existingSignatures.TryGetValue(sig, out var existingTx))
+                {
+                    if (command.ForceReapplyRules && existingTx.JournalEntryId == null)
+                    {
+                        var reclassified = await _classifier.ClassifyAsync(tx, allRules, company?.SplitChequeTax ?? false, ct);
+                        if (existingTx.AssignedAccount != reclassified.AssignedAccount || existingTx.ClassificationSource != reclassified.ClassificationSource)
+                        {
+                            existingTx.Assign(
+                                reclassified.AssignedAccount ?? "Pending",
+                                reclassified.AppliedRuleId,
+                                reclassified.NeedsTaxMatching,
+                                reclassified.ClassificationSource,
+                                reclassified.ConfidenceScore
+                            );
+                            totalReapplied++;
+                        }
+                    }
+                    else
+                    {
+                        fileDups++;
+                        totalDuplicates++;
+                    }
+                    continue;
+                }
+
+                if (!acceptedInBatch.Add(sig))
                 {
                     fileDups++;
                     totalDuplicates++;
@@ -223,46 +278,26 @@ public sealed class UploadBankStatementHandler
             perFileResults.Add(new FileUploadResult(file.FileName, classified.Count, fileDups));
         }
 
-        if (allClassified.Any())
+        if (allClassified.Any() || totalReapplied > 0)
         {
-            await _db.BankTransactions.AddRangeAsync(allClassified, ct);
+            if (allClassified.Any())
+                await _db.BankTransactions.AddRangeAsync(allClassified, ct);
             await _db.SaveChangesAsync(ct);
         }
 
-        // ── Append to parse log ────────────────────────────────────────────────
-        try
-        {
-            var logDir  = Path.Combine(Directory.GetCurrentDirectory(), "logs");
-            Directory.CreateDirectory(logDir);
-            var logPath = Path.Combine(logDir, "parse-log.jsonl");
-            var parsedAt = DateTime.UtcNow.ToString("o");
-            var sb = new System.Text.StringBuilder();
-            foreach (var (file, txs) in allParsed)
-            {
-                foreach (var tx in txs)
-                {
-                    sb.AppendLine(System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        parsedAt,
-                        file            = file.FileName,
-                        bank            = tx.SourceBank,
-                        date            = tx.Date.ToString("yyyy-MM-dd"),
-                        description     = tx.Description,
-                        amount          = tx.Amount,
-                        type            = tx.Type.ToString(),
-                        externalId      = tx.ExternalId,
-                        assignedAccount = tx.AssignedAccount,
-                    }));
-                }
-            }
-            await File.AppendAllTextAsync(logPath, sb.ToString(), ct);
-        }
-        catch { /* never break the main flow for logging */ }
+        // Auto-trigger AFIP matching si la empresa tiene vouchers pendientes de cruce
+        if (company != null && allClassified.Any(t => t.NeedsTaxMatching))
+            _jobs.Enqueue<AfipMatchingJob>(job => job.RunAsync(company.Id));
+
+        _logger.LogInformation(
+            "Upload completed: {FileCount} file(s), {TotalParsed} parsed, {Duplicates} duplicates, {Reapplied} reapplied",
+            command.Files.Count, allClassified.Count + totalDuplicates, totalDuplicates, totalReapplied);
 
         return Result<UploadBankStatementResponse>.Success(new UploadBankStatementResponse(
             TotalFiles:        command.Files.Count,
             TotalProcessed:    allClassified.Count,
             DuplicatesSkipped: totalDuplicates,
+            ReappliedToExisting: totalReapplied,
             CompanyName:       company?.Name ?? "Sin empresa",
             PerFile:           perFileResults
         ));

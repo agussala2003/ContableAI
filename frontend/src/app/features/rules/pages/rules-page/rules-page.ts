@@ -1,8 +1,10 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal, DestroyRef } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection } from '../../../../core/services/rule.service';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
+import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
 import { RuleFormSlideover, RuleFormFieldChange } from '../../components/rule-form-slideover/rule-form-slideover';
 import { RulesTable } from '../../components/rules-table/rules-table';
 import { RulesToolbar } from '../../components/rules-toolbar/rules-toolbar';
@@ -25,9 +27,11 @@ const EMPTY_FORM = (): RuleForm => ({
   templateUrl: './rules-page.html',
 })
 export class RulesPage {
-  private ruleService    = inject(RuleService);
-  private toast          = inject(ToastService);
-  companyService         = inject(CompanyService);
+  private ruleService        = inject(RuleService);
+  private toast              = inject(ToastService);
+  companyService             = inject(CompanyService);
+  chartOfAccountService      = inject(ChartOfAccountService);
+  private readonly destroyRef = inject(DestroyRef);
 
   rules         = signal<AccountingRule[]>([]);
   isLoading     = signal(false);
@@ -42,11 +46,13 @@ export class RulesPage {
 
   searchQuery   = signal('');
   filterType    = signal<RuleFilterType>('all');
+  showInactiveRules = signal(false);
   private loadSeq = 0;
 
   constructor() {
     effect(() => {
       const company = this.companyService.activeCompany();
+      const showInactive = this.showInactiveRules(); // track signal
       if (company) this.loadRules(company.id);
       else this.rules.set([]);
     });
@@ -98,6 +104,10 @@ export class RulesPage {
     this.filterType.set(value);
   }
 
+  onShowInactiveChange(value: boolean): void {
+    this.showInactiveRules.set(value);
+  }
+
   onCompanySelectChange(id: string): void {
     const company = this.companyService.companies().find(c => c.id === id);
     if (company) this.companyService.selectCompany(company);
@@ -106,7 +116,7 @@ export class RulesPage {
   loadRules(companyId: string) {
     const requestSeq = ++this.loadSeq;
     this.isLoading.set(true);
-    this.ruleService.getRules(companyId).subscribe({
+    this.ruleService.getRules(companyId, this.showInactiveRules()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: list => {
         if (requestSeq !== this.loadSeq) return;
         this.rules.set(list);
@@ -118,6 +128,13 @@ export class RulesPage {
         this.isLoading.set(false);
       },
     });
+  }
+
+  onSuggestionAccepted() {
+    const company = this.companyService.activeCompany();
+    if (company) {
+      this.loadRules(company.id);
+    }
   }
 
   openCreate() {
@@ -172,7 +189,7 @@ export class RulesPage {
         return;
       }
 
-      this.ruleService.updateRule(editing.id, req).subscribe({
+      this.ruleService.updateRule(editing.id, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: () => {
           this.rules.update(list =>
             list.map(r => r.id === editing.id ? { ...r, ...req, direction: this.directionStrToNum(req.direction) } : r)
@@ -185,7 +202,7 @@ export class RulesPage {
         },
       });
     } else {
-      this.ruleService.createRule(companyId, req).subscribe({
+      this.ruleService.createRule(companyId, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: rule => {
           this.rules.update(list => [...list, rule].sort((a, b) => a.priority - b.priority));
           this.afterRuleSaved(rule.id, 'Regla creada.');
@@ -208,7 +225,7 @@ export class RulesPage {
     if (!ok) return;
 
     this.deletingId.set(rule.id);
-    this.ruleService.deleteRule(rule.id).subscribe({
+    this.ruleService.deleteRule(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.rules.update(list => list.filter(r => r.id !== rule.id));
         this.deletingId.set(null);
@@ -218,6 +235,29 @@ export class RulesPage {
         this.deletingId.set(null);
         this.toast.error('Error al eliminar la regla.');
       },
+    });
+  }
+
+  toggleRuleStatus(rule: AccountingRule) {
+    if (rule.companyId == null) {
+      this.toast.warning('Las reglas generales son solo lectura en esta pestaña.');
+      return;
+    }
+
+    const obs = rule.isActive 
+      ? this.ruleService.deactivateRule(rule.id)
+      : this.ruleService.activateRule(rule.id);
+
+    obs.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => {
+        this.rules.update(list =>
+          list.map(r => r.id === rule.id ? { ...r, isActive: !r.isActive } : r)
+        );
+        this.toast.success(`Regla ${rule.isActive ? 'desactivada' : 'activada'}.`);
+      },
+      error: () => {
+        this.toast.error(`Error al ${rule.isActive ? 'desactivar' : 'activar'} la regla.`);
+      }
     });
   }
 
@@ -283,7 +323,7 @@ export class RulesPage {
       return;
     }
 
-    this.ruleService.reapplyRule(ruleId).subscribe({
+    this.ruleService.reapplyRule(ruleId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (result) => {
         this.isSaving.set(false);
         this.closePanel();

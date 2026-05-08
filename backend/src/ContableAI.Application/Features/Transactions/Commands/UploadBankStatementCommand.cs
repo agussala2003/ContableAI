@@ -15,13 +15,16 @@ public sealed record FileUploadResult(string FileName, int Processed, int Duplic
 public sealed record UploadBankStatementCommand(
     IReadOnlyList<FileData> Files,
     Guid?   CompanyId,
-    string? BankCode
+    string? BankCode,
+    bool WithoutDateFilter = false,
+    bool ForceReapplyRules = false
 ) : IRequest<Result<UploadBankStatementResponse>>;
 
 public sealed record UploadBankStatementResponse(
     int TotalFiles,
     int TotalProcessed,
     int DuplicatesSkipped,
+    int ReappliedToExisting,
     string CompanyName,
     IReadOnlyList<FileUploadResult> PerFile
 );

@@ -48,8 +48,7 @@
     <app-afip-zone
       class="mt-4 block"
       [companyId]="companyId()"
-      [pendingCount]="pendingCount()"
-      (matchComplete)="matchComplete.emit()"
+      (uploadComplete)="refreshAfipCount.emit()"
     />
   </div>
 </div>

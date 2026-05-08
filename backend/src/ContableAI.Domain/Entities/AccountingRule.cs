@@ -31,4 +31,14 @@ public class AccountingRule
     /// <c>Guid</c> = regla específica de empresa (sobreescribe la global para el mismo keyword).
     /// </summary>
     public Guid? CompanyId { get; init; } = null;
+
+    /// <summary>
+    /// <c>null</c> = regla del sistema (aplica a todos los estudios).
+    /// <c>Guid</c> = regla de estudio (sobreescribe las del sistema para empresas de ese estudio, pero cede ante reglas de empresa).
+    /// Solo aplica cuando <see cref="CompanyId"/> es <c>null</c>.
+    /// </summary>
+    public Guid? StudioTenantId { get; init; } = null;
+
+    /// <summary>Si es <c>true</c>, la regla está activa y se aplica. Si es <c>false</c>, se ignora.</summary>
+    public bool IsActive { get; set; } = true;
 }

@@ -1,6 +1,14 @@
+using ContableAI.API.Common;
+using ContableAI.Application.Features.Companies.Commands;
+using ContableAI.Application.Features.Companies.Queries;
+using ContableAI.Application.Features.Rules.Commands;
+using ContableAI.Application.Features.Rules.Queries;
 using ContableAI.Domain.Enums;
 using ContableAI.Domain.Constants;
 using ContableAI.Infrastructure.Persistence;
+using ContableAI.Infrastructure.Services;
+using MediatR;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace ContableAI.API.Endpoints;
@@ -54,7 +62,35 @@ public static class RulesEndpoints
         .WithName("DeleteRule")
         .WithTags("Reglas")
         .WithSummary("Eliminar una regla de clasificación de empresa.")
-        .WithDescription("Borra la regla por ID. Para eliminar reglas globales (CompanyId = null) usar DELETE /api/admin/rules/{id}.")
+        .WithDescription("Borra la regla de la base de datos de manera definitiva.")
+        .Produces(204)
+        .Produces(404);
+
+        app.MapPatch("/api/rules/{id:guid}/deactivate", async (Guid id, ContableAIDbContext dbContext) =>
+        {
+            var rule = await dbContext.AccountingRules.FindAsync(id);
+            if (rule is null) return Results.NotFound();
+            rule.IsActive = false;
+            await dbContext.SaveChangesAsync();
+            return Results.NoContent();
+        })
+        .WithName("DeactivateRule")
+        .WithTags("Reglas")
+        .WithSummary("Desactivar (soft-delete) una regla.")
+        .Produces(204)
+        .Produces(404);
+
+        app.MapPatch("/api/rules/{id:guid}/activate", async (Guid id, ContableAIDbContext dbContext) =>
+        {
+            var rule = await dbContext.AccountingRules.FindAsync(id);
+            if (rule is null) return Results.NotFound();
+            rule.IsActive = true;
+            await dbContext.SaveChangesAsync();
+            return Results.NoContent();
+        })
+        .WithName("ActivateRule")
+        .WithTags("Reglas")
+        .WithSummary("Activar una regla previamente desactivada.")
         .Produces(204)
         .Produces(404);
 
@@ -129,5 +165,64 @@ public static class RulesEndpoints
         .Produces(200)
         .Produces(400)
         .Produces(404);
+
+        app.MapGet("/api/suggestions/debug-log", () =>
+        {
+            var logPath = Path.Combine(Directory.GetCurrentDirectory(), "logs", "suggestions-debug.jsonl");
+            if (!File.Exists(logPath))
+                return Results.NotFound(new { Message = "No hay entradas de debug todavía. Probá asignar una cuenta y ejecutar Recalcular." });
+            return Results.File(logPath, "application/x-ndjson", "suggestions-debug.jsonl");
+        })
+        .WithName("GetSuggestionsDebugLog")
+        .WithTags("Reglas", "IA Proactiva")
+        .WithSummary("Descarga el log de debug del sistema de sugerencias (JSONL).")
+        .RequireAuthorization(p => p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()))
+        .Produces(200)
+        .Produces(404);
+
+        app.MapDelete("/api/suggestions/debug-log", () =>
+        {
+            var logPath = Path.Combine(Directory.GetCurrentDirectory(), "logs", "suggestions-debug.jsonl");
+            if (File.Exists(logPath)) File.Delete(logPath);
+            return Results.Ok(new { Message = "Log de debug eliminado." });
+        })
+        .WithName("ClearSuggestionsDebugLog")
+        .WithTags("Reglas", "IA Proactiva")
+        .WithSummary("Limpia el log de debug para empezar una sesión de prueba desde cero.")
+        .RequireAuthorization(p => p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()))
+        .Produces(200);
+
+        // Suggestion endpoints (GET/accept/reject) -> CompanyEndpoints.cs
+
+        // ── Studio Rules ──────────────────────────────────────────────────────
+        app.MapGet("/api/studio/rules", async (
+            ISender               sender,
+            ICurrentTenantService tenant,
+            [FromQuery] bool      includeInactive = false) =>
+        {
+            var result = await sender.Send(new GetStudioRulesQuery(tenant.StudioTenantId!, includeInactive));
+            return result.ToHttpResult();
+        })
+        .WithName("GetStudioRules")
+        .WithTags("Reglas", "Estudio")
+        .WithSummary("Listar reglas globales del estudio.")
+        .Produces<List<RuleResponse>>(200);
+
+        app.MapPost("/api/studio/rules", async (
+            CreateRuleRequest     req,
+            ISender               sender,
+            ICurrentTenantService tenant) =>
+        {
+            var cmd    = new CreateStudioRuleCommand(tenant.StudioTenantId!, req.Keyword, req.TargetAccount, req.Direction, req.Priority, req.RequiresTaxMatching);
+            var result = await sender.Send(cmd);
+            return result.StatusCode == 201
+                ? result.ToCreatedResult($"/api/studio/rules/{result.Value?.Id}")
+                : result.ToHttpResult();
+        })
+        .WithName("CreateStudioRule")
+        .WithTags("Reglas", "Estudio")
+        .WithSummary("Crear una regla global de estudio.")
+        .Produces<RuleResponse>(201)
+        .Produces<ProblemDetails>(400);
     }
 }

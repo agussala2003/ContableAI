@@ -16,12 +16,14 @@ export class RulesToolbar {
   rulesCount = input<number>(0);
   searchQuery = input<string>('');
   filterType = input<RuleFilterType>('all');
+  showInactive = input<boolean>(false);
   canCreate = input<boolean>(false);
 
   companyChange = output<string>();
   manageCompaniesRequested = output<void>();
   searchQueryChange = output<string>();
   filterTypeChange = output<RuleFilterType>();
+  showInactiveChange = output<boolean>();
   createRequested = output<void>();
 
   onCompanyChange(value: string): void {
@@ -40,6 +42,11 @@ export class RulesToolbar {
   onFilterTypeChange(event: Event): void {
     const target = event.target as HTMLSelectElement;
     this.filterTypeChange.emit(target.value as RuleFilterType);
+  }
+
+  onShowInactiveToggle(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    this.showInactiveChange.emit(target.checked);
   }
 
   onCreateClick(): void {

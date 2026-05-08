@@ -1,10 +1,14 @@
-﻿using ContableAI.Domain.Entities;
+using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
+using PDFtoImage;
+using SkiaSharp;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using Tesseract;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
+using PdfPage = UglyToad.PdfPig.Content.Page;
 
 namespace ContableAI.Infrastructure.Services;
 
@@ -38,6 +42,12 @@ public class PdfBankParser : IBankParser
     private const string BankGalicia     = "GALICIA";
     private const string BankCredicoop   = "CREDICOOP";
     private const string BankMercadoPago = "MERCADOPAGO";
+    private const string BankCiudad      = "CIUDAD";
+
+    // Detecta importes en formato US (coma=miles, punto=decimal) — usado por Banco Ciudad
+    private static readonly Regex RxCiudadAmount = new(
+        @"^-?\d+(?:,\d{3})*\.\d{2}$",
+        RegexOptions.Compiled);
 
     #endregion
 
@@ -54,23 +64,57 @@ public class PdfBankParser : IBankParser
 
     public IEnumerable<BankTransaction> Parse(Stream stream, string fileName)
     {
+        const long MaxBytes = 150 * 1024 * 1024; // 150 MB hard limit
+
         var ms = new MemoryStream();
         stream.CopyTo(ms);
         ms.Position = 0;
 
+        if (ms.Length > MaxBytes)
+            throw new InvalidOperationException(
+                $"El archivo PDF supera el límite de 150 MB ({ms.Length / 1_048_576} MB).");
+
+        var pdfBytes = ms.ToArray();
+
         try
         {
-            using var doc = PdfDocument.Open(ms.ToArray());
+            using var doc = PdfDocument.Open(pdfBytes);
             var pages = doc.GetPages().ToList();
 
-            var bank = DetectBank(pages, fileName);
-            var rows = ExtractPositionalRows(pages);
+            var totalWords = pages.Take(3).Sum(p => p.GetWords().Count());
+
+            List<PdfRow> rows;
+            string bank;
+
+            if (totalWords >= 10)
+            {
+                // PDF digital: extracción de texto directa
+                bank = DetectBank(pages, fileName);
+                rows = ExtractPositionalRows(pages);
+            }
+            else
+            {
+                // PDF escaneado: pipeline OCR
+                rows = ExtractRowsViaOcr(pdfBytes);
+
+                if (rows.Count == 0)
+                    throw new InvalidOperationException(
+                        "No fue posible extraer texto del PDF con OCR. " +
+                        "Verifique que el archivo sea un extracto bancario válido.");
+
+                bank = DetectBankFromRows(rows, fileName);
+            }
 
             return bank switch
             {
                 BankMercadoPago => ParseMercadoPago(rows),
-                _               => ParseStateful(rows, bank)
+                BankCiudad      => ParseBancoCiudad(rows),
+                _               => ParseStateful(rows, bank, fileName)
             };
+        }
+        catch (InvalidOperationException)
+        {
+            throw;
         }
         catch
         {
@@ -86,7 +130,7 @@ public class PdfBankParser : IBankParser
     /// Determina a qué banco pertenece el PDF analizando el nombre del archivo 
     /// y una muestra del texto de las primeras páginas.
     /// </summary>
-    private static string DetectBank(IList<Page> pages, string fileName)
+    private static string DetectBank(IList<PdfPage> pages, string fileName)
     {
         var normalizedFileName = (fileName ?? string.Empty).ToUpperInvariant()
             .Replace("_20", " ")
@@ -95,10 +139,11 @@ public class PdfBankParser : IBankParser
         if (normalizedFileName.Contains("BBVA"))        return BankBbva;
         if (normalizedFileName.Contains("GALICIA"))     return BankGalicia;
         if (normalizedFileName.Contains("CREDICOOP"))   return BankCredicoop;
-        
-        if (normalizedFileName.Contains("MERCADOPAGO") || 
-            normalizedFileName.Contains("_MP_") || 
-            normalizedFileName.Contains(" MP ") || 
+        if (normalizedFileName.Contains("CIUDAD"))      return BankCiudad;
+
+        if (normalizedFileName.Contains("MERCADOPAGO") ||
+            normalizedFileName.Contains("_MP_") ||
+            normalizedFileName.Contains(" MP ") ||
             normalizedFileName.Contains("-MP-"))        return BankMercadoPago;
 
         // Fallback: Analizar el contenido de las primeras dos páginas
@@ -113,17 +158,21 @@ public class PdfBankParser : IBankParser
 
         var text = sample.ToString().ToUpperInvariant();
 
-        if (text.Contains("BBVA") || text.Contains("CREANDO OPORTUNIDADES") || text.Contains("CBU 0170")) 
+        if (text.Contains("BBVA") || text.Contains("CREANDO OPORTUNIDADES") || text.Contains("CBU 0170"))
             return BankBbva;
-            
-        if (text.Contains("GALICIA")) 
+
+        if (text.Contains("GALICIA"))
             return BankGalicia;
-            
-        if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED")) 
+
+        if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED"))
             return BankCredicoop;
-            
-        if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO") || text.Contains("00000031") || text.Contains("MERCADO LIBRE")) 
+
+        if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO") || text.Contains("00000031") || text.Contains("MERCADO LIBRE"))
             return BankMercadoPago;
+
+        // Ciudad: account format 3-029- (bank code 029) or explicit REFERENCIA column header
+        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))
+            return BankCiudad;
 
         return "GENERIC";
     }
@@ -133,7 +182,7 @@ public class PdfBankParser : IBankParser
     /// Utiliza una tolerancia de 3 puntos para unificar palabras que visualmente 
     /// están en la misma línea pero difieren por pequeños decimales en su renderizado.
     /// </summary>
-    private static List<PdfRow> ExtractPositionalRows(IEnumerable<Page> pages)
+    private static List<PdfRow> ExtractPositionalRows(IEnumerable<PdfPage> pages)
     {
         var rows = new List<PdfRow>();
         
@@ -165,6 +214,120 @@ public class PdfBankParser : IBankParser
         return rows;
     }
 
+    /// <summary>
+    /// Detecta el banco desde el texto ya extraído (usado en el path OCR donde no hay Pages de PdfPig).
+    /// </summary>
+    private static string DetectBankFromRows(List<PdfRow> rows, string fileName)
+    {
+        var normalizedFileName = (fileName ?? string.Empty).ToUpperInvariant()
+            .Replace("_20", " ").Replace("%20", " ");
+
+        if (normalizedFileName.Contains("BBVA"))        return BankBbva;
+        if (normalizedFileName.Contains("GALICIA"))     return BankGalicia;
+        if (normalizedFileName.Contains("CREDICOOP"))   return BankCredicoop;
+        if (normalizedFileName.Contains("CIUDAD"))      return BankCiudad;
+        if (normalizedFileName.Contains("MERCADOPAGO") ||
+            normalizedFileName.Contains("_MP_"))        return BankMercadoPago;
+
+        var text = string.Join(" ",
+            rows.Take(80).SelectMany(r => r.Cells.Select(c => c.Text))
+        ).ToUpperInvariant();
+
+        if (text.Contains("BBVA") || text.Contains("CREANDO OPORTUNIDADES")) return BankBbva;
+        if (text.Contains("GALICIA"))                                          return BankGalicia;
+        if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED")) return BankCredicoop;
+        if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO"))    return BankMercadoPago;
+        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))         return BankCiudad;
+
+        return "GENERIC";
+    }
+
+    #endregion
+
+    #region OCR (PDFs escaneados)
+
+    private const int OcrDpi = 200;
+
+    private static string GetTessDataPath()
+    {
+        var envPath = Environment.GetEnvironmentVariable("TESSDATA_PREFIX");
+        if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath))
+            return envPath;
+
+        // Linux estándar (apt install tesseract-ocr-spa)
+        if (Directory.Exists("/usr/share/tessdata"))
+            return "/usr/share/tessdata";
+
+        // Bundled junto al exe (Windows dev)
+        var appPath = Path.Combine(AppContext.BaseDirectory, "tessdata");
+        if (Directory.Exists(appPath))
+            return appPath;
+
+        return "./tessdata";
+    }
+
+    /// <summary>
+    /// Renderiza cada página del PDF como imagen con PDFtoImage (PDFium),
+    /// aplica Tesseract OCR y reconstruye la grilla posicional de PdfRow/PdfCell
+    /// compatible con el parser existente.
+    /// </summary>
+    private static List<PdfRow> ExtractRowsViaOcr(byte[] pdfBytes)
+    {
+        var tessDataPath = GetTessDataPath();
+        var allRows = new List<PdfRow>();
+
+        // spa+eng: español primero, inglés como fallback para números y siglas
+        using var engine = new TesseractEngine(tessDataPath, "spa+eng", EngineMode.LstmOnly);
+
+        int pageNum = 0;
+#pragma warning disable CA1416 // Se sabe que esto corre en Windows o contenedores permitidos
+        foreach (var bitmap in Conversion.ToImages(pdfBytes, options: new RenderOptions(Dpi: OcrDpi)))
+#pragma warning restore CA1416
+        {
+            pageNum++;
+            try
+            {
+                using (bitmap)
+                {
+                    using var encoded = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+                    using var pix     = Pix.LoadFromMemory(encoded.ToArray());
+                    using var ocrPage = engine.Process(pix);
+
+                    var wordsByY = new Dictionary<int, List<PdfCell>>();
+
+                    using var iter = ocrPage.GetIterator();
+                    iter.Begin();
+                    do
+                    {
+                        if (!iter.TryGetBoundingBox(PageIteratorLevel.Word, out var bounds)) continue;
+                        var text = iter.GetText(PageIteratorLevel.Word)?.Trim();
+                        if (string.IsNullOrWhiteSpace(text)) continue;
+
+                        // Agrupar palabras por fila con tolerancia de 5 px
+                        // En Tesseract Y=0 es la parte superior, usamos Y1 (top del bbox)
+                        int yKey = (int)(Math.Round(bounds.Y1 / 5.0) * 5);
+                        if (!wordsByY.TryGetValue(yKey, out var cells))
+                            wordsByY[yKey] = cells = [];
+
+                        cells.Add(new PdfCell(bounds.X1, bounds.X2, text));
+                    }
+                    while (iter.Next(PageIteratorLevel.Word));
+
+                    // Ordenar filas de arriba hacia abajo (Y ascendente en Tesseract)
+                    foreach (var (yKey, cells) in wordsByY.OrderBy(kvp => kvp.Key))
+                    {
+                        var sorted = cells.OrderBy(c => c.X).ToList();
+                        // Negamos yKey para que el parser (que espera Y descendente de PdfPig) lo procese bien
+                        allRows.Add(new PdfRow(pageNum, -yKey, sorted));
+                    }
+                }
+            }
+            catch { /* página ilegible, continuar con las demás */ }
+        }
+
+        return allRows;
+    }
+
     #endregion
 
     #region Lógica de Parsing Estatal (Bancos Tradicionales)
@@ -174,16 +337,16 @@ public class PdfBankParser : IBankParser
     /// para bancos tradicionales (BBVA, Galicia, Credicoop).
     /// Mantiene un estado (`inTable`) para saber si está leyendo transacciones útiles.
     /// </summary>
-    private static List<BankTransaction> ParseStateful(List<PdfRow> rows, string bankCode)
+    private static List<BankTransaction> ParseStateful(List<PdfRow> rows, string bankCode, string? fileName = null)
     {
         var txs = new List<BankTransaction>();
         BankTransaction? currentTx = null;
-        
+
         bool inTable = false;
         bool pastMainTable = false; // Evita que un nuevo encabezado reactive la tabla después del resumen final.
 
-        // Pre-escaneo: detecta el año del extracto a partir de alguna fecha explícita
-        int? stmtYear = DetectStatementYear(rows);
+        // Pre-escaneo: detecta el año y mes principal del extracto a partir de fechas explícitas
+        var (stmtYear, primaryMonth) = DetectStatementInfo(rows, fileName);
 
         double colDescStart = -1, colDescEnd = -1;
         double rightDebit = -1, rightCredit = -1, rightSaldo = -1, leftSaldo = -1;
@@ -289,7 +452,7 @@ public class PdfBankParser : IBankParser
             if (inTable)
             {
                 // Si la primera celda es una fecha, es el inicio de una transacción nueva
-                if (row.Cells.Count > 0 && TryParseDate(row.Cells[0].Text, out var date, stmtYear))
+                if (row.Cells.Count > 0 && TryParseDate(row.Cells[0].Text, out var date, stmtYear, primaryMonth))
                 {
                     ProcessNewTransactionRow(row, bankCode, rightDebit, rightCredit, rightSaldo, leftSaldo, date, lineText, txs, ref currentTx);
                     
@@ -314,7 +477,7 @@ public class PdfBankParser : IBankParser
             // Limpieza de descripciones y desambiguación ANTES del enriquecimiento
             LinkAndDisambiguateBbva(txs);
 
-            var (debitosAuto, chequesMap, transfersIn, transfersOut) = ParseBbvaSupplementaryData(rows, stmtYear);
+            var (debitosAuto, chequesMap, transfersIn, transfersOut) = ParseBbvaSupplementaryData(rows, stmtYear, primaryMonth);
             ApplyBbvaEnrichments(txs, debitosAuto, chequesMap, transfersIn, transfersOut);
         }
 
@@ -877,7 +1040,7 @@ public class PdfBankParser : IBankParser
         return mBbva.Success ? mBbva.Groups[1].Value : null;
     }
 
-    private static (Dictionary<(DateOnly, decimal), string> debitosAuto, Dictionary<string, BbvaChequeData> cheques, Dictionary<(DateOnly, decimal), string> transfersIn, Dictionary<(DateOnly, decimal), string> transfersOut) ParseBbvaSupplementaryData(List<PdfRow> rows, int? stmtYear)
+    private static (Dictionary<(DateOnly, decimal), string> debitosAuto, Dictionary<string, BbvaChequeData> cheques, Dictionary<(DateOnly, decimal), string> transfersIn, Dictionary<(DateOnly, decimal), string> transfersOut) ParseBbvaSupplementaryData(List<PdfRow> rows, int? stmtYear, int? primaryMonth = null)
     {
         var debitosAuto  = new Dictionary<(DateOnly, decimal), string>();
         var cheques      = new Dictionary<string, BbvaChequeData>(StringComparer.Ordinal);
@@ -919,20 +1082,20 @@ public class PdfBankParser : IBankParser
                 continue; 
             }
 
-            if (!inDataRows || section == 0 || row.Cells.Count < 3 || !TryParseDate(row.Cells[0].Text, out var date, stmtYear)) 
+            if (!inDataRows || section == 0 || row.Cells.Count < 3 || !TryParseDate(row.Cells[0].Text, out var date, stmtYear, primaryMonth))
                 continue;
 
             switch (section)
             {
                 case 1:
                     var (amtIn, companyIn) = ExtractBbvaTransferNameAndAmount(row, startIdx: 2);
-                    if (amtIn > 0 && !string.IsNullOrWhiteSpace(companyIn)) 
+                    if (amtIn > 0 && !string.IsNullOrWhiteSpace(companyIn))
                         transfersIn.TryAdd((date, amtIn), companyIn);
                     break;
 
                 case 2:
                     var (amtOut, companyOut) = ExtractBbvaTransferNameAndAmount(row, startIdx: 1);
-                    if (amtOut > 0 && !string.IsNullOrWhiteSpace(companyOut)) 
+                    if (amtOut > 0 && !string.IsNullOrWhiteSpace(companyOut))
                         transfersOut.TryAdd((date, amtOut), companyOut);
                     break;
 
@@ -940,36 +1103,36 @@ public class PdfBankParser : IBankParser
                     decimal amtDebito = 0;
                     var parts = new List<string>(4);
                     bool nameDone = false;
-                    
+
                     for (int i = 1; i < row.Cells.Count; i++)
                     {
                         var txt = row.Cells[i].Text.Trim();
                         // Fin de fila útil: nro. de cuenta CC/CA
-                        if (txt.Length <= 2 ? (txt == "CC" || txt == "CA") : ((txt.StartsWith("CC") || txt.StartsWith("CA")) && !char.IsLetter(txt[2]))) 
-                            break; 
-                            
-                        if (txt == "$") continue; 
-                        
-                        if (IsArgentineAmount(txt)) 
-                        { 
-                            amtDebito = Math.Abs(ParseArgentineAmount(txt)); 
-                            break; 
+                        if (txt.Length <= 2 ? (txt == "CC" || txt == "CA") : ((txt.StartsWith("CC") || txt.StartsWith("CA")) && !char.IsLetter(txt[2])))
+                            break;
+
+                        if (txt == "$") continue;
+
+                        if (IsArgentineAmount(txt))
+                        {
+                            amtDebito = Math.Abs(ParseArgentineAmount(txt));
+                            break;
                         }
-                        
+
                         if (!nameDone)
                         {
-                            if (Regex.IsMatch(txt, @"^\d{5,}$") || txt == "VARIOS" || txt.StartsWith("TR.") || txt.Contains("/")) 
+                            if (Regex.IsMatch(txt, @"^\d{5,}$") || txt == "VARIOS" || txt.StartsWith("TR.") || txt.Contains("/"))
                                 nameDone = true;
-                            else 
+                            else
                                 parts.Add(txt);
                         }
                     }
-                    if (amtDebito > 0 && parts.Count > 0) 
+                    if (amtDebito > 0 && parts.Count > 0)
                         debitosAuto.TryAdd((date, amtDebito), string.Join(" ", parts).Trim());
                     break;
 
                 case 4:
-                    if (!TryParseDate(row.Cells[1].Text, out var pago, stmtYear)) break;
+                    if (!TryParseDate(row.Cells[1].Text, out var pago, stmtYear, primaryMonth)) break;
                     string nro = string.Empty;
                     
                     for (int i = 2; i < row.Cells.Count; i++)
@@ -1310,6 +1473,128 @@ public class PdfBankParser : IBankParser
 
     #endregion
 
+    #region Lógica Específica: Banco Ciudad
+
+    /// <summary>
+    /// Parser dedicado para extractos de Banco Ciudad de Buenos Aires.
+    /// Columnas: FECHA | DESCRIPCION | REFERENCIA | DEBITOS | CREDITOS | SALDO
+    /// Fechas:   dd/MM/yyyy (año completo incluido en cada fila)
+    /// Importes: formato US (coma=miles, punto=decimal): 1,234.56
+    /// </summary>
+    private static List<BankTransaction> ParseBancoCiudad(List<PdfRow> rows)
+    {
+        var txs = new List<BankTransaction>();
+        bool inTable = false;
+
+        // Valores por defecto medidos en el PDF de muestra (tolerancia = 80 pts)
+        double rightDebit  = 432;
+        double rightCredit = 503;
+        double rightSaldo  = 572;
+        double leftRef     = 302; // borde izquierdo de la columna REFERENCIA
+
+        foreach (var row in rows)
+        {
+            if (row.Cells.Count == 0) continue;
+
+            var lineText  = JoinCells(row);
+            var upperLine = lineText.ToUpperInvariant();
+
+            // Detectar encabezado de tabla (FECHA + DESCRIPCION + REFERENCIA)
+            if (upperLine.Contains("FECHA") && upperLine.Contains("DESCRIPCION") && upperLine.Contains("REFERENCIA"))
+            {
+                inTable = true;
+                foreach (var cell in row.Cells)
+                {
+                    var cu = cell.Text.ToUpperInvariant();
+                    if (cu.Contains("DEBITO"))     rightDebit  = cell.Right;
+                    else if (cu.Contains("CREDITO")) rightCredit = cell.Right;
+                    else if (cu == "SALDO")          rightSaldo  = cell.Right;
+                    else if (cu == "REFERENCIA")     leftRef     = cell.X;
+                }
+                continue;
+            }
+
+            if (!inTable) continue;
+
+            // Filtro principal: la primera celda debe ser una fecha dd/MM/yyyy
+            if (!DateOnly.TryParseExact(row.Cells[0].Text.Trim(), "dd/MM/yyyy", out var date))
+                continue;
+
+            // Saltar filas de saldo diario/final (los importes caen en la columna SALDO de todas formas)
+            if (upperLine.Contains("SALDO FINAL"))
+                continue;
+
+            decimal debitAmt = 0, creditAmt = 0;
+            var descParts = new List<string>();
+            string? referencia = null;
+
+            foreach (var cell in row.Cells.Skip(1))
+            {
+                var txt = cell.Text.Trim();
+                if (string.IsNullOrWhiteSpace(txt)) continue;
+
+                if (IsCiudadAmount(txt))
+                {
+                    var amt = Math.Abs(ParseCiudadAmount(txt));
+                    double distDebit  = Math.Abs(cell.Right - rightDebit);
+                    double distCredit = Math.Abs(cell.Right - rightCredit);
+                    double distSaldo  = Math.Abs(cell.Right - rightSaldo);
+                    double minDist    = Math.Min(distDebit, Math.Min(distCredit, distSaldo));
+
+                    if (minDist > 80) { descParts.Add(txt); continue; }
+                    if (distSaldo  == minDist) continue; // saldo → ignorar
+                    if (distDebit  == minDist) debitAmt  = amt;
+                    else                       creditAmt = amt;
+                }
+                else if (cell.X >= leftRef - 15 && cell.X < rightDebit - 20)
+                {
+                    // Columna REFERENCIA: sólo números útiles (≠ "0") → ExternalId
+                    if (Regex.IsMatch(txt, @"^\d+$") && txt != "0")
+                        referencia = txt;
+                }
+                else if (cell.X < leftRef - 5)
+                {
+                    // Columna DESCRIPCION
+                    descParts.Add(txt);
+                }
+                // else: zona entre REFERENCIA y DEBITOS → ignorar
+            }
+
+            if (debitAmt == 0 && creditAmt == 0) continue;
+
+            var rawDesc = Regex.Replace(string.Join(" ", descParts), @"\s+", " ").Trim();
+
+            // Artefacto PDF: "25413CREDITOS" o "25413DEBITOS" (palabras pegadas sin espacio)
+            rawDesc = Regex.Replace(rawDesc, @"25413(CREDITOS|DEBITOS)", "25413 $1", RegexOptions.IgnoreCase);
+
+            if (string.IsNullOrWhiteSpace(rawDesc)) rawDesc = "Movimiento Ciudad";
+
+            txs.Add(new BankTransaction
+            {
+                Date        = date,
+                Description = rawDesc,
+                Amount      = debitAmt > 0 ? debitAmt : creditAmt,
+                Type        = debitAmt > 0 ? TransactionType.Debit : TransactionType.Credit,
+                SourceBank  = BankCiudad,
+                ExternalId  = referencia,
+            });
+        }
+
+        return txs.OrderBy(t => t.Date).ToList();
+    }
+
+    private static bool IsCiudadAmount(string text) =>
+        !string.IsNullOrWhiteSpace(text) && RxCiudadAmount.IsMatch(text.Trim());
+
+    private static decimal ParseCiudadAmount(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return 0;
+        var clean = raw.Trim().Replace(",", ""); // quitar separador de miles (coma)
+        return decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0;
+    }
+
+    #endregion
+
     #region Helpers
 
     private static string JoinCells(PdfRow row) => string.Join(" ", row.Cells.Select(c => c.Text)).Trim();
@@ -1366,7 +1651,7 @@ public class PdfBankParser : IBankParser
         return -1;
     }
 
-    private static bool TryParseDate(string text, out DateOnly date, int? referenceYear = null)
+    private static bool TryParseDate(string text, out DateOnly date, int? referenceYear = null, int? primaryMonth = null)
     {
         date = default;
         if (string.IsNullOrWhiteSpace(text)) return false;
@@ -1391,38 +1676,104 @@ public class PdfBankParser : IBankParser
         try
         {
             date = new DateOnly(year, month, day);
-            
-            // Heurística: Si no hay año de referencia y la fecha da más de 3 meses en el futuro, 
+
+            // Corrección cross-year forward: diciembre en extractos cuyo mes principal es enero o febrero
+            // (ej. extracto BBVA "0125.pdf" detectado como stmtYear=2025, primaryMonth=1:
+            //  movimientos del 30/12 → realmente son de diciembre 2024).
+            if (referenceYear.HasValue && primaryMonth.HasValue
+                && month == 12 && primaryMonth.Value <= 2 && year == referenceYear.Value)
+            {
+                date = new DateOnly(year - 1, month, day);
+            }
+
+            // Corrección cross-year inversa: enero/febrero en extractos cuyo mes principal es noviembre/diciembre
+            // (ej. si DetectStatementInfo retorna stmtYear=2024, primaryMonth=12 porque el PDF de BBVA de
+            //  enero 2025 solo tiene "30/12/2024" con año explícito, los movimientos de enero 2025 quedan
+            //  con year=2024 por defecto — hay que avanzarlos al año siguiente).
+            if (referenceYear.HasValue && primaryMonth.HasValue
+                && month <= 2 && primaryMonth.Value >= 11 && year == referenceYear.Value)
+            {
+                date = new DateOnly(year + 1, month, day);
+            }
+
+            // Heurística: Si no hay año de referencia y la fecha da más de 3 meses en el futuro,
             // seguro es una transacción de fin del año pasado.
             if (referenceYear == null && date > DateOnly.FromDateTime(DateTime.Today.AddMonths(3)))
             {
                 date = new DateOnly(year - 1, month, day);
             }
-            
+
             return true;
         }
         catch { return false; }
     }
 
-    private static int? DetectStatementYear(List<PdfRow> rows)
+    /// <summary>
+    /// Escanea todas las fechas con año explícito del documento y devuelve el año y mes del
+    /// extracto principal (la fecha más reciente encontrada). Para un extracto BBVA que va
+    /// "30/12/2024 al 31/01/2025", detecta stmtYear=2025 y primaryMonth=1 (enero).
+    /// Usa el nombre del archivo como fallback si el documento no tiene fechas con año más recientes.
+    /// Nombres como "0125.pdf" (MMYY) o "012025.pdf" (MMYYYY) se parsean como mes=1, año=2025.
+    /// </summary>
+    private static (int? stmtYear, int? primaryMonth) DetectStatementInfo(List<PdfRow> rows, string? fileName = null)
     {
-        var rx = new Regex(@"^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$");
-        
+        var rx = new Regex(@"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})");
+
+        int maxYear = 0;
+        int? primaryMonth = null;
+
         foreach (var row in rows)
         {
             foreach (var cell in row.Cells)
             {
-                var m = rx.Match(cell.Text.Trim());
-                if (!m.Success) continue;
-                
-                if (!int.TryParse(m.Groups[3].Value, out var y)) continue;
-                if (y < 100) y += 2000;
-                
-                // Si el año es plausible, lo usamos
-                if (y >= 2020 && y <= DateTime.Today.Year) return y;
+                foreach (Match m in rx.Matches(cell.Text.Trim()))
+                {
+                    if (!int.TryParse(m.Groups[3].Value, out var y)) continue;
+                    if (y < 100) y += 2000;
+                    if (y < 2020 || y > DateTime.Today.Year + 1) continue;
+
+                    if (!int.TryParse(m.Groups[2].Value, out var mo) || mo < 1 || mo > 12) continue;
+
+                    // Tomamos la fecha más reciente: mayor año, y dentro del mismo año, mayor mes
+                    if (y > maxYear || (y == maxYear && mo > (primaryMonth ?? 0)))
+                    {
+                        maxYear = y;
+                        primaryMonth = mo;
+                    }
+                }
             }
         }
-        return null;
+
+        // Fallback: intentar extraer mes/año del nombre del archivo (ej. "0125.pdf" → mes=01, año=2025).
+        // Se aplica cuando el nombre del archivo indica una fecha MÁS RECIENTE que la encontrada en el documento,
+        // lo que ocurre cuando la única fecha con año en el PDF es del mes anterior al período principal.
+        if (!string.IsNullOrEmpty(fileName))
+        {
+            var baseName = Path.GetFileNameWithoutExtension(fileName);
+            var rxFile6 = new Regex(@"^(\d{2})(\d{4})$"); // MMYYYY ej. "012025"
+            var rxFile4 = new Regex(@"^(\d{2})(\d{2})$"); // MMYY   ej. "0125"
+
+            Match mf = rxFile6.Match(baseName);
+            if (!mf.Success) mf = rxFile4.Match(baseName);
+
+            if (mf.Success &&
+                int.TryParse(mf.Groups[1].Value, out var fMo) && fMo >= 1 && fMo <= 12 &&
+                int.TryParse(mf.Groups[2].Value, out var fY))
+            {
+                if (fY < 100) fY += 2000;
+                if (fY >= 2020 && fY <= DateTime.Today.Year + 1)
+                {
+                    // Usar el nombre de archivo si indica una fecha más reciente que el documento
+                    if (fY > maxYear || (fY == maxYear && fMo > (primaryMonth ?? 0)))
+                    {
+                        maxYear = fY;
+                        primaryMonth = fMo;
+                    }
+                }
+            }
+        }
+
+        return maxYear >= 2020 ? (maxYear, primaryMonth) : (null, null);
     }
 
     private static List<decimal> ExtractAmountsFromText(string text)

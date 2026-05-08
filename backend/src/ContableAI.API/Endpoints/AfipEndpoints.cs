@@ -1,5 +1,8 @@
-﻿using ContableAI.Infrastructure.Persistence;
+using ContableAI.Domain.Entities;
+using ContableAI.Infrastructure.Features.Afip;
+using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,65 +12,121 @@ public static class AfipEndpoints
 {
     public static void MapAfipEndpoints(this WebApplication app)
     {
-        // -- POST /api/afip/match -- cruce con VEPs de AFIP (uno o mas PDFs) --
-        app.MapPost("/api/afip/match", async (
+        // -- POST /api/companies/{companyId}/afip/upload --
+        // Parsea PDFs, persiste AfipVouchers y encola el matching job.
+        app.MapPost("/api/companies/{companyId:guid}/afip/upload", async (
+            Guid companyId,
             HttpContext httpCtx,
-            [FromForm] string? companyId,
             [FromServices] IAfipParserService afipParser,
-            [FromServices] ContableAIDbContext dbContext) =>
+            [FromServices] ContableAIDbContext dbContext,
+            [FromServices] IBackgroundJobClient backgroundJobClient) =>
         {
             var files = httpCtx.Request.Form.Files;
             if (files == null || files.Count == 0)
-                return Results.BadRequest("No se subio ningun archivo de AFIP.");
+                return Results.BadRequest("No se subió ningún archivo de AFIP.");
 
-            var allPresentations = new List<AfipPresentation>();
+            // Verificar que la empresa existe
+            var company = await dbContext.Companies.FindAsync(companyId);
+            if (company == null)
+                return Results.NotFound("Empresa no encontrada.");
+
+            var presentations = new List<AfipPresentation>();
             foreach (var file in files)
             {
                 if (file.Length == 0) continue;
                 using var stream = file.OpenReadStream();
-                allPresentations.AddRange(afipParser.ParsePdf(stream));
+                presentations.AddRange(afipParser.ParsePdf(stream));
             }
 
-            if (allPresentations.Count == 0)
-                return Results.BadRequest("No se pudo extraer informacion de los PDFs subidos. Verifica que sean comprobantes VEP validos.");
+            if (presentations.Count == 0)
+                return Results.BadRequest("No se pudo extraer información de los PDFs. Verificá que sean comprobantes VEP válidos.");
 
-            var pendingQuery = dbContext.BankTransactions.Where(t => t.NeedsTaxMatching);
-            if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var afipCmpId))
-                pendingQuery = pendingQuery.Where(t => t.CompanyId == afipCmpId);
+            // Pre-cargar claves existentes en BD para esta empresa
+            var existingKeys = await dbContext.AfipVouchers
+                .Where(v => v.CompanyId == companyId)
+                .Select(v => new { v.Date, v.Amount, v.TaxName })
+                .ToListAsync();
 
-            var pendingTxs = await pendingQuery.ToListAsync();
-            int matchesFound = 0;
+            // HashSet unificado: detecta duplicados en BD y dentro del mismo lote
+            var seenKeys = new HashSet<(DateOnly, decimal, string?)>(
+                existingKeys.Select(e => (e.Date, e.Amount, e.TaxName)));
 
-            foreach (var afip in allPresentations)
+            int addedCount = 0;
+            foreach (var p in presentations)
             {
-                var matchingBankTx = pendingTxs.FirstOrDefault(tx =>
-                    tx.NeedsTaxMatching &&
-                    tx.Amount == afip.Amount &&
-                    Math.Abs(tx.Date.DayNumber - afip.Date.DayNumber) <= 2);
+                if (!seenKeys.Add((p.Date, p.Amount, p.TaxName))) continue;
 
-                if (matchingBankTx != null)
+                dbContext.AfipVouchers.Add(new AfipVoucher
                 {
-                    matchingBankTx.Assign(afip.TaxName, null, false, "AFIP Match");
-                    matchesFound++;
-                }
+                    TenantId        = company.StudioTenantId ?? string.Empty,
+                    StudioTenantId  = company.StudioTenantId,
+                    CompanyId       = companyId,
+                    Date            = p.Date,
+                    Amount          = p.Amount,
+                    TaxName         = p.TaxName,
+                });
+                addedCount++;
             }
 
-            if (matchesFound > 0)
+            if (addedCount > 0)
                 await dbContext.SaveChangesAsync();
 
-            return Results.Ok(new
-            {
-                TotalPresentationsRead = allPresentations.Count,
-                SuccessfulMatches      = matchesFound,
-                StillPending           = pendingTxs.Count(t => t.NeedsTaxMatching),
-            });
+            // Encolar el job de cruce (corre aunque addedCount sea 0 — puede haber nuevas txs)
+            backgroundJobClient.Enqueue<AfipMatchingJob>(job => job.RunAsync(companyId));
+
+            return Results.Ok(addedCount);
         })
         .DisableAntiforgery()
         .RequireRateLimiting("afip")
-        .WithName("MatchAfipPresentations")
+        .WithName("UploadAfipVouchers")
         .WithTags("AFIP")
-        .WithSummary("Cruzar transacciones con comprobantes VEP de AFIP (PDF).")
-        .WithDescription("Form-data multipart: files[] (uno o más PDFs VEP), companyId (guid, opcional). Extrae fecha y monto pagado de cada VEP y los cruza contra transacciones con NeedsTaxMatching = true (tolerancia ±2 días). Soporta comprobantes pagados y pendientes.")
+        .WithSummary("Subir comprobantes VEP de AFIP (PDF) y disparar cruce automático.")
+        .WithDescription("Form-data multipart: files[] (uno o más PDFs VEP). Persiste los vouchers nuevos en BD y encola el job de matching en Hangfire. Retorna la cantidad de vouchers nuevos agregados.")
+        .Produces(200)
+        .Produces(400)
+        .Produces(404);
+
+        // -- GET /api/companies/{companyId}/afip/vouchers --
+        // Lista los comprobantes AFIP persistidos con su estado de cruce.
+        app.MapGet("/api/companies/{companyId:guid}/afip/vouchers", async (
+            Guid companyId,
+            ContableAIDbContext dbContext) =>
+        {
+            var vouchers = await dbContext.AfipVouchers
+                .Where(v => v.CompanyId == companyId)
+                .OrderByDescending(v => v.Date)
+                .Select(v => new
+                {
+                    v.Id,
+                    v.Date,
+                    v.Amount,
+                    v.TaxName,
+                    v.IsMatched,
+                    v.MatchedTransactionId,
+                })
+                .ToListAsync();
+
+            return Results.Ok(vouchers);
+        })
+        .WithName("GetAfipVouchers")
+        .WithTags("AFIP")
+        .WithSummary("Listar comprobantes VEP de AFIP para una empresa.")
+        .WithDescription("Retorna todos los comprobantes AFIP cargados para la empresa con su estado de cruce (isMatched).")
         .Produces(200);
+
+        // -- POST /api/companies/{companyId}/afip/rematch --
+        // Re-dispara el matching job manualmente (útil tras subir nuevos extractos).
+        app.MapPost("/api/companies/{companyId:guid}/afip/rematch", (
+            Guid companyId,
+            [FromServices] IBackgroundJobClient backgroundJobClient) =>
+        {
+            var jobId = backgroundJobClient.Enqueue<AfipMatchingJob>(job => job.RunAsync(companyId));
+            return Results.Accepted(value: new { JobId = jobId });
+        })
+        .WithName("RematchAfipVouchers")
+        .WithTags("AFIP")
+        .WithSummary("Re-disparar cruce AFIP para una empresa.")
+        .WithDescription("Encola el job de matching en Hangfire. Útil para re-intentar el cruce luego de subir nuevos extractos bancarios.")
+        .Produces(202);
     }
 }

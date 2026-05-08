@@ -10,6 +10,7 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
+using Hangfire;
 
 namespace ContableAI.API.Endpoints;
 
@@ -18,203 +19,30 @@ public static class JournalEntriesEndpoints
     public static void MapJournalEntriesEndpoints(this WebApplication app)
     {
 
-        app.MapPost("/api/journal-entries/generate", async (
+        app.MapPost("/api/journal-entries/generate", (
             GenerateJournalEntriesRequest req,
             ICurrentTenantService          currentTenant,
-            ContableAIDbContext            dbContext) =>
+            IBackgroundJobClient           backgroundJobClient) =>
         {
             if (req.TransactionIds == null || req.TransactionIds.Count == 0)
                 return Results.BadRequest("Se requiere al menos una transacción.");
 
-            var studioCompanyIds = await dbContext.Companies
-                .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
-                .Select(c => c.Id)
-                .ToListAsync();
+            var command = new GenerateJournalEntriesCommand(req.TransactionIds, currentTenant.StudioTenantId!);
+            
+            var jobId = backgroundJobClient.Enqueue<ISender>(sender => sender.Send(command, default));
 
-            var transactions = await dbContext.BankTransactions
-                .Where(t => req.TransactionIds.Contains(t.Id)
-                         && t.CompanyId.HasValue
-                         && studioCompanyIds.Contains(t.CompanyId.Value)
-                         && t.AssignedAccount != null
-                         && t.JournalEntryId == null)
-                .ToListAsync();
-
-            if (transactions.Count == 0)
-                return Results.Ok(new { Generated = 0, Message = "No hay transacciones elegibles (todas ya asentadas o sin cuenta asignada)." });
-
-            foreach (var tx in transactions)
+            return Results.Accepted(value: new
             {
-                if (await PeriodEndpoints.IsPeriodClosedAsync(dbContext, currentTenant.StudioTenantId!, tx.Date.Year, tx.Date.Month))
-                    return Results.Problem(
-                        title:      "Período cerrado",
-                        detail:     $"La transacción del {tx.Date:dd/MM/yyyy} pertenece al período {tx.Date.Month:D2}/{tx.Date.Year} que está cerrado. Reabrilo antes de generar asientos.",
-                        statusCode: 422);
-            }
-
-            // Agrupar por empresa para resolver la cuenta bancaria de cada una
-            var companyIds = transactions.Select(t => t.CompanyId!.Value).Distinct().ToList();
-            var companiesMap = await dbContext.Companies
-                .Where(c => companyIds.Contains(c.Id))
-                .ToDictionaryAsync(c => c.Id, c => c.BankAccountName);
-
-            // Verificar que todas las empresas tengan cuenta bancaria configurada
-            var missingBank = companyIds
-                .Where(id => !companiesMap.ContainsKey(id) || string.IsNullOrWhiteSpace(companiesMap[id]))
-                .ToList();
-            if (missingBank.Count > 0)
-            {
-                var names = await dbContext.Companies
-                    .Where(c => missingBank.Contains(c.Id))
-                    .Select(c => c.Name)
-                    .ToListAsync();
-                return Results.Problem(
-                    title:      "Cuenta bancaria no configurada",
-                    detail:     $"Las siguientes empresas no tienen cuenta bancaria configurada en su perfil: {string.Join(", ", names)}. Editá la empresa y completá el campo \"Cuenta bancaria\".",
-                    statusCode: 422);
-            }
-
-            var entries = new List<JournalEntry>();
-            var minTxDate = transactions.Min(t => t.Date);
-            var maxTxDate = transactions.Max(t => t.Date);
-
-            var existingEntries = await dbContext.JournalEntries
-                .AsNoTracking()
-                .Include(j => j.Lines)
-                .Where(j => j.CompanyId.HasValue
-                         && companyIds.Contains(j.CompanyId.Value)
-                         && j.Date >= minTxDate
-                         && j.Date <= maxTxDate)
-                .ToListAsync();
-
-            var signatureToEntryIds = existingEntries
-                .GroupBy(BuildEntrySignature)
-                .ToDictionary(
-                    g => g.Key,
-                    g => new Queue<Guid>(g.Select(e => e.Id)),
-                    StringComparer.Ordinal);
-
-            var duplicatesSkipped = 0;
-            var linkedDuplicates = new List<object>();
-
-            foreach (var tx in transactions)
-            {
-                JournalEntry entry;
-                var bankAccount = companiesMap[tx.CompanyId!.Value];
-                List<JournalEntryLine> projectedLines;
-
-                if (tx.ClassificationSource == ClassificationSources.ChequeTaxSplit)
-                {
-                    // Impuesto al Cheque: split 50% Débitos / 50% Créditos Bancarios
-                    var half1 = Math.Round(tx.Amount / 2, 2);
-                    var half2 = tx.Amount - half1; // garantiza que la suma sea exacta
-
-                    projectedLines =
-                    [
-                        new JournalEntryLine { Account = "Impuesto a los Débitos Bancarios",  Amount = half1, IsDebit = true  },
-                        new JournalEntryLine { Account = "Impuesto a los Créditos Bancarios", Amount = half2, IsDebit = true  },
-                        new JournalEntryLine { Account = bankAccount,                          Amount = tx.Amount, IsDebit = false },
-                    ];
-
-                    entry = new JournalEntry
-                    {
-                        Date              = tx.Date,
-                        Description       = tx.Description,
-                        CompanyId         = tx.CompanyId,
-                        BankTransactionId = tx.Id,
-                        Lines             = projectedLines,
-                    };
-                }
-                else
-                {
-                    // Partida doble estándar:
-                    // DÉBITO (dinero sale del banco):  Dr AssignedAccount / Cr CuentaBancaria
-                    // CRÉDITO (dinero entra al banco): Dr CuentaBancaria  / Cr AssignedAccount
-                    bool isDebit = tx.Type == TransactionType.Debit;
-
-                    projectedLines =
-                    [
-                        new JournalEntryLine { Account = isDebit ? tx.AssignedAccount! : bankAccount, Amount = tx.Amount, IsDebit = true  },
-                        new JournalEntryLine { Account = isDebit ? bankAccount : tx.AssignedAccount!, Amount = tx.Amount, IsDebit = false },
-                    ];
-
-                    entry = new JournalEntry
-                    {
-                        Date              = tx.Date,
-                        Description       = tx.Description,
-                        CompanyId         = tx.CompanyId,
-                        BankTransactionId = tx.Id,
-                        Lines             = projectedLines,
-                    };
-                }
-
-                var signature = BuildEntrySignature(tx.CompanyId, tx.Date, tx.Description, projectedLines);
-                if (signatureToEntryIds.TryGetValue(signature, out var existingEntryIds)
-                    && existingEntryIds.Count > 0)
-                {
-                    // Solo se matchea contra asientos PRE-EXISTENTES (anteriores a este lote).
-                    // Cada transacción consume un único asiento equivalente preexistente.
-                    var existingEntryId = existingEntryIds.Dequeue();
-                    if (existingEntryIds.Count == 0)
-                        signatureToEntryIds.Remove(signature);
-
-                    tx.MarkPossibleDuplicate();
-                    tx.JournalEntryId = existingEntryId;
-                    linkedDuplicates.Add(new
-                    {
-                        TransactionId  = tx.Id,
-                        JournalEntryId = existingEntryId,
-                    });
-                    duplicatesSkipped++;
-                    continue;
-                }
-
-                // NO agregamos la firma de este lote al mapa: así dos movimientos idénticos en el mismo
-                // extracto se asientan normalmente en lugar de que el segundo sea falso "equivalente".
-                entries.Add(entry);
-                tx.JournalEntryId = entry.Id; // Marcar como asentada
-            }
-
-            if (entries.Count == 0)
-            {
-                await dbContext.SaveChangesAsync();
-                return Results.Ok(new
-                {
-                    Generated = 0,
-                    DuplicatesSkipped = duplicatesSkipped,
-                    LinkedTransactions = linkedDuplicates,
-                    Message = duplicatesSkipped > 0
-                        ? "No se generaron asientos nuevos porque ya existían asientos equivalentes. Los movimientos quedaron marcados como asentados."
-                        : "No hay transacciones elegibles (todas ya asentadas o sin cuenta asignada).",
-                });
-            }
-
-            dbContext.JournalEntries.AddRange(entries);
-            await dbContext.SaveChangesAsync();
-
-            return Results.Ok(new
-            {
-                Generated    = entries.Count,
-                DuplicatesSkipped = duplicatesSkipped,
-                LinkedTransactions = linkedDuplicates,
-                BankAccount  = string.Join(", ", companiesMap.Values.Distinct()),
-                Entries      = entries.Select(e => new
-                {
-                    e.Id,
-                    e.Date,
-                    e.Description,
-                    e.CompanyId,
-                    e.BankTransactionId,
-                    Lines = e.Lines.Select(l => new { l.Account, l.Amount, l.IsDebit }),
-                }),
+                JobId = jobId,
+                Message = "Generación de asientos iniciada en segundo plano. Esto puede demorar unos minutos."
             });
         })
         .WithName("GenerateJournalEntries")
         .WithTags("Libro Diario")
         .WithSummary("Generar asientos contables desde transacciones clasificadas.")
-        .WithDescription("Body: { transactionIds: [guid] }. Genera partida doble estándar o triple para Impuesto al Cheque (split 50/50). Valida períodos cerrados y que cada empresa tenga cuenta bancaria configurada. Omite transacciones ya asentadas.")
-        .Produces(200)
-        .Produces(400)
-        .Produces(422);
+        .WithDescription("Body: { transactionIds: [guid] }. Encola el trabajo en Hangfire y devuelve 202 Accepted.")
+        .Produces(202)
+        .Produces(400);
 
 
         app.MapGet("/api/journal-entries", async (
@@ -230,7 +58,6 @@ public static class JournalEntriesEndpoints
                 .ToListAsync();
 
             var query = dbContext.JournalEntries
-                .Include(j => j.Lines)
                 .Where(j => j.CompanyId.HasValue && studioCompanyIds.Contains(j.CompanyId.Value));
 
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
@@ -259,7 +86,7 @@ public static class JournalEntriesEndpoints
                     j.CompanyId,
                     j.BankTransactionId,
                     j.GeneratedAt,
-                    Lines = j.Lines.OrderByDescending(l => l.IsDebit).Select(l => new { l.Account, l.Amount, l.IsDebit }),
+                    Lines = j.Lines.OrderByDescending(l => l.IsDebit).ThenBy(l => l.Account).Select(l => new { l.Account, l.Amount, l.IsDebit }),
                 })
                 .ToListAsync();
 
@@ -421,7 +248,13 @@ public static class JournalEntriesEndpoints
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, balanceAccounts);
+            Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidPost);
+            var externalCodesPost = await dbContext.ChartOfAccounts
+                .AsNoTracking()
+                .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidPost))
+                .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
+
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, balanceAccounts, externalCodesPost);
             var dateLabel = req.Month.HasValue && req.Year.HasValue
                 ? $"{req.Month:D2}-{req.Year}"
                 : req.Year.HasValue ? $"{req.Year}" : "todo";
@@ -520,7 +353,13 @@ public static class JournalEntriesEndpoints
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, balanceAccounts);
+            Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidGet);
+            var externalCodesGet = await dbContext.ChartOfAccounts
+                .AsNoTracking()
+                .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidGet))
+                .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
+
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, balanceAccounts, externalCodesGet);
             var dateLabel = month.HasValue && year.HasValue
                 ? $"{month:D2}-{year}"
                 : year.HasValue ? $"{year}" : "todo";
@@ -582,7 +421,13 @@ public static class JournalEntriesEndpoints
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
 
-            var fileBytes = exportService.ExportJournalEntriesToHolistor(entries);
+            Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidHol);
+            var externalCodesHol = await dbContext.ChartOfAccounts
+                .AsNoTracking()
+                .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidHol))
+                .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
+
+            var fileBytes = exportService.ExportJournalEntriesToHolistor(entries, externalCodesHol);
             var dateLabel = month.HasValue && year.HasValue
                 ? $"{month:D2}-{year}"
                 : year.HasValue ? $"{year}" : "todo";
@@ -642,7 +487,13 @@ public static class JournalEntriesEndpoints
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
 
-            var fileBytes = exportService.ExportJournalEntriesToBejerman(entries);
+            Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidBej);
+            var externalCodesBej = await dbContext.ChartOfAccounts
+                .AsNoTracking()
+                .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidBej))
+                .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
+
+            var fileBytes = exportService.ExportJournalEntriesToBejerman(entries, externalCodesBej);
             var dateLabel = month.HasValue && year.HasValue
                 ? $"{month:D2}-{year}"
                 : year.HasValue ? $"{year}" : "todo";

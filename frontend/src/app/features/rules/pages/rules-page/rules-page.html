@@ -20,11 +20,13 @@
       [rulesCount]="rules().length"
       [searchQuery]="searchQuery()"
       [filterType]="filterType()"
+      [showInactive]="showInactiveRules()"
       [canCreate]="!!companyService.activeCompany()"
       (companyChange)="onCompanySelectChange($event)"
       (manageCompaniesRequested)="showCompanyModal.set(true)"
       (searchQueryChange)="onSearchQueryChange($event)"
       (filterTypeChange)="onFilterTypeChange($event)"
+      (showInactiveChange)="onShowInactiveChange($event)"
       (createRequested)="openCreate()"
     />
 
@@ -40,6 +42,7 @@
         (createRequested)="openCreate()"
         (editRequested)="openEdit($event)"
         (deleteRequested)="confirmDelete($event)"
+        (toggleStatusRequested)="toggleRuleStatus($event)"
       />
     </div>
   }
@@ -51,6 +54,7 @@
     [isSaving]="isSaving()"
     [isEditing]="!!editingRule()"
     [applyRetroactive]="applyRetroactive()"
+    [accounts]="chartOfAccountService.accountNames()"
     (closeRequested)="closePanel()"
     (saveRequested)="saveRule()"
     (formFieldChanged)="onFormFieldChange($event)"

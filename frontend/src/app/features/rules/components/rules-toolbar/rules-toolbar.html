@@ -1,4 +1,4 @@
-<div class="flex-none mb-4 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 animate-fade-in">
+<div id="tour-rules-toolbar" class="flex-none mb-4 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 animate-fade-in">
   <div class="flex items-center gap-2 min-w-0">
     <div class="relative min-w-[320px] max-w-[560px] flex-1 xl:flex-none xl:w-[420px]">
       <select
@@ -64,7 +64,18 @@
       <option value="global">Solo generales</option>
     </select>
 
-    <button
+    <label class="flex items-center gap-2 px-3 py-2 text-sm rounded-xl border border-transparent hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer transition-colors" [class.opacity-50]="!canCreate()">
+      <input 
+        type="checkbox" 
+        [checked]="showInactive()" 
+        (change)="onShowInactiveToggle($event)"
+        [disabled]="!canCreate()"
+        class="rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500 dark:bg-slate-700 disabled:cursor-not-allowed" 
+      />
+      Mostrar inactivas
+    </label>
+
+    <button id="tour-rules-new-btn"
       (click)="onCreateClick()"
       [disabled]="!canCreate()"
       class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold

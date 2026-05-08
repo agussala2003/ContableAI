@@ -1,11 +1,15 @@
 using ContableAI.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using System.Reflection;
 
 namespace ContableAI.Infrastructure.Persistence;
 
 public class ContableAIDbContext : DbContext
 {
     public ContableAIDbContext(DbContextOptions<ContableAIDbContext> options) : base(options) { }
+
+    /// <summary>Mapeado a la función unaccent() de PostgreSQL (extensión unaccent).</summary>
+    public static string Unaccent(string text) => throw new InvalidOperationException("Solo se puede usar en consultas LINQ-to-SQL.");
 
     public DbSet<BankTransaction>  BankTransactions  { get; set; }
     public DbSet<AccountingRule>   AccountingRules   { get; set; }
@@ -16,6 +20,8 @@ public class ContableAIDbContext : DbContext
     public DbSet<JournalEntryLine> JournalEntryLines { get; set; }
     public DbSet<AuditLog>         AuditLogs         { get; set; }
     public DbSet<ClosedPeriod>     ClosedPeriods     { get; set; }
+    public DbSet<RuleSuggestion>   RuleSuggestions   { get; set; }
+    public DbSet<AfipVoucher>      AfipVouchers      { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -66,6 +72,10 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<AccountingRule>()
             .HasIndex(r => new { r.CompanyId, r.Priority })
             .HasDatabaseName("IX_AccountingRules_CompanyId_Priority");
+
+        modelBuilder.Entity<AccountingRule>()
+            .HasIndex(r => r.StudioTenantId)
+            .HasDatabaseName("IX_AccountingRules_StudioTenantId");
 
         // ==========================================
         // Company
@@ -133,6 +143,34 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<ClosedPeriod>()
             .HasIndex(p => new { p.StudioTenantId, p.Year, p.Month })
             .IsUnique(); // un estudio no puede cerrar el mismo mes dos veces
+
+        // ==========================================
+        // RuleSuggestion
+        // ==========================================
+        modelBuilder.Entity<RuleSuggestion>()
+            .HasIndex(r => new { r.CompanyId, r.Status });
+
+        // ==========================================
+        // AfipVoucher
+        // ==========================================
+        modelBuilder.Entity<AfipVoucher>()
+            .Property(v => v.Amount)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<AfipVoucher>()
+            .HasIndex(v => new { v.CompanyId, v.Date, v.Amount, v.TaxName })
+            .IsUnique();
+
+        modelBuilder.Entity<AfipVoucher>()
+            .HasOne(v => v.Company)
+            .WithMany()
+            .HasForeignKey(v => v.CompanyId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Función unaccent de PostgreSQL para búsqueda sin distinción de tildes
+        modelBuilder.HasDbFunction(
+            typeof(ContableAIDbContext).GetMethod(nameof(Unaccent), BindingFlags.Public | BindingFlags.Static, [typeof(string)])!,
+            b => b.HasName("unaccent"));
 
         // ==========================================
         // Optimistic Concurrency via xmin (PostgreSQL nativo)

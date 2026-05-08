@@ -44,10 +44,14 @@ export class JournalEntryService {
     return `${this.configService.config().apiUrl}/journal-entries`;
   }
 
-  generate(transactionIds: string[]): Observable<GenerateEntriesResponse> {
-    return this.http.post<GenerateEntriesResponse>(`${this.baseUrl}/generate`, {
+  generate(transactionIds: string[]): Observable<{ jobId?: string; message: string }> {
+    return this.http.post<{ jobId?: string; message: string }>(`${this.baseUrl}/generate`, {
       transactionIds,
     });
+  }
+
+  getJobStatus(jobId: string): Observable<{ jobId: string; state: string; createdAt: string }> {
+    return this.http.get<{ jobId: string; state: string; createdAt: string }>(`${this.configService.config().apiUrl}/jobs/${jobId}/status`);
   }
 
   getEntries(params?: { companyId?: string; month?: number; year?: number }): Observable<JournalEntry[]> {

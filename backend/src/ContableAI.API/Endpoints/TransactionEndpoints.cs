@@ -8,6 +8,7 @@ using ContableAI.Infrastructure.Services;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text;
 
@@ -22,7 +23,9 @@ public static class TransactionEndpoints
             HttpContext httpCtx,
             [FromForm] string? bankCode,
             [FromForm] string? companyId,
-            ISender sender) =>
+            ISender sender,
+            [FromForm] bool? withoutDateFilter = null,
+            [FromForm] bool? forceReapplyRules = null) =>
         {
             var files = httpCtx.Request.Form.Files;
             if (files is null || files.Count == 0)
@@ -37,7 +40,7 @@ public static class TransactionEndpoints
             }
 
             Guid? cId = Guid.TryParse(companyId, out var g) ? g : null;
-            var result = await sender.Send(new UploadBankStatementCommand(fileDataList, cId, bankCode));
+            var result = await sender.Send(new UploadBankStatementCommand(fileDataList, cId, bankCode, withoutDateFilter ?? false, forceReapplyRules ?? false));
             return result.ToHttpResult();
         })
         .DisableAntiforgery()
@@ -49,34 +52,23 @@ public static class TransactionEndpoints
         .Produces<ProblemDetails>(402);
 
 
-        // ── Endpoint de descarga del log de parseo acumulativo ────────────────
-        app.MapGet("/api/transactions/parse-log", () =>
-        {
-            var logPath = Path.Combine(Directory.GetCurrentDirectory(), "logs", "parse-log.jsonl");
-            if (!File.Exists(logPath))
-                return Results.NotFound(new { Message = "El log de parseo todavía no tiene entradas." });
-            return Results.File(logPath, "application/x-ndjson", "parse-log.jsonl");
-        })
-        .WithName("GetParseLog")
-        .WithTags("Transacciones")
-        .WithSummary("Descarga el log acumulativo JSONL de todos los extractos parseados.")
-        .RequireAuthorization(p => p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()))
-        .Produces(200)
-        .Produces(404);
-
-
         app.MapGet("/api/transactions", async (
             ICurrentTenantService  tenant,
             ContableAIDbContext    dbContext,
-            [FromQuery] string? companyId,
-            [FromQuery] int?    month,
-            [FromQuery] int?    year,
-            [FromQuery] string? search,
-            [FromQuery] string? account,
-            [FromQuery] string? sortBy,
-            [FromQuery] string? sortDir,
-            [FromQuery] int     page     = 1,
-            [FromQuery] int     pageSize = 100) =>
+            [FromQuery] string?  companyId,
+            [FromQuery] int?     month,
+            [FromQuery] int?     year,
+            [FromQuery] string?  search,
+            [FromQuery] string?  account,
+            [FromQuery] string?  sortBy,
+            [FromQuery] string?  sortDir,
+            [FromQuery] bool     strictSearch = false,
+            [FromQuery] int?     type        = null,
+            [FromQuery] decimal? exactAmount = null,
+            [FromQuery] decimal? minAmount   = null,
+            [FromQuery] decimal? maxAmount   = null,
+            [FromQuery] int      page        = 1,
+            [FromQuery] int      pageSize    = 100) =>
         {
             var studioId = tenant.StudioTenantId;
 
@@ -111,13 +103,42 @@ public static class TransactionEndpoints
             }
 
             if (!string.IsNullOrWhiteSpace(search))
-                query = query.Where(t => t.Description.Contains(search));
+            {
+                if (strictSearch)
+                    query = query.Where(t => t.Description.Contains(search));
+                else
+                {
+                    static string RemoveDiacritics(string text)
+                    {
+                        var normalized = text.Normalize(NormalizationForm.FormD);
+                        return new string(normalized
+                            .Where(c => CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                            .ToArray());
+                    }
+                    var normalizedSearch = RemoveDiacritics(search.ToLower());
+                    query = query.Where(t => EF.Functions.ILike(
+                        ContableAIDbContext.Unaccent(t.Description), $"%{normalizedSearch}%"));
+                }
+            }
 
             if (!string.IsNullOrWhiteSpace(account))
             {
                 query = string.Equals(account, "Pending", StringComparison.OrdinalIgnoreCase)
                     ? query.Where(t => t.AssignedAccount == null || t.AssignedAccount == string.Empty || t.AssignedAccount == "Pending")
                     : query.Where(t => t.AssignedAccount == account);
+            }
+
+            if (type.HasValue)
+                query = query.Where(t => (int)t.Type == type.Value);
+
+            if (exactAmount.HasValue)
+                query = query.Where(t => t.Amount == exactAmount.Value);
+            else
+            {
+                if (minAmount.HasValue)
+                    query = query.Where(t => t.Amount >= minAmount.Value);
+                if (maxAmount.HasValue)
+                    query = query.Where(t => t.Amount <= maxAmount.Value);
             }
 
             var filterBaseQuery = dbContext.BankTransactions
@@ -219,8 +240,10 @@ public static class TransactionEndpoints
             Guid id,
             UpdateAccountRequest request,
             [FromServices] ICurrentTenantService currentTenant,
-            ContableAIDbContext dbContext) =>
+            ContableAIDbContext dbContext,
+            ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger(nameof(TransactionEndpoints));
             var tx = await dbContext.BankTransactions.FindAsync(id);
             if (tx == null) return Results.NotFound();
 
@@ -232,7 +255,8 @@ public static class TransactionEndpoints
 
             tx.Assign(request.AssignedAccount, null, false, ClassificationSources.Manual);
             await dbContext.SaveChangesAsync();
-            return Results.Ok(tx);
+            var newSuggestionKeyword = await CheckManualSuggestionAsync(dbContext, tx.CompanyId, currentTenant.StudioTenantId!, tx.Description, tx.AssignedAccount, logger);
+            return Results.Ok(new { Transaction = tx, NewSuggestionKeyword = newSuggestionKeyword });
         })
         .WithName("UpdateTransaction")
         .WithTags("Transacciones")
@@ -245,8 +269,10 @@ public static class TransactionEndpoints
         app.MapPut("/api/transactions/bulk", async (
             BulkUpdateRequest request,
             [FromServices] ICurrentTenantService currentTenant,
-            ContableAIDbContext dbContext) =>
+            ContableAIDbContext dbContext,
+            ILoggerFactory loggerFactory) =>
         {
+            var logger = loggerFactory.CreateLogger(nameof(TransactionEndpoints));
             if (request.Ids == null || request.Ids.Count == 0)
                 return Results.BadRequest("Se requiere al menos un ID.");
 
@@ -259,6 +285,29 @@ public static class TransactionEndpoints
 
             if (transactions.Count == 0)
                 return Results.NotFound("No se encontraron transacciones con los IDs indicados.");
+
+            AccountingRule? appliedRule = null;
+            if (request.RuleId.HasValue)
+            {
+                appliedRule = await dbContext.AccountingRules
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.Id == request.RuleId.Value);
+
+                if (appliedRule is null)
+                    return Results.BadRequest("La regla seleccionada no existe.");
+
+                var txCompanyIds = transactions
+                    .Where(t => t.CompanyId.HasValue)
+                    .Select(t => t.CompanyId!.Value)
+                    .Distinct()
+                    .ToList();
+
+                if (txCompanyIds.Count > 1)
+                    return Results.BadRequest("No se puede aplicar una regla a transacciones de distintas empresas.");
+
+                if (appliedRule.CompanyId.HasValue && (txCompanyIds.Count == 0 || appliedRule.CompanyId.Value != txCompanyIds[0]))
+                    return Results.BadRequest("La regla seleccionada pertenece a otra empresa.");
+            }
 
             var periodsToValidate = transactions
                 .Select(t => new { t.Date.Year, t.Date.Month })
@@ -278,15 +327,45 @@ public static class TransactionEndpoints
             }
 
             foreach (var tx in transactions)
-                tx.Assign(request.AssignedAccount, null, false, ClassificationSources.Manual);
+            {
+                if (appliedRule is not null)
+                {
+                    tx.Assign(
+                        appliedRule.TargetAccount,
+                        appliedRule.Id,
+                        appliedRule.RequiresTaxMatching,
+                        ClassificationSources.HardRule,
+                        appliedRule.RequiresTaxMatching ? 0.75f : 1.0f);
+                }
+                else
+                {
+                    tx.Assign(request.AssignedAccount, null, false, ClassificationSources.Manual);
+                }
+            }
 
             await dbContext.SaveChangesAsync();
 
+            var newSuggestionKeywords = new List<string>();
+            if (appliedRule is null)
+            {
+                var groups = transactions
+                    .GroupBy(t => new { t.Description, t.AssignedAccount, t.CompanyId, t.TenantId })
+                    .Select(g => g.First());
+                foreach (var rep in groups)
+                {
+                    var kw = await CheckManualSuggestionAsync(dbContext, rep.CompanyId, currentTenant.StudioTenantId!, rep.Description, rep.AssignedAccount, logger);
+                    if (kw is not null) newSuggestionKeywords.Add(kw);
+                }
+            }
+
             return Results.Ok(new
             {
-                UpdatedCount     = transactions.Count,
-                AssignedAccount  = request.AssignedAccount,
-                Transactions     = transactions,
+                UpdatedCount          = transactions.Count,
+                AssignedAccount       = appliedRule?.TargetAccount ?? request.AssignedAccount,
+                AppliedRuleId         = appliedRule?.Id,
+                ClassificationSource  = appliedRule is null ? ClassificationSources.Manual : ClassificationSources.HardRule,
+                Transactions          = transactions,
+                NewSuggestionKeywords = newSuggestionKeywords,
             });
         })
         .WithName("BulkUpdateTransactions")
@@ -367,9 +446,6 @@ public static class TransactionEndpoints
             ICurrentTenantService tenant,
             ContableAIDbContext dbContext) =>
         {
-            var refMonth = month ?? DateTime.Now.Month;
-            var refYear  = year  ?? DateTime.Now.Year;
-
             var studioCompanyIds = await dbContext.Companies
                 .AsNoTracking()
                 .Where(c => c.StudioTenantId == tenant.StudioTenantId && c.IsActive)
@@ -379,7 +455,9 @@ public static class TransactionEndpoints
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cIdGuid))
             {
-                var company = await dbContext.Companies.FindAsync(cIdGuid);
+                var company = await dbContext.Companies
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == cIdGuid);
                 if (company != null) companyName = company.Name;
             }
 
@@ -391,14 +469,33 @@ public static class TransactionEndpoints
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var expCmpId))
                 query = query.Where(t => t.CompanyId == expCmpId);
 
-            var startDate = new DateOnly(refYear, refMonth, 1);
-            var endDate   = startDate.AddMonths(1).AddDays(-1);
-            query = query.Where(t => t.Date >= startDate && t.Date <= endDate);
+            if (month.HasValue && year.HasValue)
+            {
+                var startDate = new DateOnly(year.Value, month.Value, 1);
+                var endDate   = startDate.AddMonths(1).AddDays(-1);
+                query = query.Where(t => t.Date >= startDate && t.Date <= endDate);
+            }
+            else if (year.HasValue)
+            {
+                var startDate = new DateOnly(year.Value, 1, 1);
+                var endDate   = new DateOnly(year.Value, 12, 31);
+                query = query.Where(t => t.Date >= startDate && t.Date <= endDate);
+            }
+            else if (month.HasValue)
+            {
+                query = query.Where(t => t.Date.Month == month.Value);
+            }
 
             var transactions = await query.OrderBy(t => t.Date).ToListAsync();
 
             if (!transactions.Any())
-                return Results.NotFound($"No hay transacciones para {refMonth}/{refYear}.");
+            {
+                var periodMsg = month.HasValue && year.HasValue ? $"{month:D2}/{year}"
+                              : year.HasValue  ? $"{year}"
+                              : month.HasValue ? $"mes {month}"
+                              : "el período seleccionado";
+                return Results.NotFound($"No hay transacciones para {periodMsg}.");
+            }
 
             var csv = new StringBuilder();
             csv.AppendLine("Fecha,Descripcion,Importe,Tipo,CuentaAsignada,FuenteClasificacion,Confianza,IdExterno,Asentado");
@@ -429,7 +526,11 @@ public static class TransactionEndpoints
             }
 
             var fileBytes = Encoding.UTF8.GetBytes(csv.ToString());
-            var fileName  = $"Banco_{companyName.Replace(" ", "_")}_{refMonth:D2}-{refYear}.csv";
+            var dateLabel = month.HasValue && year.HasValue ? $"{month:D2}-{year}"
+                          : year.HasValue  ? $"{year}"
+                          : month.HasValue ? $"mes{month:D2}"
+                          : "todo";
+            var fileName  = $"Banco_{companyName.Replace(" ", "_")}_{dateLabel}.csv";
 
             return Results.File(fileBytes,
                 "text/csv; charset=utf-8",
@@ -441,5 +542,105 @@ public static class TransactionEndpoints
         .WithDescription("Query params: companyId (guid), month (int), year (int). Descarga un CSV con todas las transacciones del período incluyendo clasificación y confianza de IA.")
         .Produces(200, contentType: "text/csv")
         .Produces<ProblemDetails>(404);
+    }
+
+    private static async Task<string?> CheckManualSuggestionAsync(
+        ContableAIDbContext db,
+        Guid? companyId,
+        string tenantId,
+        string description,
+        string? assignedAccount,
+        ILogger logger,
+        CancellationToken ct = default)
+    {
+        if (companyId is null || string.IsNullOrWhiteSpace(assignedAccount)) return null;
+
+        var keyword = NormalizeKeyword(description);
+
+        logger.LogDebug("Suggestion check: Start — Company={CompanyId}, Keyword={Keyword}, Account={Account}", companyId, keyword, assignedAccount);
+
+        if (string.IsNullOrWhiteSpace(keyword)) return null;
+
+        bool ruleExists = await db.AccountingRules.AnyAsync(
+            r => r.CompanyId == companyId && r.Keyword == keyword, ct);
+
+        if (ruleExists)
+        {
+            logger.LogDebug("Suggestion check: Skip — Keyword={Keyword}, Reason=RuleAlreadyExists", keyword);
+            return null;
+        }
+
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-730));
+
+        var descriptions = await db.BankTransactions
+            .Where(t => t.CompanyId == companyId
+                     && t.AssignedAccount == assignedAccount
+                     && t.ClassificationSource == ClassificationSources.Manual
+                     && t.Date >= cutoff)
+            .Select(t => t.Description)
+            .ToListAsync(ct);
+
+        var matchedDescriptions = descriptions
+            .Select(d => new { Original = d, Normalized = NormalizeKeyword(d) })
+            .Where(x => x.Normalized == keyword)
+            .ToList();
+
+        var count = matchedDescriptions.Count;
+
+        logger.LogDebug("Suggestion check: Count — Keyword={Keyword}, MatchCount={MatchCount}, ThresholdMet={ThresholdMet}", keyword, count, count >= 3);
+
+        if (count < 3) return null;
+
+        var existing = await db.RuleSuggestions
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId && s.Keyword == keyword, ct);
+
+        if (existing != null)
+        {
+            if (existing.Status == SuggestionStatus.Rejected)
+            {
+                existing.Status           = SuggestionStatus.Pending;
+                existing.SuggestedAccount = assignedAccount;
+                existing.Frequency        = count;
+                await db.SaveChangesAsync(ct);
+                logger.LogDebug("Suggestion check: Reactivated — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", keyword, assignedAccount, count);
+                return keyword;
+            }
+            else if (existing.Status == SuggestionStatus.Pending && existing.Frequency < count)
+            {
+                existing.Frequency = count;
+                await db.SaveChangesAsync(ct);
+                logger.LogDebug("Suggestion check: Updated — Keyword={Keyword}, NewFrequency={NewFrequency}", keyword, count);
+            }
+            return null;
+        }
+
+        db.RuleSuggestions.Add(new RuleSuggestion
+        {
+            TenantId         = tenantId,
+            CompanyId        = companyId,
+            Keyword          = keyword,
+            SuggestedAccount = assignedAccount,
+            Frequency        = count,
+            Status           = SuggestionStatus.Pending
+        });
+        await db.SaveChangesAsync(ct);
+        logger.LogDebug("Suggestion check: Created — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", keyword, assignedAccount, count);
+        return keyword;
+    }
+
+    // Strips [bracket] content and tokens with any digit (reference codes, IDs).
+    // "TR.NE7043268 Asociart S.A. ART [Asociart S.A. ART P.PROV.E/C]" → "ASOCIART S.A. ART"
+    // "TRANSF. CLIENTE CTA. CCP339 313226" → "TRANSF. CLIENTE CTA."
+    // Fallback: if all tokens had digits, returns the original uppercased.
+    private static string NormalizeKeyword(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return string.Empty;
+        var withoutBrackets = System.Text.RegularExpressions.Regex.Replace(
+            description.Trim(), @"\[.*?\]|\(.*?\)", " ");
+        var words = withoutBrackets.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                                   .Where(w => !w.Any(char.IsDigit))
+                                   .ToArray();
+        var result = string.Join(' ', words).ToUpperInvariant().Trim();
+        return string.IsNullOrWhiteSpace(result) ? description.Trim().ToUpperInvariant() : result;
     }
 }

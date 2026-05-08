@@ -16,10 +16,11 @@ public record QuotaLimits(
 
     public static QuotaLimits ForPlan(StudioPlan plan) => plan switch
     {
-        StudioPlan.Free       => new(3,   20,  200),
-        StudioPlan.Pro        => new(20,  200, 2_000),
+        // Free no se usa comercialmente, se limita a 0 para forzar upgrade
+        StudioPlan.Free       => new(0, 0, 0),
+        StudioPlan.Pro        => new(15, 250, Unlimited),
         StudioPlan.Enterprise => new(Unlimited, Unlimited, Unlimited),
-        _                     => new(3,   20,  200),
+        _                     => new(0, 0, 0),
     };
 
     public bool CompaniesOk(int current)    => MaxCompanies == Unlimited || current < MaxCompanies;
@@ -106,6 +107,11 @@ public class QuotaService : IQuotaService
     public async Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId)
     {
         var limits  = await GetLimitsAsync(studioTenantId);
+        if (limits.MaxRulesPerCompany == QuotaLimits.Unlimited)
+            return true;
+
+        // Se usa count general de reglas del tenant como métrica general en vez de por compañía para el Pro, 
+        // pero mantengamos la semantica por empresa temporalmente.
         var current = await _db.AccountingRules.CountAsync(r => r.CompanyId == companyId);
         return limits.RulesOk(current);
     }

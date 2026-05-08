@@ -1,4 +1,5 @@
-import { Component, inject, signal, computed, effect } from '@angular/core';
+import { Component, inject, signal, computed, effect, DestroyRef } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DecimalPipe, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
@@ -31,6 +32,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 export class DashboardPage {
   private companyService   = inject(CompanyService);
   private dashboardService = inject(DashboardService);
+  private readonly destroyRef = inject(DestroyRef);
 
   loading = signal(false);
   stats   = signal<DashboardStats | null>(null);
@@ -123,7 +125,7 @@ export class DashboardPage {
   private load(companyId: string, month: number, year: number): void {
     this.loading.set(true);
     this.error.set(null);
-    this.dashboardService.getStats(companyId, month, year).subscribe({
+    this.dashboardService.getStats(companyId, month, year).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: data => {
         this.stats.set(data);
         this.loading.set(false);

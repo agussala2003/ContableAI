@@ -34,6 +34,9 @@ namespace ContableAI.Infrastructure.Migrations
                     b.Property<int?>("Direction")
                         .HasColumnType("integer");
 
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Keyword")
                         .IsRequired()
                         .HasColumnType("text");
@@ -44,6 +47,9 @@ namespace ContableAI.Infrastructure.Migrations
                     b.Property<bool>("RequiresTaxMatching")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid?>("StudioTenantId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("TargetAccount")
                         .IsRequired()
                         .HasColumnType("text");
@@ -52,10 +58,54 @@ namespace ContableAI.Infrastructure.Migrations
 
                     b.HasIndex("CompanyId");
 
+                    b.HasIndex("StudioTenantId")
+                        .HasDatabaseName("IX_AccountingRules_StudioTenantId");
+
                     b.HasIndex("CompanyId", "Priority")
                         .HasDatabaseName("IX_AccountingRules_CompanyId_Priority");
 
                     b.ToTable("AccountingRules");
+                });
+
+            modelBuilder.Entity("ContableAI.Domain.Entities.AfipVoucher", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("IsMatched")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("MatchedTransactionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("StudioTenantId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TaxName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId", "Date", "Amount", "TaxName")
+                        .IsUnique();
+
+                    b.ToTable("AfipVouchers");
                 });
 
             modelBuilder.Entity("ContableAI.Domain.Entities.AuditLog", b =>
@@ -197,6 +247,12 @@ namespace ContableAI.Infrastructure.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ExternalCode")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -355,6 +411,43 @@ namespace ContableAI.Infrastructure.Migrations
                     b.ToTable("JournalEntryLines");
                 });
 
+            modelBuilder.Entity("ContableAI.Domain.Entities.RuleSuggestion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Frequency")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Keyword")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SuggestedAccount")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId", "Status");
+
+                    b.ToTable("RuleSuggestions");
+                });
+
             modelBuilder.Entity("ContableAI.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -406,6 +499,17 @@ namespace ContableAI.Infrastructure.Migrations
                     b.HasIndex("StudioTenantId");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("ContableAI.Domain.Entities.AfipVoucher", b =>
+                {
+                    b.HasOne("ContableAI.Domain.Entities.Company", "Company")
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Company");
                 });
 
             modelBuilder.Entity("ContableAI.Domain.Entities.BankTransaction", b =>

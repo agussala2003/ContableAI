@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, signal, computed, effect } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal, computed, effect, DestroyRef } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { JournalEntryService, JournalEntry, JournalEntryLine } from '../../../../core/services/journal-entry.service';
@@ -34,6 +35,7 @@ export class JournalPage {
   private configService  = inject(ConfigService);
   private toast          = inject(ToastService);
   private confirmDialog  = inject(ConfirmDialogService);
+  private readonly destroyRef = inject(DestroyRef);
 
   // ── UI state ────────────────────────────────────────────────
   showCompanyModal = signal(false);
@@ -155,6 +157,12 @@ export class JournalPage {
     }
 
     return Array.from(map.values()).sort((a, b) => {
+      // Cuentas con Debe primero, luego las que solo tienen Haber
+      const sectionA = a.debit > 0 ? 0 : 1;
+      const sectionB = b.debit > 0 ? 0 : 1;
+      if (sectionA !== sectionB) return sectionA - sectionB;
+
+      // Dentro de la misma sección: alfabético, con (Debe) antes que (Haber) para la cuenta bancaria
       const baseA = a.account.replace(/ \((Debe|Haber)\)$/i, '');
       const baseB = b.account.replace(/ \((Debe|Haber)\)$/i, '');
       const baseCompare = baseA.localeCompare(baseB);
@@ -258,10 +266,13 @@ export class JournalPage {
 
     const requestSeq = ++this.loadSeq;
     this.isLoading.set(true);
-    this.journalService.getEntries({ companyId }).subscribe({
+    this.journalService.getEntries({ companyId }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: list => {
         if (requestSeq !== this.loadSeq) return;
-        this.entries.set(list);
+        this.entries.set(list.map(e => ({
+          ...e,
+          lines: [...e.lines].sort((a, b) => (b.isDebit ? 1 : 0) - (a.isDebit ? 1 : 0)),
+        })));
         this.isLoading.set(false);
       },
       error: () => {
@@ -279,7 +290,7 @@ export class JournalPage {
     });
     if (!ok) return;
     this.deletingId.set(id);
-    this.journalService.deleteEntry(id).subscribe({
+    this.journalService.deleteEntry(id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         this.entries.update(list => list.filter(e => e.id !== id));
         this.toast.success('Asiento eliminado.');
@@ -321,7 +332,7 @@ export class JournalPage {
       companyId: company.id,
       month: month ?? undefined,
       year: year ?? undefined,
-    }).subscribe({
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (res) => {
         this.isDeletingAll.set(false);
         this.load(company.id);

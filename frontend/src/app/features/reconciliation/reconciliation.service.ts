@@ -1,10 +1,14 @@
-import { Injectable, inject, signal, computed, effect, untracked } from '@angular/core';
-import { BankTransaction, Transaction } from '../../core/services/transaction';
+import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { timer, switchMap, takeWhile } from 'rxjs';
+import { BankTransaction, Transaction, UploadResponse } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
 import { CompanyService } from '../../core/services/company.service';
 import { JournalEntryService } from '../../core/services/journal-entry.service';
 import { ReconciliationFilters, ReconciliationPagination } from './models/reconciliation.models';
+import { AfipService } from './afip.service';
+import { RuleService } from '../../core/services/rule.service';
 
 /**
  * Feature-scoped state service for the reconciliation module.
@@ -20,11 +24,14 @@ export class ReconciliationService {
   private confirmDialog       = inject(ConfirmDialogService);
   private companyService      = inject(CompanyService);
   private journalEntryService = inject(JournalEntryService);
+  private afipService         = inject(AfipService);
+  private ruleService         = inject(RuleService);
+  private readonly destroyRef = inject(DestroyRef);
 
   // ── Private writable state ─────────────────────────────────────────────
   private _transactions     = signal<BankTransaction[]>([]);
   private _filters          = signal<ReconciliationFilters>({
-    month: null, year: null, search: '', account: '', sortBy: null, sortDir: null,
+    month: null, year: null, search: '', account: '', direction: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact'
   });
   private _pagination       = signal<ReconciliationPagination>({
     page: 1, pageSize: 10, totalCount: 0, totalPages: 0,
@@ -38,6 +45,11 @@ export class ReconciliationService {
   private _availableAccounts      = signal<string[]>([]);
   private _availableMonths        = signal<number[]>([]);
   private _availableYears         = signal<number[]>([]);
+  private _pendingAfipCount       = signal<number>(0);
+
+  // ── Undo Stack ─────────────────────────────────────────────────────────
+  private _undoStack: Array<{ id: string; oldAccount: string }> = [];
+
 
   // ── Public readonly API ────────────────────────────────────────────────
   readonly transactions     = this._transactions.asReadonly();
@@ -52,6 +64,7 @@ export class ReconciliationService {
   readonly availableAccounts = this._availableAccounts.asReadonly();
   readonly availableMonths   = this._availableMonths.asReadonly();
   readonly availableYears    = this._availableYears.asReadonly();
+  readonly pendingAfipCount  = this._pendingAfipCount.asReadonly();
 
   // ── Computed ───────────────────────────────────────────────────────────
   readonly saldo = computed(() => this._totalIngresosFiltered() - this._totalEgresosFiltered());
@@ -61,7 +74,7 @@ export class ReconciliationService {
   );
   readonly hasActiveFilters = computed(() => {
     const f = this._filters();
-    return !!(f.search || f.month || f.year || f.account);
+    return !!(f.search || f.month || f.year || f.account || f.direction || f.exactAmount || f.minAmount || f.maxAmount);
   });
   readonly eligibleIds = computed(() =>
     this._transactions()
@@ -80,13 +93,30 @@ export class ReconciliationService {
       untracked(() => {
         this._pagination.update(p => ({ ...p, page: 1 }));
         this.loadData();
+        this.refreshAfipCount();
       });
+    });
+  }
+
+  refreshAfipCount(): void {
+    const companyId = this.companyService.activeCompany()?.id;
+    if (!companyId) {
+      this._pendingAfipCount.set(0);
+      return;
+    }
+
+    this.afipService.getVouchers(companyId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (vouchers) => {
+        const pending = vouchers.filter(v => !v.isMatched).length;
+        this._pendingAfipCount.set(pending);
+      },
+      error: () => this._pendingAfipCount.set(0)
     });
   }
 
   // ── Init (call from page ngOnInit) ─────────────────────────────────────
   init(): void {
-    this.companyService.loadCompanies().subscribe({
+    this.companyService.loadCompanies().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       error: () => this.loadData(),
     });
   }
@@ -100,15 +130,20 @@ export class ReconciliationService {
     this._isLoading.set(true);
     this.txService.getTransactions({
       companyId,
-      month:    f.month    ?? undefined,
-      year:     f.year     ?? undefined,
-      search:   f.search   || undefined,
-      account:  f.account  || undefined,
-      sortBy:   f.sortBy   ?? undefined,
-      sortDir:  f.sortDir  ?? undefined,
-      page:     p.page,
-      pageSize: p.pageSize,
-    }).subscribe({
+      month:        f.month    ?? undefined,
+      year:         f.year     ?? undefined,
+      search:       f.search   || undefined,
+      account:      f.account  || undefined,
+      direction:    f.direction ?? undefined,
+      sortBy:       f.sortBy   ?? undefined,
+      sortDir:      f.sortDir  ?? undefined,
+      strictSearch: f.strictSearch || undefined,
+      exactAmount:  f.amountMode === 'exact' ? f.exactAmount ?? undefined : undefined,
+      minAmount:    f.amountMode === 'range' ? f.minAmount ?? undefined : undefined,
+      maxAmount:    f.amountMode === 'range' ? f.maxAmount ?? undefined : undefined,
+      page:         p.page,
+      pageSize:     p.pageSize,
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (result) => {
         this._transactions.set(result.items);
         this._pagination.update(pg => ({
@@ -125,8 +160,7 @@ export class ReconciliationService {
         this._availableYears.set(result.availableYears ?? []);
         this._isLoading.set(false);
       },
-      error: (err) => {
-        console.error('Error cargando datos:', err);
+      error: () => {
         this._isLoading.set(false);
       },
     });
@@ -151,7 +185,7 @@ export class ReconciliationService {
   }
 
   clearFilters(): void {
-    this._filters.update(f => ({ ...f, search: '', account: '', month: null, year: null }));
+    this._filters.update(f => ({ ...f, search: '', account: '', direction: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
     this._pagination.update(p => ({ ...p, page: 1 }));
     this.loadData();
   }
@@ -180,74 +214,173 @@ export class ReconciliationService {
 
   // ── Transaction updates (optimistic) ──────────────────────────────────
   updateTransaction(id: string, newAccount: string): void {
-    const snapshot = this._transactions();
+    const txs = this._transactions();
+    const target = txs.find(t => t.id === id);
+    if (!target || target.assignedAccount === newAccount) return;
+
+    // Push to undo stack
+    this._undoStack.push({ id, oldAccount: target.assignedAccount || 'Pending' });
+    if (this._undoStack.length > 50) this._undoStack.shift();
+
+    const snapshot = txs;
     // Optimistic: apply locally before API call
     this._transactions.update(txs =>
       txs.map(t => t.id === id ? { ...t, assignedAccount: newAccount } : t)
     );
     this.txService.updateTransactionAccount(id, newAccount).subscribe({
-      next: (updated) => {
-        // Reconcile with server response
+      next: ({ transaction: updated, newSuggestionKeyword }) => {
         this._transactions.update(txs =>
           txs.map(t => t.id === updated.id ? updated : t)
         );
+        this.ruleService.triggerSuggestionRefresh();
+        if (newSuggestionKeyword) {
+          this.toast.info(`💡 Patrón detectado: se generó una sugerencia de regla para "${newSuggestionKeyword}". Revisala en Reglas.`);
+        }
       },
       error: () => {
         this._transactions.set(snapshot); // rollback
+        this._undoStack.pop();
         this.toast.error('Error al actualizar la transacción. Intentá de nuevo.');
       },
     });
   }
 
+  // ── Undo last action ───────────────────────────────────────────────────
+  undoLastUpdate(): void {
+    const last = this._undoStack.pop();
+    if (!last) {
+      this.toast.warning('No hay acciones recientes para deshacer en esta vista.');
+      return;
+    }
+    
+    const { id, oldAccount } = last;
+    const accountStr = oldAccount === 'Pending' ? '' : oldAccount;
+    
+    // Optimizamos enviando la actualización como de costumbre, la cual volverá a apilar el undo si queremos rehacer.
+    // Pero como no tenemos redo explícito, solo dejamos el undo stack sin esto.
+    const snapshot = this._transactions();
+    this._transactions.update(txs =>
+      txs.map(t => t.id === id ? { ...t, assignedAccount: accountStr } : t)
+    );
+    this.toast.success(`Deshaciendo última acción (cuenta revertida)`);
+    
+    this.txService.updateTransactionAccount(id, accountStr).subscribe({
+      next: ({ transaction: updated }) => {
+        this._transactions.update(txs => txs.map(t => t.id === updated.id ? updated : t));
+      },
+      error: () => {
+        this._transactions.set(snapshot);
+        // Put it back
+        this._undoStack.push(last);
+        this.toast.error('Error al deshacer. Intentá de nuevo.');
+      }
+    });
+  }
+
   onBulkAssigned(ids: string[], account: string): void {
+    this.onBulkAssignedWithOptions(ids, account);
+  }
+
+  onBulkRuleApplied(ids: string[], rule: { id: string; keyword: string; targetAccount: string }): void {
+    this.onBulkAssignedWithOptions(ids, rule.targetAccount, {
+      ruleId: rule.id,
+      ruleKeyword: rule.keyword,
+    });
+  }
+
+  private onBulkAssignedWithOptions(
+    ids: string[],
+    account: string,
+    options?: { ruleId?: string; ruleKeyword?: string },
+  ): void {
     const snapshot = this._transactions();
     const idSet = new Set(ids);
     // Optimistic: apply locally before API call
     this._transactions.update(txs =>
       txs.map(t => idSet.has(t.id) ? { ...t, assignedAccount: account } : t)
     );
-    this.txService.bulkUpdate(ids, account).subscribe({
+    this.txService.bulkUpdate(ids, account, options?.ruleId).subscribe({
       next: (response) => {
         const updatedMap = new Map(response.transactions.map(t => [t.id, t]));
         this._transactions.update(txs => txs.map(t => updatedMap.get(t.id) ?? t));
         const n = response.updatedCount;
-        this.toast.success(
-          `${n} movimiento${n !== 1 ? 's' : ''} actualizado${n !== 1 ? 's' : ''} a "${response.assignedAccount}".`
-        );
+        if (options?.ruleKeyword) {
+          this.toast.success(
+            `Regla "${options.ruleKeyword}" aplicada a ${n} movimiento${n !== 1 ? 's' : ''}.`
+          );
+        } else {
+          this.toast.success(
+            `${n} movimiento${n !== 1 ? 's' : ''} actualizado${n !== 1 ? 's' : ''} a "${response.assignedAccount}".`
+          );
+          this.ruleService.triggerSuggestionRefresh();
+        }
       },
       error: () => {
         this._transactions.set(snapshot); // rollback
-        this.toast.error('Error al aplicar la acción masiva.');
+        this.toast.error(options?.ruleId
+          ? 'Error al aplicar la regla en forma masiva.'
+          : 'Error al aplicar la acción masiva.');
       },
     });
   }
 
   // ── File upload ────────────────────────────────────────────────────────
   uploadFiles(
-    event: { files: File[]; bankCode: string; companyId?: string },
+    event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
     onSuccess?: () => void,
   ): void {
     this._isLoading.set(true);
     const companyId = event.companyId ?? this.companyService.activeCompany()?.id;
 
-    this.txService.uploadFiles(event.files, event.bankCode, companyId).subscribe({
+    this.txService.uploadFiles(event.files, event.bankCode, companyId, event.withoutDateFilter, event.forceReapplyRules).subscribe({
       next: (response) => {
-        this._pagination.update(p => ({ ...p, page: 1 }));
-        this.loadData(); // sets _isLoading=true internally, clears it when done
+        const generated = response.totalProcessed > 0;
+        const reapplied = (response.reappliedToExisting ?? 0) > 0;
 
-        if (response.totalProcessed > 0) {
+        if (event.withoutDateFilter && generated) {
+          this._filters.update(ff => ({ ...ff, month: null, year: null }));
+        }
+        else if (generated) {
+          this._adjustFiltersForImport(response);
+        }
+        
+        if (generated || reapplied) {
+          this._pagination.update(p => ({ ...p, page: 1 }));
+          this.loadData(); // sets _isLoading=true internally, clears it when done
           onSuccess?.();
+          
           const filesInfo = response.totalFiles > 1 ? ` (${response.totalFiles} archivos)` : '';
-          this.toast.success(
-            `¡Éxito${filesInfo}! Se procesaron ${response.totalProcessed} movimientos` +
-            `${response.companyName ? ' para ' + response.companyName : ''}. ` +
-            `(${response.duplicatesSkipped} duplicados omitidos)`,
-          );
-        } else if (response.duplicatesSkipped > 0) {
+          if (generated) {
+            this.toast.success(
+              `¡Éxito${filesInfo}! Se procesaron ${response.totalProcessed} movimientos` +
+              `${response.companyName ? ' para ' + response.companyName : ''}. ` +
+              `(${response.duplicatesSkipped} duplicados omitidos)`
+            );
+          }
+          if (reapplied) {
+            this.toast.success(`Se aplicaron tus reglas actualizadas a ${response.reappliedToExisting} transacciones existentes.`);
+          }
+        } 
+        else if (response.duplicatesSkipped > 0 && !event.forceReapplyRules) {
+          this._isLoading.set(false);
+          this.confirmDialog.confirm({
+            title: 'Extracto ya subido',
+            message: `Se detectaron ${response.duplicatesSkipped} movimientos que ya estaban cargados. ¿Querés re-aplicar tus reglas actuales sobre esos movimientos pendientes?`,
+            confirmLabel: 'Sí, re-aplicar reglas'
+          }).then(ok => {
+            if (ok) {
+              this.uploadFiles({ ...event, forceReapplyRules: true }, onSuccess);
+            }
+          });
+        } 
+        else if (response.duplicatesSkipped > 0) {
+          this._isLoading.set(false);
           this.toast.warning(
-            `No se agregaron movimientos nuevos. ${response.duplicatesSkipped} transacciones ya estaban cargadas.`
+            `No se agregaron movimientos nuevos, ni hubo cambios que requieran reclasificar. ${response.duplicatesSkipped} transacciones ya estaban cargadas y siguen igual.`
           );
-        } else {
+        } 
+        else {
+          this._isLoading.set(false);
           this.toast.warning('No se encontraron movimientos para importar.');
         }
       },
@@ -343,53 +476,26 @@ export class ReconciliationService {
     this.journalEntryService.generate(ids).subscribe({
       next: (res) => {
         this._isGenerating.set(false);
-
-        const generated = res.generated ?? 0;
-        const duplicatesSkipped = res.duplicatesSkipped ?? 0;
-        const entries = res.entries ?? [];
-        const linkedTransactions = res.linkedTransactions ?? [];
-
-        const entryMap = new Map(entries.map(e => [e.bankTransactionId, e.id]));
-        const linkedSet = new Set(linkedTransactions.map(l => l.transactionId));
-        for (const linked of linkedTransactions) {
-          entryMap.set(linked.transactionId, linked.journalEntryId);
-        }
-
-        if (entryMap.size > 0) {
-          this._transactions.update(txs =>
-            txs.map(t => {
-              if (!entryMap.has(t.id)) return t;
-              return {
-                ...t,
-                journalEntryId: entryMap.get(t.id)!,
-                isPossibleDuplicate: t.isPossibleDuplicate || linkedSet.has(t.id),
-              };
-            })
-          );
-        }
-
-        if (generated === 0) {
-          if (duplicatesSkipped > 0) {
-            this.toast.success(
-              `${duplicatesSkipped} movimiento${duplicatesSkipped !== 1 ? 's' : ''} ya tenía${duplicatesSkipped !== 1 ? 'n' : ''} un asiento equivalente y queda${duplicatesSkipped !== 1 ? 'ron' : ''} marcado${duplicatesSkipped !== 1 ? 's' : ''} como asentado${duplicatesSkipped !== 1 ? 's' : ''}.`
-            );
-          } else {
-            this.toast.warning(
-              res.message?.trim()
-                ? res.message
-                : 'No se generaron asientos. Verificá que las transacciones tengan cuenta asignada.'
-            );
-          }
-          return;
-        }
-
-        const n = generated;
-        if (duplicatesSkipped > 0) {
-          this.toast.success(
-            `${n} asiento${n !== 1 ? 's' : ''} generado${n !== 1 ? 's' : ''} correctamente. ${duplicatesSkipped} movimiento${duplicatesSkipped !== 1 ? 's' : ''} adicional${duplicatesSkipped !== 1 ? 'es' : ''} ya estaba${duplicatesSkipped !== 1 ? 'n' : ''} asentado${duplicatesSkipped !== 1 ? 's' : ''} y se marcó${duplicatesSkipped !== 1 ? 'ron' : ''} en la grilla.`
-          );
+        this.toast.success(res.message || 'Generación de asientos iniciada en segundo plano. Esto puede demorar unos minutos.');
+        
+        if (res.jobId) {
+          timer(3000, 3000).pipe(
+            switchMap(() => this.journalEntryService.getJobStatus(res.jobId!)),
+            takeWhile(status => status.state === 'Processing' || status.state === 'Enqueued', true),
+            takeUntilDestroyed(this.destroyRef),
+          ).subscribe({
+            next: (status) => {
+              if (status.state === 'Succeeded') {
+                this.toast.success('¡Asientos generados correctamente!');
+                this.loadData();
+              } else if (status.state === 'Failed') {
+                this.toast.error('La generación de asientos falló. Revisa los logs del servidor.');
+              }
+            },
+            error: () => this.toast.error('Error al monitorear el estado de la generación de asientos.'),
+          });
         } else {
-          this.toast.success(`${n} asiento${n !== 1 ? 's' : ''} generado${n !== 1 ? 's' : ''} correctamente.`);
+          this.loadData();
         }
       },
       error: (err) => {
@@ -403,5 +509,39 @@ export class ReconciliationService {
   // ── AFIP ───────────────────────────────────────────────────────────────
   onAfipMatchComplete(): void {
     this.loadData();
+  }
+
+  // ── Import filter adjustment ────────────────────────────────────────────
+  private _adjustFiltersForImport(response: UploadResponse): void {
+    const f = this._filters();
+    if (!f.month && !f.year) return; // No active period filter — all data visible
+
+    const imported = response.perFile.flatMap(pf => pf.transactions);
+    if (!imported.length) return;
+
+    // Check if any imported transaction falls within the current filter
+    const anyVisible = imported.some(t => {
+      const [txYear, txMonth] = t.date.split('-').map(Number);
+      return (!f.month || txMonth === f.month) && (!f.year || txYear === f.year);
+    });
+    if (anyVisible) return;
+
+    // Tally month+year occurrences to find the dominant period
+    const counts = new Map<string, { month: number; year: number; count: number }>();
+    for (const t of imported) {
+      const [txYear, txMonth] = t.date.split('-').map(Number);
+      const key = `${txYear}-${txMonth}`;
+      const entry = counts.get(key) ?? { month: txMonth, year: txYear, count: 0 };
+      entry.count++;
+      counts.set(key, entry);
+    }
+    const dominant = [...counts.values()].sort((a, b) => b.count - a.count)[0];
+
+    this._filters.update(ff => ({ ...ff, month: dominant.month, year: dominant.year }));
+
+    const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    this.toast.warning(
+      `Filtro actualizado a ${MONTHS[dominant.month - 1]} ${dominant.year} para mostrar los movimientos importados.`
+    );
   }
 }

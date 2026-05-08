@@ -1,4 +1,4 @@
-<div class="h-full min-h-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70 shadow-sm overflow-hidden flex flex-col">
+<div id="tour-rules-table" class="h-full min-h-0 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70 shadow-sm overflow-hidden flex flex-col">
   @if (isLoading()) {
     <div class="divide-y divide-slate-100 dark:divide-slate-800">
       @for (i of [1,2,3,4,5]; track i) {
@@ -53,10 +53,14 @@
 
       @for (rule of displayedRules(); track rule.id) {
         <div class="grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_210px] gap-3 items-center px-5 py-2.5
-                    hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors duration-150">
+                    hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors duration-150"
+             [class.opacity-50]="!rule.isActive">
 
           <span class="font-mono text-xs font-medium text-slate-800 dark:text-slate-200 truncate" [title]="rule.keyword">
             {{ rule.keyword }}
+            @if (!rule.isActive) {
+              <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">INACTIVA</span>
+            }
           </span>
 
           <span class="text-xs text-slate-600 dark:text-slate-400 truncate" [title]="rule.targetAccount">
@@ -105,6 +109,23 @@
               Editar
             </button>
 
+            <button
+              (click)="onToggleStatus(rule)"
+              class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
+                     text-slate-500 dark:text-slate-400
+                     bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
+                     hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200
+                     dark:hover:text-amber-400 dark:hover:bg-amber-500/10 dark:hover:border-amber-500/30
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     transition-all duration-150 shadow-sm"
+              [attr.title]="rule.isActive ? 'Desactivar regla' : 'Activar regla'"
+            >
+              @if (rule.isActive) {
+                <lucide-icon name="eye-off" class="w-3.5 h-3.5"></lucide-icon> Desactivar
+              } @else {
+                <lucide-icon name="eye" class="w-3.5 h-3.5"></lucide-icon> Activar
+              }
+            </button>
             <button
               (click)="onDelete(rule)"
               [disabled]="deletingId() === rule.id || rule.companyId == null"

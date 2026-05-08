@@ -102,3 +102,20 @@ body {
   --animate-fade-in:         fadeIn          0.15s ease-out   forwards;
   --animate-slide-up:        slideUp         0.2s  ease-out   forwards;
 }
+
+/* ─── Keyboard key badge ─────────────────────────────────────────────────── */
+.kbd {
+  @apply px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700
+         text-xs font-mono text-slate-700 dark:text-slate-300 shadow-sm;
+}
+
+/* ─── Tour highlight ─────────────────────────────────────────────────────── */
+.tour-highlight {
+  outline: 2px solid #6366f1;
+  outline-offset: 4px;
+  border-radius: 0.5rem;
+  position: relative;
+  z-index: 8995;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+  transition: outline 0.2s, box-shadow 0.2s;
+}

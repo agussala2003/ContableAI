@@ -21,7 +21,7 @@
 
     <!-- Period selectors + Refresh button -->
     @if (companyName) {
-      <div class="flex items-center gap-2">
+      <div id="tour-dashboard-period" class="flex items-center gap-2">
 
         <!-- Month selector -->
         <select
@@ -99,7 +99,7 @@
 
   <!-- ── KPI Cards ─────────────────────────────────────────────────────────── -->
   @if (companyName) {
-    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+    <div id="tour-dashboard-kpis" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
 
       <!-- Skeleton state -->
       @if (loading()) {
@@ -156,7 +156,7 @@
 
     <!-- ── Progress bar: classification rate ──────────────────────────────── -->
     @if (!loading() && stats()) {
-      <div class="mt-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70
+      <div id="tour-dashboard-classification" class="mt-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700/70
                   shadow-sm p-6">
         <div class="flex items-center justify-between mb-3">
           <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">

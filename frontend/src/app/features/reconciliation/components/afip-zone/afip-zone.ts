@@ -1,5 +1,6 @@
-import { Component, inject, input, output, signal } from '@angular/core';
-import { AfipMatchResponse, Transaction } from '../../../../core/services/transaction';
+import { Component, inject, input, output, signal, effect, computed } from '@angular/core';
+import { DecimalPipe, DatePipe } from '@angular/common';
+import { AfipService, AfipVoucher } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -7,21 +8,40 @@ import { LucideAngularModule } from 'lucide-angular';
   selector: 'app-afip-zone',
   standalone: true,
   templateUrl: './afip-zone.html',
-  imports: [LucideAngularModule],
+  imports: [LucideAngularModule, DecimalPipe, DatePipe],
 })
 export class AfipZone {
 
-  private txService = inject(Transaction);
+  private afipService = inject(AfipService);
   private toast = inject(ToastService);
 
   companyId = input<string | undefined>(undefined);
-  pendingCount = input<number>(0);
-  matchComplete = output<void>();
+  uploadComplete = output<number>();
 
-  isLoading = signal(false);
-  lastResult = signal<AfipMatchResponse | null>(null);
+  isLoading     = signal(false);
+  isLoadingList = signal(false);
+  isRematching  = signal(false);
+  vouchers      = signal<AfipVoucher[]>([]);
   selectedFiles = signal<File[]>([]);
-  isDragging = signal(false);
+  isDragging    = signal(false);
+
+  pendingCount = computed(() => this.vouchers().filter(v => !v.isMatched).length);
+  matchedCount = computed(() => this.vouchers().filter(v => v.isMatched).length);
+
+  constructor() {
+    effect(() => {
+      const id = this.companyId();
+      if (id) this.loadVouchers(id);
+    });
+  }
+
+  loadVouchers(companyId: string) {
+    this.isLoadingList.set(true);
+    this.afipService.getVouchers(companyId).subscribe({
+      next: (v) => { this.vouchers.set(v); this.isLoadingList.set(false); },
+      error: () => this.isLoadingList.set(false),
+    });
+  }
 
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
@@ -42,27 +62,47 @@ export class AfipZone {
     if (files.length) this.selectedFiles.set(files);
   }
 
-  runMatch() {
+  triggerRematch() {
+    const id = this.companyId();
+    if (!id) return;
+    this.isRematching.set(true);
+    this.afipService.triggerRematch(id).subscribe({
+      next: () => {
+        this.toast.success('Cruce iniciado en segundo plano. Recargá en unos instantes.');
+        this.isRematching.set(false);
+        setTimeout(() => this.loadVouchers(id), 3000);
+      },
+      error: () => {
+        this.toast.error('No se pudo iniciar el cruce.');
+        this.isRematching.set(false);
+      },
+    });
+  }
+
+  runUpload() {
     const files = this.selectedFiles();
     if (!files.length) { this.toast.error('Seleccioná al menos un PDF de AFIP primero.'); return; }
+    const id = this.companyId();
+    if (!id) return;
 
     this.isLoading.set(true);
-    this.lastResult.set(null);
 
-    this.txService.matchAfip(files, this.companyId()).subscribe({
-      next: (result) => {
-        this.lastResult.set(result);
+    this.afipService.uploadVouchers(id, files).subscribe({
+      next: (addedCount) => {
         this.isLoading.set(false);
-        this.matchComplete.emit();
-        if (result.successfulMatches > 0) {
-          this.toast.success(`¡${result.successfulMatches} cruce${result.successfulMatches > 1 ? 's' : ''} encontrado${result.successfulMatches > 1 ? 's' : ''}! Las banderas violetas desaparecieron.`);
+        this.selectedFiles.set([]);
+        this.uploadComplete.emit(addedCount);
+        this.loadVouchers(id);
+
+        if (addedCount > 0) {
+          this.toast.success(`¡${addedCount} comprobante${addedCount > 1 ? 's' : ''} cargado${addedCount > 1 ? 's' : ''}! El cruce se procesa en segundo plano.`);
         } else {
-          this.toast.warning('No se encontraron cruces. Verificá los montos y fechas de los PDFs de AFIP.');
+          this.toast.info('No se agregaron comprobantes nuevos (posibles duplicados o archivos no válidos).');
         }
       },
       error: () => {
         this.isLoading.set(false);
-        this.toast.error('Error al procesar los archivos de AFIP.');
+        this.toast.error('Error al subir los archivos de AFIP.');
       },
     });
   }

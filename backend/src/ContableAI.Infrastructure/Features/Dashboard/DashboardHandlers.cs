@@ -4,6 +4,7 @@ using ContableAI.Domain.Constants;
 using ContableAI.Infrastructure.Persistence;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using ContableAI.Infrastructure.Services;
 
 namespace ContableAI.Infrastructure.Features.Dashboard;
 
@@ -53,5 +54,32 @@ public sealed class GetDashboardStatsHandler
             Month:                month,
             Year:                 year
         ));
+    }
+}
+
+public sealed class GetTenantQuotaHandler
+    : IRequestHandler<GetTenantQuotaQuery, Result<TenantQuotaResponse>>
+{
+    private readonly IQuotaService _quota;
+
+    public GetTenantQuotaHandler(IQuotaService quota) => _quota = quota;
+
+    public async Task<Result<TenantQuotaResponse>> Handle(
+        GetTenantQuotaQuery query,
+        CancellationToken   ct)
+    {
+        var usage = await _quota.GetUsageAsync(query.StudioTenantId);
+
+        var response = new TenantQuotaResponse(
+            Plan:                    usage.Plan,
+            CompaniesUsed:           usage.CompaniesUsed,
+            MaxCompanies:            usage.MaxCompanies,
+            MonthlyTransactionsUsed: usage.MonthlyTransactionsUsed,
+            MaxMonthlyTransactions:  usage.MaxMonthlyTransactions,
+            TotalRulesUsed:          usage.TotalRulesUsed,
+            MaxRules:                usage.MaxRulesPerCompany
+        );
+
+        return Result<TenantQuotaResponse>.Success(response);
     }
 }
