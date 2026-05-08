@@ -1,6 +1,6 @@
 export const environment = {
-  production: true,
-  apiUrl: 'https://contableai-api.onrender.com/api',
+  production: false,
+  apiUrl: 'http://localhost:5284/api',
   appVersion: '0.1.0-beta',
   requestTimeoutMs: 15000,
   defaultToastDurationMs: 4500,
