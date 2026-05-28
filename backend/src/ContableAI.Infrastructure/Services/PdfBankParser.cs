@@ -391,6 +391,7 @@ public class PdfBankParser : IBankParser
                 
                 if (upperLine.StartsWith("SALDO AL") ||
                     upperLine.Contains("TOTAL MOVIMIENTOS") ||
+                    upperLine.Contains("NRO DE CHEQUE") ||
                     IsGaliciaRetentionSummaryRow(upperLine) ||
                     upperLine.Contains("EL CREDITO DE IMPUESTO") ||
                     upperLine.Contains("IMPUESTO A LOS DEBITOS") ||
@@ -513,9 +514,10 @@ public class PdfBankParser : IBankParser
     private static bool IsEndOfTableMarker(string upperLine)
     {
         return upperLine.StartsWith("SALDO AL") || 
-               upperLine.Contains("DEBITOS AUTOMATICOS DEL") || 
-               upperLine.Contains("CABAL DEBITO DEL") || 
+               upperLine.Contains("DEBITOS AUTOMATICOS DEL") ||
+               upperLine.Contains("CABAL DEBITO DEL") ||
                upperLine.Contains("TRANSFERENCIAS PESOS DEL") ||
+               upperLine.Contains("NRO DE CHEQUE") ||
                (upperLine.Contains("IMPUESTO LEY") && upperLine.Contains("TOTAL")) ||
                upperLine.Contains("PERIODO COMPRENDIDO ENTRE") || 
                upperLine.Contains("LOS DEPÓSITOS EN PESOS") ||
@@ -929,29 +931,30 @@ public class PdfBankParser : IBankParser
     private static string InferBbvaDescription(List<BankTransaction> txs, int idx)
     {
         var tx = txs[idx];
-        
-        // Buscar hacia adelante
-        for (int j = idx + 1; j < Math.Min(idx + 8, txs.Count); j++)
+
+        // Buscar hacia adelante dentro del mismo día (sin límite fijo: en extractos con cientos
+        // de transacciones diarias la ventana de 8 es insuficiente).
+        for (int j = idx + 1; j < txs.Count; j++)
         {
             var c = txs[j];
             if (c.Date != tx.Date) break;
-            
+
             var cd = CleanBbvaDescription(c.Description);
             if (c.Type == tx.Type && cd.Length > 2 && c.Amount != tx.Amount && !IsBbvaFeeRow(cd))
                 return cd;
         }
-        
-        // Buscar hacia atrás
-        for (int j = idx - 1; j >= Math.Max(idx - 8, 0); j--)
+
+        // Buscar hacia atrás dentro del mismo día
+        for (int j = idx - 1; j >= 0; j--)
         {
             var c = txs[j];
             if (c.Date != tx.Date) break;
-            
+
             var cd = CleanBbvaDescription(c.Description);
             if (c.Type == tx.Type && cd.Length > 2 && c.Amount != tx.Amount && !IsBbvaFeeRow(cd))
                 return cd;
         }
-        
+
         return tx.Description;
     }
 
@@ -1801,44 +1804,16 @@ public class PdfBankParser : IBankParser
     }
 
     /// <summary>
-    /// Escanea todas las fechas con año explícito del documento y devuelve el año y mes del
-    /// extracto principal (la fecha más reciente encontrada). Para un extracto BBVA que va
-    /// "30/12/2024 al 31/01/2025", detecta stmtYear=2025 y primaryMonth=1 (enero).
-    /// Usa el nombre del archivo como fallback si el documento no tiene fechas con año más recientes.
-    /// Nombres como "0125.pdf" (MMYY) o "012025.pdf" (MMYYYY) se parsean como mes=1, año=2025.
+    /// Devuelve el año y mes del período principal del extracto.
+    /// El nombre del archivo es la fuente autoritativa (ej. "0925.pdf" → sept 2025);
+    /// sólo se cae al escaneo de fechas en el documento cuando el nombre no es parseable.
+    /// Esto evita que fechas futuras en secciones suplementarias (ej. FECHA PAGO de cheques
+    /// con vencimiento en el año siguiente) corrompan el año asignado a las transacciones.
     /// </summary>
     private static (int? stmtYear, int? primaryMonth) DetectStatementInfo(List<PdfRow> rows, string? fileName = null)
     {
-        var rx = new Regex(@"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})");
-
-        int maxYear = 0;
-        int? primaryMonth = null;
-
-        foreach (var row in rows)
-        {
-            foreach (var cell in row.Cells)
-            {
-                foreach (Match m in rx.Matches(cell.Text.Trim()))
-                {
-                    if (!int.TryParse(m.Groups[3].Value, out var y)) continue;
-                    if (y < 100) y += 2000;
-                    if (y < 2020 || y > DateTime.Today.Year + 1) continue;
-
-                    if (!int.TryParse(m.Groups[2].Value, out var mo) || mo < 1 || mo > 12) continue;
-
-                    // Tomamos la fecha más reciente: mayor año, y dentro del mismo año, mayor mes
-                    if (y > maxYear || (y == maxYear && mo > (primaryMonth ?? 0)))
-                    {
-                        maxYear = y;
-                        primaryMonth = mo;
-                    }
-                }
-            }
-        }
-
-        // Fallback: intentar extraer mes/año del nombre del archivo (ej. "0125.pdf" → mes=01, año=2025).
-        // Se aplica cuando el nombre del archivo indica una fecha MÁS RECIENTE que la encontrada en el documento,
-        // lo que ocurre cuando la única fecha con año en el PDF es del mes anterior al período principal.
+        // Intentar primero el nombre de archivo — es la fuente más confiable del período.
+        // Nombres como "0125.pdf" (MMYY) o "012025.pdf" (MMYYYY) se parsean como mes=1, año=2025.
         if (!string.IsNullOrEmpty(fileName))
         {
             var baseName = Path.GetFileNameWithoutExtension(fileName);
@@ -1854,12 +1829,32 @@ public class PdfBankParser : IBankParser
             {
                 if (fY < 100) fY += 2000;
                 if (fY >= 2020 && fY <= DateTime.Today.Year + 1)
+                    return (fY, fMo);
+            }
+        }
+
+        // Fallback: escanear fechas con año explícito en el documento.
+        // Se usa cuando el nombre del archivo no tiene el formato MMYY / MMYYYY esperado.
+        var rx = new Regex(@"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})");
+        int maxYear = 0;
+        int? primaryMonth = null;
+
+        foreach (var row in rows)
+        {
+            foreach (var cell in row.Cells)
+            {
+                foreach (Match m in rx.Matches(cell.Text.Trim()))
                 {
-                    // Usar el nombre de archivo si indica una fecha más reciente que el documento
-                    if (fY > maxYear || (fY == maxYear && fMo > (primaryMonth ?? 0)))
+                    if (!int.TryParse(m.Groups[3].Value, out var y)) continue;
+                    if (y < 100) y += 2000;
+                    if (y < 2020 || y > DateTime.Today.Year + 1) continue;
+
+                    if (!int.TryParse(m.Groups[2].Value, out var mo) || mo < 1 || mo > 12) continue;
+
+                    if (y > maxYear || (y == maxYear && mo > (primaryMonth ?? 0)))
                     {
-                        maxYear = fY;
-                        primaryMonth = fMo;
+                        maxYear = y;
+                        primaryMonth = mo;
                     }
                 }
             }
