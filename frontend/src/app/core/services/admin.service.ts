@@ -38,6 +38,11 @@ export interface DbResetResponse {
   accountsSeeded: number;
 }
 
+export interface NormalizeAccountsResponse {
+  transactionsScanned: number;
+  transactionsUpdated: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AdminService {
   private http = inject(HttpClient);
@@ -73,5 +78,9 @@ export class AdminService {
 
   resetDatabase(): Observable<DbResetResponse> {
     return this.http.post<DbResetResponse>(`${this.baseUrl}/db-reset`, {});
+  }
+
+  normalizeAccounts(): Observable<NormalizeAccountsResponse> {
+    return this.http.post<NormalizeAccountsResponse>(`${this.baseUrl}/normalize-accounts`, {});
   }
 }

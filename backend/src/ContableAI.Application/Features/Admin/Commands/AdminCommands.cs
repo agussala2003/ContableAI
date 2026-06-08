@@ -54,3 +54,11 @@ public record UpdateAdminGlobalRuleCommand(
 public record DeleteAdminGlobalRuleCommand(Guid Id) : IRequest<Result<AdminMessageResponse>>;
 
 public record AdminDbResetCommand() : IRequest<Result<AdminDbResetResponse>>;
+
+public record AdminNormalizeAccountsResponse(int TransactionsScanned, int TransactionsUpdated);
+
+/// <summary>
+/// Reescribe en lote las cuentas de los movimientos a su forma canónica del plan de cuentas
+/// (limpia data legacy con casing mixto generada antes de FIX-A). Idempotente.
+/// </summary>
+public record AdminNormalizeAccountsCommand() : IRequest<Result<AdminNormalizeAccountsResponse>>;

@@ -24,6 +24,7 @@ export class AdminPage {
   users = signal<AdminUserRow[]>([]);
   isLoading = signal(false);
   isResetting = signal(false);
+  isNormalizing = signal(false);
   actionInProgress = signal<string | null>(null);
 
   readonly plans = ['Free', 'Pro', 'Enterprise'];
@@ -91,6 +92,27 @@ export class AdminPage {
     this.adminService.deleteUser(user.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => { this.toast.success(`Usuario ${user.email} eliminado.`); this.reload(); },
       error: () => { this.actionInProgress.set(null); this.toast.error('No se pudo eliminar el usuario.'); },
+    });
+  }
+
+  async normalizeAccounts(): Promise<void> {
+    const ok = await this.confirmDialog.confirm({
+      title: '¿Normalizar cuentas de los movimientos?',
+      message: 'Reescribe las cuentas con mayúsculas/minúsculas mezcladas a su forma canónica del plan. Es seguro e idempotente; no toca reglas ni asientos.',
+      confirmLabel: 'Sí, normalizar',
+    });
+    if (!ok) return;
+
+    this.isNormalizing.set(true);
+    this.adminService.normalizeAccounts().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (res) => {
+        this.isNormalizing.set(false);
+        this.toast.success(`${res.transactionsUpdated} movimiento(s) normalizado(s) de ${res.transactionsScanned} revisados.`);
+      },
+      error: (err) => {
+        this.isNormalizing.set(false);
+        this.toast.error(err?.error?.detail ?? err?.error?.message ?? 'No se pudo normalizar las cuentas.');
+      },
     });
   }
 

@@ -71,6 +71,12 @@ public class BankTransaction : ITenantEntity
         ConfidenceScore      = Math.Clamp(confidenceScore, 0f, 1f);
     }
 
+    /// <summary>
+    /// Reescribe únicamente el nombre de la cuenta asignada (normalización de casing/espacios),
+    /// preservando origen de clasificación, regla aplicada y confianza. No reclasifica.
+    /// </summary>
+    public void RenameAccount(string canonicalAccount) => AssignedAccount = canonicalAccount;
+
     /// <summary>Marca que este movimiento de tarjeta requiere desglose manual antes de asentar.</summary>
     public void MarkNeedsBreakdown()    => NeedsBreakdown      = true;
 

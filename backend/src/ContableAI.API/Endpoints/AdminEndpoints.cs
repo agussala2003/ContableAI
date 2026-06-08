@@ -192,6 +192,18 @@ public static class AdminEndpoints
         .Produces(200)
         .Produces(404);
 
+        app.MapPost("/api/admin/normalize-accounts", async (IMediator mediator, CancellationToken ct) =>
+        {
+            var result = await mediator.Send(new AdminNormalizeAccountsCommand(), ct);
+            return result.ToHttpResult();
+        })
+        .RequireAuthorization(p => p.RequireRole("SystemAdmin"))
+        .WithName("AdminNormalizeAccounts")
+        .WithTags("Administración")
+        .WithSummary("Normalizar en lote las cuentas de los movimientos a su forma canónica.")
+        .WithDescription("Reescribe BankTransactions.AssignedAccount al nombre canónico del plan de cuentas (case-insensitive), limpiando data legacy con casing mixto generada antes de FIX-A. Idempotente. No toca reglas ni asientos históricos. Devuelve { transactionsScanned, transactionsUpdated }. Solo SystemAdmin.")
+        .Produces(200);
+
         app.MapPost("/api/admin/db-reset", async (IMediator mediator, CancellationToken ct) =>
         {
             var result = await mediator.Send(new AdminDbResetCommand(), ct);

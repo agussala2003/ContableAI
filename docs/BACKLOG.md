@@ -27,8 +27,8 @@
 ### FIX-A · Cuentas duplicadas por casing al cruzar AFIP
 - **Reportado por:** Seba Presman (charla 2026-06-07)
 - **Descripción:** Una cuenta cargada a mano ("cargas sociales") y la misma cuenta asignada por el cruce AFIP ("Cargas Sociales") quedaban como dos cuentas distintas. Además, la búsqueda por cuenta no traía todas las filas (comparación case-sensitive en Postgres).
-- **Fix:** Nuevo `AccountNameResolver` que canonicaliza el nombre contra el plan de cuentas (case-insensitive) en todas las escrituras (asignación manual single/bulk + cruce AFIP). Creación de cuentas case-insensitive y filtro de búsqueda case-insensitive. Sin migración de datos viejos (Seba ya corrigió los suyos; el filtro cubre remanentes).
-- **Estado:** ✅ Completado — 2026-06-07 (rama `dev`)
+- **Fix:** Nuevo `AccountNameResolver` que canonicaliza el nombre contra el plan de cuentas (case-insensitive) en todas las escrituras (asignación manual single/bulk + cruce AFIP). Creación de cuentas case-insensitive y filtro de búsqueda case-insensitive. Seed de las cuentas destino del cruce AFIP. **Normalización en lote** (acción admin `POST /api/admin/normalize-accounts` + botón en Admin): reescribe `BankTransactions.AssignedAccount` a la forma canónica para limpiar data legacy con casing mixto (idempotente, no toca reglas ni asientos históricos).
+- **Estado:** ✅ Completado — 2026-06-08 (rama `dev`)
 
 ---
 
