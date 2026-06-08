@@ -1,3 +1,4 @@
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
@@ -62,7 +63,7 @@ public class ProactiveLearningService : BackgroundService
             {
                 t.CompanyId,
                 t.TenantId,
-                Keyword = NormalizeKeyword(t.Description),
+                Keyword = KeywordNormalizer.Normalize(t.Description),
                 Account = t.Account,
             })
             .Where(g => !string.IsNullOrWhiteSpace(g.Key.Keyword) && g.Count() >= 3)
@@ -119,17 +120,5 @@ public class ProactiveLearningService : BackgroundService
             await db.SaveChangesAsync(ct);
             _logger.LogInformation("ProactiveLearningService generó {Count} nuevas sugerencias de reglas.", newSuggestions);
         }
-    }
-
-    private static string NormalizeKeyword(string? description)
-    {
-        if (string.IsNullOrWhiteSpace(description)) return string.Empty;
-        var withoutBrackets = System.Text.RegularExpressions.Regex.Replace(
-            description.Trim(), @"\[.*?\]|\(.*?\)", " ");
-        var words = withoutBrackets.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                                   .Where(w => !w.Any(char.IsDigit))
-                                   .ToArray();
-        var result = string.Join(' ', words).ToUpperInvariant().Trim();
-        return string.IsNullOrWhiteSpace(result) ? description.Trim().ToUpperInvariant() : result;
     }
 }

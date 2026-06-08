@@ -41,8 +41,9 @@
 - **Estado:** ✅ Completado — 2026-06-08. Nota: la edición inline por fila del grid se dejó con su `input+datalist` actual a propósito — ya muestra el texto tipeado y convertirla al combobox arriesgaba el flujo de teclado del "Modo Excel" (Enter→fila siguiente + crear-cuenta-nueva).
 
 ### UX-04 · Sugerencias Proactivas con "Fuzzy Matching"
-- **Descripción:** Actualmente el sistema de sugerencias requiere coincidencias exactas. Implementar lógica para ignorar números al final de las descripciones.
-- **Estado:** PENDIENTE — Prioridad MEDIA
+- **Descripción:** Las sugerencias no agrupaban descripciones que solo diferían en los números finales (ej: `FACTURA0012` vs `FACTURA0034` caían al fallback de la descripción completa y no agrupaban).
+- **Fix:** Nuevo helper único `KeywordNormalizer.Normalize` (Domain) que quita los **dígitos al final** de cada token (`FACTURA0012` → `FACTURA`) y descarta tokens con dígitos internos/vacíos. Centraliza las 3 copias previas de `NormalizeKeyword` (ProactiveLearningService, CompanyEndpoints, TransactionEndpoints). +7 tests.
+- **Estado:** ✅ Completado — 2026-06-08
 
 ### FIX-C · Soporte de PDF consolidado de VEP (ARCA - Seti - Consulta VEP)
 - **Reportado por:** Seba Presman (charla 2026-06-07)
