@@ -37,8 +37,8 @@
 ### UX-01b · Selector de cuenta con input de búsqueda visible (combobox)
 - **Reportado por:** Seba Presman
 - **Descripción:** El selector nativo `<select>` esconde lo que el usuario tipea. Se requiere un combobox con input visible.
-- **Fix:** Nuevo componente reutilizable `AccountCombobox` (`shared/components/account-combobox/`): input de texto visible + dropdown filtrable (substring, accent/case-insensitive), navegación con teclado (↑↓ Enter Esc), click-outside y texto libre opcional. Reemplaza el `<select>` nativo del formulario de reglas (`rule-form-slideover`).
-- **Estado:** 🔶 PARCIAL — 2026-06-07. Falta rolear el combobox al grid de movimientos y al filtro de cuentas (hoy usan `<datalist>` nativo).
+- **Fix:** Nuevo componente reutilizable `AccountCombobox` (`shared/components/account-combobox/`): input de texto visible + dropdown filtrable (substring, accent/case-insensitive), navegación con teclado (↑↓ Enter Esc), click-outside y texto libre opcional. Reemplaza el `<select>` nativo del formulario de reglas (`rule-form-slideover`) y el input de asignación masiva del grid.
+- **Estado:** ✅ Completado — 2026-06-08. Nota: la edición inline por fila del grid se dejó con su `input+datalist` actual a propósito — ya muestra el texto tipeado y convertirla al combobox arriesgaba el flujo de teclado del "Modo Excel" (Enter→fila siguiente + crear-cuenta-nueva).
 
 ### UX-04 · Sugerencias Proactivas con "Fuzzy Matching"
 - **Descripción:** Actualmente el sistema de sugerencias requiere coincidencias exactas. Implementar lógica para ignorar números al final de las descripciones.

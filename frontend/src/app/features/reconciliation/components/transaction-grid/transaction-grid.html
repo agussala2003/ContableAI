@@ -95,12 +95,15 @@
         </button>
       </div>
 
-      <input type="text" list="accounts-list-datalist" [value]="bulkAccount()"
-        (input)="bulkAccount.set($any($event.target).value)" placeholder="Asignar cuenta a todos…" class="flex-1 min-w-0 h-7 pl-2.5 pr-2.5 rounded-md border border-indigo-200 dark:border-indigo-700/50
-                 bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200
-                 placeholder:text-slate-400 dark:placeholder:text-slate-500
-                 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500
-                 transition-colors" />
+      <div class="flex-1 min-w-0">
+        <app-account-combobox
+          [accounts]="chartService.accountNames()"
+          [value]="bulkAccount()"
+          [inputClass]="bulkInputClass"
+          placeholder="Asignar cuenta a todos…"
+          (valueChange)="bulkAccount.set($event)"
+        ></app-account-combobox>
+      </div>
 
       <button (click)="applyBulk()" [disabled]="!bulkAccountValid()"
         class="h-7 inline-flex items-center gap-1.5 px-3 rounded-md text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-colors shrink-0 shadow-sm">
