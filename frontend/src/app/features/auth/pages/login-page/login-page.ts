@@ -22,11 +22,13 @@ export class LoginPage {
 
   isLoading         = signal(false);
   error             = signal<string | null>(null);
+  success           = signal<string | null>(null);
   showRegister      = signal(false);
 
   toggleMode() {
     this.showRegister.update(v => !v);
     this.error.set(null);
+    this.success.set(null);
     this.form.markAsPristine();
     this.form.markAsUntouched();
   }
@@ -61,17 +63,22 @@ export class LoginPage {
 
     const { email, password, displayName } = this.form.getRawValue();
     this.error.set(null);
+    this.success.set(null);
     this.isLoading.set(true);
 
     if (this.showRegister()) {
-      this.auth.registerStudio({
-        studioName: displayName.trim() || email,
+      // Registro público = solicitud de prueba (ENTRY-01 Fase A): la cuenta queda
+      // pendiente de activación manual por un admin (que la pasa a Pro por el período de prueba).
+      this.auth.register({
+        displayName: displayName.trim() || email,
         email,
         password,
       }).subscribe({
-        next: () => {
+        next: (res) => {
           this.isLoading.set(false);
-          this.router.navigate(['/']);
+          this.showRegister.set(false);
+          this.form.reset();
+          this.success.set(res.message ?? 'Tu solicitud fue recibida. Te avisaremos por email cuando tu prueba esté activa.');
         },
         error: (err) => {
           this.isLoading.set(false);

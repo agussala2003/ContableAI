@@ -70,7 +70,7 @@
 
 **Cadena comercial (orden con dependencias):**
 1. **COST-01 — Modelar costo unitario por cliente** — ✅ Documentado en [COST-01-unit-economics.md](COST-01-unit-economics.md). Hallazgo: costo marginal ≈ $0 (OCR Tesseract local, sin IA paga); hoy Render+Neon en Free ($0) pero el primer cliente pago obliga el salto a ~$65–85/mes fijo. Break-even ~6 clientes con básico $15.
-2. **ENTRY-01 — Modelo de entrada (reframe de QUOTA-01).** ✅ Definido en [ENTRY-01-modelo-de-entrada.md](ENTRY-01-modelo-de-entrada.md): estrategia escalonada **A (sales-led, cero código, ahora) → B (trial self-serve, build medio) → C (MercadoPago, después)**. Pre-lanzamiento landing: rutear el registro público a `Pending` (el `RegisterStudioHandler` actual deja `Active+Free` = roto).
+2. **ENTRY-01 — Modelo de entrada (reframe de QUOTA-01).** ✅ Definido en [ENTRY-01-modelo-de-entrada.md](ENTRY-01-modelo-de-entrada.md): estrategia escalonada **A (sales-led, ahora) → B (trial self-serve) → C (MercadoPago)**. **Fase A operativa**: el registro público ahora rutea a `Pending` (signup llama a `/register`, copy "Solicitá tu prueba"), el admin activa a Pro. Pendiente Fase B: trial self-serve con `TrialEndsAt`.
 3. **P1-3 — Landing comercial** (Astro/Next). La landing es el **puente a la adquisición del servicio** (embudo a pago), no solo SEO. Necesita precio + oferta + modelo de entrada definidos para tener un CTA real.
 
 **En paralelo / aparte:**

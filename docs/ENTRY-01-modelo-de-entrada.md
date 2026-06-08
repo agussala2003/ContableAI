@@ -39,9 +39,10 @@ Antes de publicar la landing hay que decidir el ruteo del registro (ver Fase A).
 **Por qué A primero:** cero build (reusa activación manual), y el contacto 1-a-1 con los primeros leads
 es lo más valioso a esta altura (objeciones, pricing, fricciones).
 
-**Único pendiente antes de lanzar la landing:** asegurar que el registro público rutee a **`Pending`**
-(camino `RegisterHandler`), NO al `RegisterStudioHandler` que deja `Active + Free` (roto). Decidir: deshabilitar
-ese handler o repurposarlo para la Fase B.
+**✅ Ruteo resuelto (2026-06-08):** el signup público del frontend (`login-page`) ahora llama a
+`/api/auth/register` → queda en `Pending` (antes usaba `register-studio` = `Active+Free` roto). Copy
+actualizado a "Solicitá tu prueba" + banner de éxito "tu solicitud fue recibida". El endpoint
+`register-studio` queda sin uso, reservado para repurposar en la Fase B (trial self-serve).
 
 ---
 
@@ -91,5 +92,5 @@ COST-01 (piso de precio) ─┐
 no hay plan Free ─────────┘
 ```
 
-- **Hoy:** Fase A (sales-led, cero código). Pre-lanzamiento landing: rutear registro a `Pending`.
+- **Hoy:** Fase A (sales-led) operativa ✅ — registro público rutea a `Pending`, admin activa a Pro.
 - **Pronto:** Fase B (trial self-serve). **Después:** Fase C (MercadoPago).
