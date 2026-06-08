@@ -1,6 +1,6 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../../../core/services/auth.service';
 
 @Component({
@@ -24,6 +24,13 @@ export class LoginPage {
   error             = signal<string | null>(null);
   success           = signal<string | null>(null);
   showRegister      = signal(false);
+
+  constructor() {
+    // La landing enlaza a /login?register=1 para abrir directo el formulario de prueba.
+    if (inject(ActivatedRoute).snapshot.queryParamMap.get('register') !== null) {
+      this.showRegister.set(true);
+    }
+  }
 
   toggleMode() {
     this.showRegister.update(v => !v);

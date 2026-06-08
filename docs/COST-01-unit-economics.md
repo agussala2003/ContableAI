@@ -6,6 +6,24 @@
 
 ---
 
+## 0. Decisión comercial adoptada (2026-06-08)
+
+- **Infra de arranque:** **Render Starter ($7, always-on)** + Neon/Vercel/Resend en **Free** → **fijo ~$8/mes**.
+  El Starter evita los cold starts y arregla Hangfire (cruce AFIP) por $7.
+- **Plan de entrada: "Pro" a US$20/mes** (= límites del enum `StudioPlan.Pro`: 15 empresas / 250 reglas / tx ilimitadas).
+- **Enterprise: a medida** ("Hablá con nosotros").
+- **Break-even: ~1 cliente** (fijo $8 ÷ $20). Cada Pro adicional suma ~$20 de margen (marginal ~$0).
+
+| Clientes Pro | Ingreso | Costo fijo | Margen |
+|---|---|---|---|
+| 1 | $20 | $8 | $12 (60%) |
+| 5 | $100 | $8 | $92 (92%) |
+| 10 | $200 | $8 | $192 (96%) |
+
+**Disparadores de upgrade:** Render Starter 512 MB → Standard $25 si el OCR se queda sin RAM; Neon Free 0.5 GB → Launch $19 cuando se llene el storage.
+
+---
+
 ## 1. Estructura de costos (anclada en el stack real)
 
 Verificado en el código, no son supuestos:
