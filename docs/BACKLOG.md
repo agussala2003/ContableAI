@@ -66,11 +66,22 @@
 
 ---
 
-## ⏳ TAREAS PENDIENTES
+## 🎯 PRIORIDADES ACTIVAS (curadas por Agustín — 2026-06-08)
 
-- **UX-04** – Sugerencias con "Fuzzy Matching" (ignorando números) – PENDIENTE.
-- **P1-3** – Landing Page Comercial (Astro/Next) para captación de leads – PENDIENTE.
-- **QUOTA-01** – Definir si Free=0/0/0 (bloqueado) es la estrategia o pasar a un freemium usable – PENDIENTE (decisión de negocio, ligado a precios).
+**Cadena comercial (orden con dependencias):**
+1. **COST-01 — Modelar costo unitario por cliente** (Render + Neon + OCR/IA por extracto). Define el PISO de precio. Bloquea lo comercial. No-código.
+2. **ENTRY-01 — Modelo de entrada (reframe de QUOTA-01).** NO hay plan Free: el `0/0/0` actual ya funciona como "cuenta registrada pero bloqueada hasta activar/pagar". Decidir trial X días / demo limitada / paywall directo.
+3. **P1-3 — Landing comercial** (Astro/Next). La landing es el **puente a la adquisición del servicio** (embudo a pago), no solo SEO. Necesita precio + oferta + modelo de entrada definidos para tener un CTA real.
+
+**En paralelo / aparte:**
+- **UX-04 — Fuzzy Matching en sugerencias** (ignorar números al final de la descripción). Producto, independiente, win rápido.
+- **RETEN-01 — Retención/limpieza de datos** (alertas de antigüedad + backup + purga). Post-clientes, no urge sin volumen.
+
+---
+
+## ⏳ TAREAS PENDIENTES (otras)
+
+- Ver "Prioridades activas" arriba.
 
 ---
 
