@@ -68,9 +68,9 @@
 
 ## ⏳ TAREAS PENDIENTES
 
-- **UX-01b** – Combobox visible para selector de cuentas – PENDIENTE.
 - **UX-04** – Sugerencias con "Fuzzy Matching" (ignorando números) – PENDIENTE.
 - **P1-3** – Landing Page Comercial (Astro/Next) para captación de leads – PENDIENTE.
+- **QUOTA-01** – Definir si Free=0/0/0 (bloqueado) es la estrategia o pasar a un freemium usable – PENDIENTE (decisión de negocio, ligado a precios).
 
 ---
 
