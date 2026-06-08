@@ -76,6 +76,9 @@ public static class ServiceExtensions
         services.AddScoped<IAfipParserService, PdfAfipParserService>();
         services.AddScoped<IExportService, ExcelExportService>();
 
+        // ── Canonicalización de cuentas (evita duplicados por casing) ─────────
+        services.AddScoped<IAccountNameResolver, AccountNameResolver>();
+
 
         // ── Autenticación y tenant ────────────────────────────────────────────
         services.AddHttpContextAccessor();

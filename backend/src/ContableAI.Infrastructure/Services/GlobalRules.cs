@@ -131,6 +131,17 @@ public static class GlobalRules
         "INTERESES RESARCITORIOS AFIP",
         "IMPUESTO AL CHEQUE",
         "RECAUDACION SIRCREB / IIBB",
+        // Cuentas destino del cruce AFIP (deben coincidir con PdfAfipParserService.TaxNameMap /
+        // BodyTaxHints). Sembradas para que el cruce y la carga manual converjan en una única cuenta.
+        "Cargas Sociales",
+        "IVA A Pagar",
+        "Pago IIBB",
+        "Impuesto Ganancias",
+        "Honorarios Fiscales",
+        "VEP Consolidado",
+        "Seg. Riesgo Trabajo",
+        "Plan de Facilidades",
+        "Imp. Ley 25413",
         // Gastos
         "INT Y GSTOS BANCARIOS",
         "SERVICIOS PUBLICOS",

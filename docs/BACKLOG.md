@@ -24,6 +24,12 @@
 
 *(Nota: Los bugs BUG-01 a BUG-14 y el fix de entornos en Vercel fueron resueltos y desplegados a producción).*
 
+### FIX-A · Cuentas duplicadas por casing al cruzar AFIP
+- **Reportado por:** Seba Presman (charla 2026-06-07)
+- **Descripción:** Una cuenta cargada a mano ("cargas sociales") y la misma cuenta asignada por el cruce AFIP ("Cargas Sociales") quedaban como dos cuentas distintas. Además, la búsqueda por cuenta no traía todas las filas (comparación case-sensitive en Postgres).
+- **Fix:** Nuevo `AccountNameResolver` que canonicaliza el nombre contra el plan de cuentas (case-insensitive) en todas las escrituras (asignación manual single/bulk + cruce AFIP). Creación de cuentas case-insensitive y filtro de búsqueda case-insensitive. Sin migración de datos viejos (Seba ya corrigió los suyos; el filtro cubre remanentes).
+- **Estado:** ✅ Completado — 2026-06-07 (rama `dev`)
+
 ---
 
 ## 🎨 MEJORAS DE UX — PRIORIDAD MEDIA-ALTA
@@ -36,6 +42,12 @@
 ### UX-04 · Sugerencias Proactivas con "Fuzzy Matching"
 - **Descripción:** Actualmente el sistema de sugerencias requiere coincidencias exactas. Implementar lógica para ignorar números al final de las descripciones.
 - **Estado:** PENDIENTE — Prioridad MEDIA
+
+### FIX-C · Soporte de PDF consolidado de VEP (ARCA - Seti - Consulta VEP)
+- **Reportado por:** Seba Presman (charla 2026-06-07)
+- **Descripción:** AFIP/ARCA ahora permite descargar todos los VEP en un único PDF tabular (`ARCA - Seti - Consulta VEP`), columnas `Estado | Enviado a | Nro. VEP | CUIT | Importe | Descripción | Fecha de Pago`. El parser actual rinde 1 presentación por PDF.
+- **Plan:** Detectar el formato consolidado (header), parsear N filas, mapear solo `Pagado`, traducir códigos (`SIJPDJ`→Cargas Sociales, `CM-`→Pago IIBB) y **descartar los `ARCA##/##` sin detalle**. Ejemplo real en `tests/afip/PDF consolidado VEP/`.
+- **Estado:** PENDIENTE — Prioridad MEDIA (item #3 del plan)
 
 ---
 

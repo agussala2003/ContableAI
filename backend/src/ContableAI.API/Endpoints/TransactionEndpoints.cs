@@ -125,7 +125,9 @@ public static class TransactionEndpoints
             {
                 query = string.Equals(account, "Pending", StringComparison.OrdinalIgnoreCase)
                     ? query.Where(t => t.AssignedAccount == null || t.AssignedAccount == string.Empty || t.AssignedAccount == "Pending")
-                    : query.Where(t => t.AssignedAccount == account);
+                    // Case-insensitive: legacy data con casing distinto ("cargas sociales" vs
+                    // "Cargas Sociales") debe aparecer igual bajo la cuenta canónica seleccionada.
+                    : query.Where(t => t.AssignedAccount != null && t.AssignedAccount.ToLower() == account.ToLower());
             }
 
             if (type.HasValue)
@@ -240,6 +242,7 @@ public static class TransactionEndpoints
             Guid id,
             UpdateAccountRequest request,
             [FromServices] ICurrentTenantService currentTenant,
+            [FromServices] IAccountNameResolver accountResolver,
             ContableAIDbContext dbContext,
             ILoggerFactory loggerFactory) =>
         {
@@ -253,7 +256,9 @@ public static class TransactionEndpoints
                     detail:     $"El período {tx.Date.Month:D2}/{tx.Date.Year} está cerrado. Reabrilo antes de modificar esta transacción.",
                     statusCode: 422);
 
-            tx.Assign(request.AssignedAccount, null, false, ClassificationSources.Manual);
+            Guid.TryParse(currentTenant.StudioTenantId, out var studioGuid);
+            var canonicalAccount = await accountResolver.ResolveAsync(request.AssignedAccount, studioGuid);
+            tx.Assign(canonicalAccount, null, false, ClassificationSources.Manual);
             await dbContext.SaveChangesAsync();
             var newSuggestionKeyword = await CheckManualSuggestionAsync(dbContext, tx.CompanyId, currentTenant.StudioTenantId!, tx.Description, tx.AssignedAccount, logger);
             return Results.Ok(new { Transaction = tx, NewSuggestionKeyword = newSuggestionKeyword });
@@ -269,6 +274,7 @@ public static class TransactionEndpoints
         app.MapPut("/api/transactions/bulk", async (
             BulkUpdateRequest request,
             [FromServices] ICurrentTenantService currentTenant,
+            [FromServices] IAccountNameResolver accountResolver,
             ContableAIDbContext dbContext,
             ILoggerFactory loggerFactory) =>
         {
@@ -326,6 +332,11 @@ public static class TransactionEndpoints
                 }
             }
 
+            Guid.TryParse(currentTenant.StudioTenantId, out var studioGuid);
+            var canonicalAccount = appliedRule is null
+                ? (await accountResolver.BuildMapAsync(studioGuid)).Resolve(request.AssignedAccount)
+                : request.AssignedAccount;
+
             foreach (var tx in transactions)
             {
                 if (appliedRule is not null)
@@ -339,7 +350,7 @@ public static class TransactionEndpoints
                 }
                 else
                 {
-                    tx.Assign(request.AssignedAccount, null, false, ClassificationSources.Manual);
+                    tx.Assign(canonicalAccount, null, false, ClassificationSources.Manual);
                 }
             }
 
