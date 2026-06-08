@@ -4,6 +4,7 @@ using ContableAI.Application.Features.Companies.Queries;
 using ContableAI.Application.Features.Rules.Commands;
 using ContableAI.Application.Features.Rules.Queries;
 using ContableAI.API.Common;
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
@@ -195,7 +196,7 @@ public static class CompanyEndpoints
             var allMappings = raw.Select(t => new
             {
                 t.Description,
-                Keyword = NormalizeKeyword(t.Description),
+                Keyword = KeywordNormalizer.Normalize(t.Description),
                 t.Account,
             }).ToList();
 
@@ -275,15 +276,4 @@ public static class CompanyEndpoints
         .Produces(200);
     }
 
-    private static string NormalizeKeyword(string? description)
-    {
-        if (string.IsNullOrWhiteSpace(description)) return string.Empty;
-        var withoutBrackets = System.Text.RegularExpressions.Regex.Replace(
-            description.Trim(), @"\[.*?\]|\(.*?\)", " ");
-        var words = withoutBrackets.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                                   .Where(w => !w.Any(char.IsDigit))
-                                   .ToArray();
-        var result = string.Join(' ', words).ToUpperInvariant().Trim();
-        return string.IsNullOrWhiteSpace(result) ? description.Trim().ToUpperInvariant() : result;
-    }
 }

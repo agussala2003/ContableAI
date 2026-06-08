@@ -41,8 +41,9 @@
 - **Estado:** ✅ Completado — 2026-06-08. Nota: la edición inline por fila del grid se dejó con su `input+datalist` actual a propósito — ya muestra el texto tipeado y convertirla al combobox arriesgaba el flujo de teclado del "Modo Excel" (Enter→fila siguiente + crear-cuenta-nueva).
 
 ### UX-04 · Sugerencias Proactivas con "Fuzzy Matching"
-- **Descripción:** Actualmente el sistema de sugerencias requiere coincidencias exactas. Implementar lógica para ignorar números al final de las descripciones.
-- **Estado:** PENDIENTE — Prioridad MEDIA
+- **Descripción:** Las sugerencias no agrupaban descripciones que solo diferían en los números finales (ej: `FACTURA0012` vs `FACTURA0034` caían al fallback de la descripción completa y no agrupaban).
+- **Fix:** Nuevo helper único `KeywordNormalizer.Normalize` (Domain) que quita los **dígitos al final** de cada token (`FACTURA0012` → `FACTURA`) y descarta tokens con dígitos internos/vacíos. Centraliza las 3 copias previas de `NormalizeKeyword` (ProactiveLearningService, CompanyEndpoints, TransactionEndpoints). +7 tests.
+- **Estado:** ✅ Completado — 2026-06-08
 
 ### FIX-C · Soporte de PDF consolidado de VEP (ARCA - Seti - Consulta VEP)
 - **Reportado por:** Seba Presman (charla 2026-06-07)
@@ -66,11 +67,23 @@
 
 ---
 
-## ⏳ TAREAS PENDIENTES
+## 🎯 PRIORIDADES ACTIVAS (curadas por Agustín — 2026-06-08)
 
-- **UX-04** – Sugerencias con "Fuzzy Matching" (ignorando números) – PENDIENTE.
-- **P1-3** – Landing Page Comercial (Astro/Next) para captación de leads – PENDIENTE.
-- **QUOTA-01** – Definir si Free=0/0/0 (bloqueado) es la estrategia o pasar a un freemium usable – PENDIENTE (decisión de negocio, ligado a precios).
+**Cadena comercial (orden con dependencias):**
+1. **COST-01 — Modelar costo unitario por cliente** — ✅ Documentado en [COST-01-unit-economics.md](COST-01-unit-economics.md). Hallazgo: costo marginal ≈ $0 (OCR Tesseract local, sin IA paga); hoy Render+Neon en Free ($0) pero el primer cliente pago obliga el salto a ~$65–85/mes fijo. Break-even ~6 clientes con básico $15.
+2. **ENTRY-01 — Modelo de entrada (reframe de QUOTA-01).** ✅ Definido en [ENTRY-01-modelo-de-entrada.md](ENTRY-01-modelo-de-entrada.md): estrategia escalonada **A (sales-led, ahora) → B (trial self-serve) → C (MercadoPago)**. **Fase A operativa**: el registro público ahora rutea a `Pending` (signup llama a `/register`, copy "Solicitá tu prueba"), el admin activa a Pro. Pendiente Fase B: trial self-serve con `TrialEndsAt`.
+3. **P1-3 — Landing comercial.** 🔶 **Construida** como ruta pública `/inicio` dentro del Angular (no Astro: reusa Tailwind/Lucide/Vercel y el flujo "Solicitá tu prueba"). Hero + features + cómo funciona + pricing (**Pro US$20** / **Enterprise a medida**) + CTA → `/login?register=1`. `authGuard` redirige no-logueados a `/inicio`. **Pendiente:** deploy a `main` + (opcional) contacto real para Enterprise + revisar copy con Seba.
+
+**En paralelo / aparte:**
+- **UX-04 — Fuzzy Matching en sugerencias** (ignorar números al final de la descripción). Producto, independiente, win rápido.
+- **COST-02 — Migrar EPPlus → ClosedXML.** ✅ Completado — 2026-06-08. Saca el riesgo legal de licencia (EPPlus NonCommercial en producto comercial) y el costo (~US$599/año). Migrados escritura (`ExcelExportService`) y lectura (`BankParserFactory`, `CsvBankParserService`, `ChartOfAccountsEndpoints`). Sin samples reales → +3 tests round-trip sintéticos (escritura legible + parsers Galicia/BBVA). EPPlus removido del csproj.
+- **RETEN-01 — Retención/limpieza de datos** (alertas de antigüedad + backup + purga). Post-clientes, no urge sin volumen.
+
+---
+
+## ⏳ TAREAS PENDIENTES (otras)
+
+- Ver "Prioridades activas" arriba.
 
 ---
 

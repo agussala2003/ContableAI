@@ -1,5 +1,6 @@
 using ContableAI.API.Common;
 using ContableAI.Application.Features.Transactions.Commands;
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
@@ -566,7 +567,7 @@ public static class TransactionEndpoints
     {
         if (companyId is null || string.IsNullOrWhiteSpace(assignedAccount)) return null;
 
-        var keyword = NormalizeKeyword(description);
+        var keyword = KeywordNormalizer.Normalize(description);
 
         logger.LogDebug("Suggestion check: Start — Company={CompanyId}, Keyword={Keyword}, Account={Account}", companyId, keyword, assignedAccount);
 
@@ -592,7 +593,7 @@ public static class TransactionEndpoints
             .ToListAsync(ct);
 
         var matchedDescriptions = descriptions
-            .Select(d => new { Original = d, Normalized = NormalizeKeyword(d) })
+            .Select(d => new { Original = d, Normalized = KeywordNormalizer.Normalize(d) })
             .Where(x => x.Normalized == keyword)
             .ToList();
 
@@ -637,21 +638,5 @@ public static class TransactionEndpoints
         await db.SaveChangesAsync(ct);
         logger.LogDebug("Suggestion check: Created — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", keyword, assignedAccount, count);
         return keyword;
-    }
-
-    // Strips [bracket] content and tokens with any digit (reference codes, IDs).
-    // "TR.NE7043268 Asociart S.A. ART [Asociart S.A. ART P.PROV.E/C]" → "ASOCIART S.A. ART"
-    // "TRANSF. CLIENTE CTA. CCP339 313226" → "TRANSF. CLIENTE CTA."
-    // Fallback: if all tokens had digits, returns the original uppercased.
-    private static string NormalizeKeyword(string? description)
-    {
-        if (string.IsNullOrWhiteSpace(description)) return string.Empty;
-        var withoutBrackets = System.Text.RegularExpressions.Regex.Replace(
-            description.Trim(), @"\[.*?\]|\(.*?\)", " ");
-        var words = withoutBrackets.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                                   .Where(w => !w.Any(char.IsDigit))
-                                   .ToArray();
-        var result = string.Join(' ', words).ToUpperInvariant().Trim();
-        return string.IsNullOrWhiteSpace(result) ? description.Trim().ToUpperInvariant() : result;
     }
 }
