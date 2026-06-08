@@ -3,7 +3,7 @@ using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using OfficeOpenXml;
+using ClosedXML.Excel;
 
 namespace ContableAI.API.Endpoints;
 
@@ -248,25 +248,24 @@ public static class ChartOfAccountsEndpoints
             using var stream = new MemoryStream();
             await file.CopyToAsync(stream);
             
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-            using var package = new ExcelPackage(stream);
-            var sheet = package.Workbook.Worksheets.FirstOrDefault();
+            using var wb = new XLWorkbook(stream);
+            var sheet = wb.Worksheets.FirstOrDefault();
 
             if (sheet == null)
                 return Results.BadRequest("El Excel está vacío o no se pudo leer la hoja.");
 
-            int lastRow = sheet.Dimension?.End.Row ?? 0;
+            int lastRow = sheet.LastRowUsed()?.RowNumber() ?? 0;
             if (lastRow < 2)
                 return Results.BadRequest("El Excel no tiene filas para importar (verificá que tenga encabezados y datos).");
 
             // Buscar en la cabecera (Fila 1) las columnas relevantes
             int nameColIndex = -1;
             int codeColIndex = -1;
-            int lastCol = sheet.Dimension!.End.Column;
+            int lastCol = sheet.LastColumnUsed()?.ColumnNumber() ?? 0;
 
             for (int col = 1; col <= lastCol; col++)
             {
-                var headerText = (sheet.Cells[1, col].Value?.ToString() ?? "").Trim().ToLower();
+                var headerText = sheet.Cell(1, col).GetString().Trim().ToLower();
                 if (headerText.Contains("nombre")) nameColIndex = col;
                 if (headerText.Contains("codigo") || headerText.Contains("código") || headerText.Contains("code")) codeColIndex = col;
             }
@@ -286,7 +285,7 @@ public static class ChartOfAccountsEndpoints
 
             for (int row = 2; row <= lastRow; row++)
             {
-                var rawName = sheet.Cells[row, nameColIndex].Text?.Trim();
+                var rawName = sheet.Cell(row, nameColIndex).GetString().Trim();
                 if (string.IsNullOrWhiteSpace(rawName)) continue;
 
                 if (existingNames.Contains(rawName.ToLowerInvariant()))
@@ -295,7 +294,7 @@ public static class ChartOfAccountsEndpoints
                 string? rawCode = null;
                 if (codeColIndex != -1)
                 {
-                    rawCode = sheet.Cells[row, codeColIndex].Text?.Trim();
+                    rawCode = sheet.Cell(row, codeColIndex).GetString().Trim();
                 }
 
                 existingNames.Add(rawName.ToLowerInvariant());

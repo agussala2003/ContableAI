@@ -1,7 +1,7 @@
 ﻿using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
+using ClosedXML.Excel;
 using Microsoft.Extensions.Logging;
-using OfficeOpenXml;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -68,6 +68,22 @@ internal static class BankParserHelpers
         if (cellValue is decimal dc) return dc;
         return ParseAmount(cellValue.ToString() ?? "");
     }
+
+    // ── Helpers ClosedXML (lectura de .xlsx) ──────────────────────────────────
+    /// <summary>Cantidad de filas con datos (0 si la hoja está vacía).</summary>
+    public static int RowCount(IXLWorksheet sheet) => sheet.LastRowUsed()?.RowNumber() ?? 0;
+
+    /// <summary>Cantidad de columnas con datos (0 si la hoja está vacía).</summary>
+    public static int ColCount(IXLWorksheet sheet) => sheet.LastColumnUsed()?.ColumnNumber() ?? 0;
+
+    /// <summary>Texto trimmeado de una celda (equivalente a Value?.ToString()?.Trim()).</summary>
+    public static string CellStr(IXLWorksheet sheet, int row, int col) => sheet.Cell(row, col).GetString().Trim();
+
+    /// <summary>Parsea el importe de una celda ClosedXML (numérica o texto).</summary>
+    public static decimal GetXlsxAmount(IXLCell cell)
+        => cell.IsEmpty()                       ? 0
+         : cell.DataType == XLDataType.Number   ? (decimal)cell.GetDouble()
+         : ParseAmount(cell.GetString());
 
     /// <summary>Separa una línea CSV respetando campos entre comillas.</summary>
     public static string[] SplitCsvLine(string line, char delimiter = ',')
@@ -202,24 +218,23 @@ public class BbvaParser : IBankParser
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-        using var pkg   = new ExcelPackage(stream);
-        var sheet = pkg.Workbook.Worksheets[0];
-        if (sheet?.Dimension == null) return [];
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0) return [];
 
-        if (sheet.Dimension.Columns >= 20) return ParseXlsxReal(sheet);
+        if (BankParserHelpers.ColCount(sheet) >= 20) return ParseXlsxReal(sheet);
         return ParseXlsxSimple(sheet);
     }
 
-    private static List<BankTransaction> ParseXlsxReal(ExcelWorksheet sheet)
+    private static List<BankTransaction> ParseXlsxReal(IXLWorksheet sheet)
     {
         var txs = new List<BankTransaction>();
         bool inside = false;
 
-        for (int r = 1; r <= sheet.Dimension.Rows; r++)
+        for (int r = 1; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
-            var cols = Enumerable.Range(1, Math.Min(sheet.Dimension.Columns, 35))
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
+            var cols = Enumerable.Range(1, Math.Min(BankParserHelpers.ColCount(sheet), 35))
                                  .Select(Cell).ToArray();
 
             if (BankParserHelpers.IsBbvaRealHeader(cols)) { inside = true; continue; }
@@ -230,8 +245,8 @@ public class BbvaParser : IBankParser
             if (string.IsNullOrWhiteSpace(desc) ||
                 desc.Equals("SALDO ANTERIOR", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var credit = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 32].Value);
-            var debit  = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 23].Value);
+            var credit = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,32));
+            var debit  = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,23));
 
             if (credit != 0)
                 txs.Add(new BankTransaction { Date = date, Description = desc, Amount = Math.Abs(credit), Type = TransactionType.Credit });
@@ -241,16 +256,16 @@ public class BbvaParser : IBankParser
         return txs;
     }
 
-    private static List<BankTransaction> ParseXlsxSimple(ExcelWorksheet sheet)
+    private static List<BankTransaction> ParseXlsxSimple(IXLWorksheet sheet)
     {
         var txs = new List<BankTransaction>();
-        for (int r = 2; r <= sheet.Dimension.Rows; r++)
+        for (int r = 2; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
             if (!DateOnly.TryParseExact(Cell(1), "dd/MM/yyyy", out var date)) continue;
             var desc = Cell(2);
             if (string.IsNullOrWhiteSpace(desc)) continue;
-            var raw = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 3].Value);
+            var raw = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,3));
             txs.Add(new BankTransaction
             {
                 Date = date, Description = desc,
@@ -323,18 +338,17 @@ public class GaliciaParser : IBankParser
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-        using var pkg   = new ExcelPackage(stream);
-        var sheet = pkg.Workbook.Worksheets[0];
-        if (sheet?.Dimension == null) return [];
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0) return [];
 
         var txs = new List<BankTransaction>();
-        for (int r = 2; r <= sheet.Dimension.Rows; r++)
+        for (int r = 2; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
             if (!DateOnly.TryParseExact(Cell(1), "dd/MM/yyyy", out var date)) continue;
             var rawDesc = Cell(3);
-            var raw  = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 5].Value);
+            var raw  = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,5));
             var (desc, extId) = ExtractGaliciaExternalId(rawDesc);
             txs.Add(new BankTransaction
             {
@@ -386,18 +400,17 @@ public class SantanderParser : IBankParser
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-        using var pkg   = new ExcelPackage(stream);
-        var sheet = pkg.Workbook.Worksheets[0];
-        if (sheet?.Dimension == null) return [];
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0) return [];
 
         var txs = new List<BankTransaction>();
-        for (int r = 2; r <= sheet.Dimension.Rows; r++)
+        for (int r = 2; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
             if (!DateOnly.TryParseExact(Cell(2), "dd/MM/yyyy", out var date)) continue;
             var desc = Cell(4);
-            var raw  = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 6].Value);
+            var raw  = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,6));
             txs.Add(new BankTransaction
             {
                 Date = date, Description = desc,
@@ -449,20 +462,19 @@ public class MacroParser : IBankParser
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-        using var pkg   = new ExcelPackage(stream);
-        var sheet = pkg.Workbook.Worksheets[0];
-        if (sheet?.Dimension == null) return [];
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0) return [];
 
         var txs = new List<BankTransaction>();
-        for (int r = 2; r <= sheet.Dimension.Rows; r++)
+        for (int r = 2; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
             if (!DateOnly.TryParseExact(Cell(1), "dd/MM/yyyy", out var date)) continue;
             var desc    = Cell(4);
             if (string.IsNullOrWhiteSpace(desc)) continue;
-            var debito  = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 5].Value);
-            var credito = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 6].Value);
+            var debito  = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,5));
+            var credito = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,6));
 
             if (credito != 0)
                 txs.Add(new BankTransaction { Date = date, Description = desc, Amount = Math.Abs(credito), Type = TransactionType.Credit });
@@ -512,20 +524,19 @@ public class NacionParser : IBankParser
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-        using var pkg   = new ExcelPackage(stream);
-        var sheet = pkg.Workbook.Worksheets[0];
-        if (sheet?.Dimension == null) return [];
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0) return [];
 
         var txs = new List<BankTransaction>();
-        for (int r = 2; r <= sheet.Dimension.Rows; r++)
+        for (int r = 2; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
             if (!DateOnly.TryParseExact(Cell(1), "dd/MM/yyyy", out var date)) continue;
             var desc    = Cell(2);
             if (string.IsNullOrWhiteSpace(desc)) continue;
-            var debito  = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 3].Value);
-            var credito = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 4].Value);
+            var debito  = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,3));
+            var credito = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,4));
 
             if (credito != 0)
                 txs.Add(new BankTransaction { Date = date, Description = desc, Amount = Math.Abs(credito), Type = TransactionType.Credit });
@@ -780,22 +791,21 @@ public class CredicoopParser : IBankParser
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-        using var pkg   = new ExcelPackage(stream);
-        var sheet = pkg.Workbook.Worksheets[0];
-        if (sheet?.Dimension == null) return [];
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0) return [];
 
         var txs = new List<BankTransaction>();
-        for (int r = 2; r <= sheet.Dimension.Rows; r++)
+        for (int r = 2; r <= BankParserHelpers.RowCount(sheet); r++)
         {
-            string Cell(int c) => sheet.Cells[r, c].Value?.ToString()?.Trim() ?? string.Empty;
+            string Cell(int c) => BankParserHelpers.CellStr(sheet, r, c);
             if (!DateOnly.TryParseExact(Cell(1), "dd/MM/yyyy", out var date)) continue;
 
             var desc    = Cell(3);
             if (string.IsNullOrWhiteSpace(desc)) desc = "Credicoop";
 
-            var debito  = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 4].Value);
-            var credito = BankParserHelpers.GetXlsxAmount(sheet.Cells[r, 5].Value);
+            var debito  = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,4));
+            var credito = BankParserHelpers.GetXlsxAmount(sheet.Cell(r,5));
 
             if (credito != 0)
                 txs.Add(new BankTransaction { Date = date, Description = desc, Amount = Math.Abs(credito), Type = TransactionType.Credit, SourceBank = "CREDICOOP" });

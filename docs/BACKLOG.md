@@ -76,7 +76,7 @@
 
 **En paralelo / aparte:**
 - **UX-04 — Fuzzy Matching en sugerencias** (ignorar números al final de la descripción). Producto, independiente, win rápido.
-- **COST-02 — Migrar EPPlus → ClosedXML.** EPPlus está en `LicenseContext.NonCommercial` pero el producto es comercial (incumplimiento + ~US$599/año si se regulariza). ClosedXML es MIT (gratis). Salió de COST-01.
+- **COST-02 — Migrar EPPlus → ClosedXML.** ✅ Completado — 2026-06-08. Saca el riesgo legal de licencia (EPPlus NonCommercial en producto comercial) y el costo (~US$599/año). Migrados escritura (`ExcelExportService`) y lectura (`BankParserFactory`, `CsvBankParserService`, `ChartOfAccountsEndpoints`). Sin samples reales → +3 tests round-trip sintéticos (escritura legible + parsers Galicia/BBVA). EPPlus removido del csproj.
 - **RETEN-01 — Retención/limpieza de datos** (alertas de antigüedad + backup + purga). Post-clientes, no urge sin volumen.
 
 ---

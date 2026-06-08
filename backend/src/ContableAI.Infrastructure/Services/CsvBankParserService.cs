@@ -2,7 +2,7 @@ using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using CsvHelper;
 using CsvHelper.Configuration;
-using OfficeOpenXml;
+using ClosedXML.Excel;
 using System.Globalization;
 
 namespace ContableAI.Infrastructure.Services;
@@ -218,23 +218,21 @@ public class CsvBankParserService : IBankParserService
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  XLSX parser using EPPlus
+    //  XLSX parser using ClosedXML
     //  Supports the real BBVA XLSX export (same structure as the CSV) and
     //  a simple 3-column layout for other banks.
     // ──────────────────────────────────────────────────────────────────────────
 
     private static IEnumerable<BankTransaction> ParseXlsx(Stream stream, string bankCode)
     {
-        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+        using var wb = new XLWorkbook(stream);
+        var sheet = wb.Worksheets.FirstOrDefault();
 
-        using var package = new ExcelPackage(stream);
-        var sheet = package.Workbook.Worksheets[0];
-
-        if (sheet == null || sheet.Dimension == null)
+        if (sheet is null || BankParserHelpers.RowCount(sheet) == 0)
             return [];
 
-        int totalCols = sheet.Dimension.Columns;
-        int totalRows = sheet.Dimension.Rows;
+        int totalCols = BankParserHelpers.ColCount(sheet);
+        int totalRows = BankParserHelpers.RowCount(sheet);
 
         // Auto-detect BBVA real layout (>= 20 columns)
         if (bankCode.ToUpper() == "BBVA" && totalCols >= 20)
@@ -244,15 +242,14 @@ public class CsvBankParserService : IBankParserService
     }
 
     private static IEnumerable<BankTransaction> ParseXlsxBbvaReal(
-        ExcelWorksheet sheet, int totalRows, int totalCols)
+        IXLWorksheet sheet, int totalRows, int totalCols)
     {
         var transactions = new List<BankTransaction>();
         bool insideData = false;
 
         for (int r = 1; r <= totalRows; r++)
         {
-            string CellStr(int col) =>
-                sheet.Cells[r, col].Value?.ToString()?.Trim() ?? string.Empty;
+            string CellStr(int col) => BankParserHelpers.CellStr(sheet, r, col);
 
             var col1 = CellStr(1);  // FECHA  (1-indexed in EPPlus)
             var col8 = CellStr(8);  // CONCEPTO
@@ -285,12 +282,12 @@ public class CsvBankParserService : IBankParserService
             if (!string.IsNullOrEmpty(rawCredit))
             {
                 // EPPlus may return a numeric value directly
-                amount = GetXlsxAmount(sheet.Cells[r, 32].Value);
+                amount = BankParserHelpers.GetXlsxAmount(sheet.Cell(r, 32));
                 type   = TransactionType.Credit;
             }
             else
             {
-                amount = Math.Abs(GetXlsxAmount(sheet.Cells[r, 23].Value));
+                amount = Math.Abs(BankParserHelpers.GetXlsxAmount(sheet.Cell(r, 23)));
                 type   = TransactionType.Debit;
             }
 
@@ -309,7 +306,7 @@ public class CsvBankParserService : IBankParserService
     }
 
     private static IEnumerable<BankTransaction> ParseXlsxSimple(
-        ExcelWorksheet sheet, int totalRows, string bankCode)
+        IXLWorksheet sheet, int totalRows, string bankCode)
     {
         var transactions = new List<BankTransaction>();
 
@@ -318,8 +315,7 @@ public class CsvBankParserService : IBankParserService
         {
             try
             {
-                string Cell(int col) =>
-                    sheet.Cells[r, col].Value?.ToString()?.Trim() ?? string.Empty;
+                string Cell(int col) => BankParserHelpers.CellStr(sheet, r, col);
 
                 DateOnly date = default;
                 string   desc;
@@ -342,7 +338,7 @@ public class CsvBankParserService : IBankParserService
                     default: // BBVA simple
                         if (!DateOnly.TryParseExact(Cell(1), "dd/MM/yyyy", out date)) continue;
                         desc = Cell(2);
-                        rawAmount = GetXlsxAmount(sheet.Cells[r, 3].Value);
+                        rawAmount = BankParserHelpers.GetXlsxAmount(sheet.Cell(r, 3));
                         break;
                 }
 
