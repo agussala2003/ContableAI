@@ -46,9 +46,9 @@
 
 ### FIX-C · Soporte de PDF consolidado de VEP (ARCA - Seti - Consulta VEP)
 - **Reportado por:** Seba Presman (charla 2026-06-07)
-- **Descripción:** AFIP/ARCA ahora permite descargar todos los VEP en un único PDF tabular (`ARCA - Seti - Consulta VEP`), columnas `Estado | Enviado a | Nro. VEP | CUIT | Importe | Descripción | Fecha de Pago`. El parser actual rinde 1 presentación por PDF.
-- **Plan:** Detectar el formato consolidado (header), parsear N filas, mapear solo `Pagado`, traducir códigos (`SIJPDJ`→Cargas Sociales, `CM-`→Pago IIBB) y **descartar los `ARCA##/##` sin detalle**. Ejemplo real en `tests/afip/PDF consolidado VEP/`.
-- **Estado:** PENDIENTE — Prioridad MEDIA (item #3 del plan)
+- **Descripción:** AFIP/ARCA ahora permite descargar todos los VEP en un único PDF tabular (`ARCA - Seti - Consulta VEP`), columnas `Estado | Enviado a | Nro. VEP | CUIT | Importe | Descripción | Fecha de Pago`. El parser rendía 1 presentación por PDF.
+- **Fix:** `PdfAfipParserService` detecta el formato consolidado y rinde N presentaciones. Solo procesa filas `Pagado` (las Expirado/Pendiente no traen fecha y se excluyen solas). Mapea los códigos vía `TaxNameMap` (`SIJPDJ`→Cargas Sociales, `IVA DJ`→IVA A Pagar, `CM-SOP`→Pago IIBB, `HEF-RF`→Honorarios Fiscales, `VCON`→VEP Consolidado) y **descarta los `ARCA##/##` y `AFIP##/##` sin detalle** (acuerdo con Seba). Importe en formato US, regex anclado en CUIT/fecha (PdfPig pega las celdas sin espacios). Test con el PDF real: 80 filas Pagado → 65 mapeadas, 15 descartadas.
+- **Estado:** ✅ Completado — 2026-06-07 (rama `dev`)
 
 ---
 

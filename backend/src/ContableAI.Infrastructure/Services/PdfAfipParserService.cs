@@ -31,7 +31,7 @@ public class PdfAfipParserService : IAfipParserService
         ("SICOSS",           "Cargas Sociales"),
         ("CARGAS SOCIALES",  "Cargas Sociales"),
         ("SIRCREB",          "Pago IIBB"),
-        ("CM-PY",            "Pago IIBB"),
+        ("CM-",              "Pago IIBB"),       // Convenio Multilateral: CM-PY, CM-SOP, etc.
         ("IIBB",             "Pago IIBB"),
         ("GANANCIAS",        "Impuesto Ganancias"),
     ];
@@ -47,6 +47,45 @@ public class PdfAfipParserService : IAfipParserService
         ("EMPLEADOR-APORTES",     "Cargas Sociales"),
         ("FACILIDADES",           "Plan de Facilidades"),
     ];
+
+    // ── PDF consolidado (ARCA - Seti - Consulta VEP) ─────────────────────────
+    // Tabla multi-fila: Estado | Enviado a | Nro. VEP | CUIT | Importe | Descripción | Fecha de Pago.
+    // PdfPig concatena las celdas SIN espacios, ej:
+    //   PagadoINTERBANKING163163303830-71136636-5689281.12ARCA05/262026-05-2714:43:23
+    // Por eso anclamos en patrones estructurales (CUIT con guiones, fecha, hora) y no en espacios.
+    // Solo las filas "Pagado" traen Fecha de Pago, lo que excluye naturalmente las
+    // Expirado/Pendiente (que no tienen fecha tras la descripción). Importe en formato US
+    // (punto decimal, sin miles). No anclamos en la hora porque en los saltos de página
+    // queda separada de la fecha por el header repetido.
+    //   g1 = importe, g2 = descripción (código), g3 = fecha de pago (yyyy-MM-dd).
+    private static readonly Regex ConsolidatedRowRegex = new(
+        @"Pagado.+?\d{2}-\d{8}-\d(\d+(?:\.\d+)?)(.+?)(\d{4}-\d{2}-\d{2})",
+        RegexOptions.Compiled);
+
+    private static IEnumerable<AfipPresentation> ParseConsolidated(string text)
+    {
+        // PdfPig concatena el texto; normalizamos los espacios para que el regex de fila
+        // sea robusto a saltos de línea internos de la tabla.
+        var normalized = Regex.Replace(text, @"\s+", " ");
+
+        foreach (Match m in ConsolidatedRowRegex.Matches(normalized))
+        {
+            if (!decimal.TryParse(m.Groups[1].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
+                continue;
+            if (!DateOnly.TryParse(m.Groups[3].Value, CultureInfo.InvariantCulture, out var date))
+                continue;
+
+            var rawDesc = m.Groups[2].Value.Trim();
+            var taxName = NormalizeTaxName(rawDesc);
+
+            // Si el código no mapea a un impuesto conocido (ARCA##/##, AFIP##/##), no hay
+            // detalle de qué se trata → se descarta (acordado: "los de Arca los sacamos").
+            if (taxName == rawDesc)
+                continue;
+
+            yield return new AfipPresentation(date, taxName, amount);
+        }
+    }
 
     private static string NormalizeTaxName(string raw)
     {
@@ -91,6 +130,14 @@ public class PdfAfipParserService : IAfipParserService
                 sb.AppendLine(page.Text);
 
             var text = sb.ToString();
+
+            // ── PDF consolidado (multi-fila): "ARCA - Seti - Consulta VEP" ──
+            if (text.Contains("Consulta VEP", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var presentation in ParseConsolidated(text))
+                    yield return presentation;
+                yield break;
+            }
 
             // ── Fecha de pago ──────────────────────────────────────────────
             // Caso principal (Comprobante pagado): "Fecha de Pago: 2025-09-10 Hora: ..."
