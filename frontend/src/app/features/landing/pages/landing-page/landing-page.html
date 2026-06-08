@@ -43,10 +43,10 @@
           Solicitá tu prueba
           <lucide-icon name="arrow-right-circle" class="w-4 h-4"></lucide-icon>
         </a>
-        <a href="#como-funciona"
+        <button type="button" (click)="scrollTo('como-funciona')"
            class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
           Ver cómo funciona
-        </a>
+        </button>
       </div>
       <p class="mt-4 text-xs text-slate-500 dark:text-slate-500">Probá con tus extractos reales. Sin tarjeta.</p>
     </div>
@@ -154,7 +154,7 @@
         <div class="mt-5 flex items-baseline gap-1">
           <span class="text-4xl font-extrabold text-slate-900 dark:text-white">A medida</span>
         </div>
-        <a routerLink="/login" [queryParams]="{ register: 1 }"
+        <a href="mailto:agussala2003@gmail.com?subject=Consulta%20Enterprise%20-%20ContableAI"
            class="mt-6 w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
           Hablá con nosotros
         </a>

@@ -21,6 +21,11 @@ interface PlanFeature {
 export class LandingPage {
   readonly year = new Date().getFullYear();
 
+  /** Scroll suave a una sección por id (los href="#..." los intercepta el router de Angular). */
+  scrollTo(id: string): void {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   readonly features: Feature[] = [
     { icon: 'landmark',        title: 'Parsers multi-banco',        desc: 'BBVA, Galicia, Santander, Macro, Nación, Credicoop, Mercado Pago, Ualá y más. Subí el PDF del extracto y listo.' },
     { icon: 'wand-sparkles',   title: 'Cruce AFIP / VEP automático', desc: 'Importá tus VEP y el sistema los cruza con los movimientos por importe y fecha. Se acabó el detalle a mano.' },
