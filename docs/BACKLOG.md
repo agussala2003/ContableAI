@@ -24,6 +24,12 @@
 
 *(Nota: Los bugs BUG-01 a BUG-14 y el fix de entornos en Vercel fueron resueltos y desplegados a producción).*
 
+### FIX-A · Cuentas duplicadas por casing al cruzar AFIP
+- **Reportado por:** Seba Presman (charla 2026-06-07)
+- **Descripción:** Una cuenta cargada a mano ("cargas sociales") y la misma cuenta asignada por el cruce AFIP ("Cargas Sociales") quedaban como dos cuentas distintas. Además, la búsqueda por cuenta no traía todas las filas (comparación case-sensitive en Postgres).
+- **Fix:** Nuevo `AccountNameResolver` que canonicaliza el nombre contra el plan de cuentas (case-insensitive) en todas las escrituras (asignación manual single/bulk + cruce AFIP). Creación de cuentas case-insensitive y filtro de búsqueda case-insensitive. Seed de las cuentas destino del cruce AFIP. **Normalización en lote** (acción admin `POST /api/admin/normalize-accounts` + botón en Admin): reescribe `BankTransactions.AssignedAccount` a la forma canónica para limpiar data legacy con casing mixto (idempotente, no toca reglas ni asientos históricos).
+- **Estado:** ✅ Completado — 2026-06-08 (rama `dev`)
+
 ---
 
 ## 🎨 MEJORAS DE UX — PRIORIDAD MEDIA-ALTA
@@ -31,11 +37,18 @@
 ### UX-01b · Selector de cuenta con input de búsqueda visible (combobox)
 - **Reportado por:** Seba Presman
 - **Descripción:** El selector nativo `<select>` esconde lo que el usuario tipea. Se requiere un combobox con input visible.
-- **Estado:** PENDIENTE — Prioridad ALTA
+- **Fix:** Nuevo componente reutilizable `AccountCombobox` (`shared/components/account-combobox/`): input de texto visible + dropdown filtrable (substring, accent/case-insensitive), navegación con teclado (↑↓ Enter Esc), click-outside y texto libre opcional. Reemplaza el `<select>` nativo del formulario de reglas (`rule-form-slideover`) y el input de asignación masiva del grid.
+- **Estado:** ✅ Completado — 2026-06-08. Nota: la edición inline por fila del grid se dejó con su `input+datalist` actual a propósito — ya muestra el texto tipeado y convertirla al combobox arriesgaba el flujo de teclado del "Modo Excel" (Enter→fila siguiente + crear-cuenta-nueva).
 
 ### UX-04 · Sugerencias Proactivas con "Fuzzy Matching"
 - **Descripción:** Actualmente el sistema de sugerencias requiere coincidencias exactas. Implementar lógica para ignorar números al final de las descripciones.
 - **Estado:** PENDIENTE — Prioridad MEDIA
+
+### FIX-C · Soporte de PDF consolidado de VEP (ARCA - Seti - Consulta VEP)
+- **Reportado por:** Seba Presman (charla 2026-06-07)
+- **Descripción:** AFIP/ARCA ahora permite descargar todos los VEP en un único PDF tabular (`ARCA - Seti - Consulta VEP`), columnas `Estado | Enviado a | Nro. VEP | CUIT | Importe | Descripción | Fecha de Pago`. El parser rendía 1 presentación por PDF.
+- **Fix:** `PdfAfipParserService` detecta el formato consolidado y rinde N presentaciones. Solo procesa filas `Pagado` (las Expirado/Pendiente no traen fecha y se excluyen solas). Mapea los códigos vía `TaxNameMap` (`SIJPDJ`→Cargas Sociales, `IVA DJ`→IVA A Pagar, `CM-SOP`→Pago IIBB, `HEF-RF`→Honorarios Fiscales, `VCON`→VEP Consolidado) y **descarta los `ARCA##/##` y `AFIP##/##` sin detalle** (acuerdo con Seba). Importe en formato US, regex anclado en CUIT/fecha (PdfPig pega las celdas sin espacios). Test con el PDF real: 80 filas Pagado → 65 mapeadas, 15 descartadas.
+- **Estado:** ✅ Completado — 2026-06-07 (rama `dev`)
 
 ---
 
@@ -55,9 +68,9 @@
 
 ## ⏳ TAREAS PENDIENTES
 
-- **UX-01b** – Combobox visible para selector de cuentas – PENDIENTE.
 - **UX-04** – Sugerencias con "Fuzzy Matching" (ignorando números) – PENDIENTE.
 - **P1-3** – Landing Page Comercial (Astro/Next) para captación de leads – PENDIENTE.
+- **QUOTA-01** – Definir si Free=0/0/0 (bloqueado) es la estrategia o pasar a un freemium usable – PENDIENTE (decisión de negocio, ligado a precios).
 
 ---
 

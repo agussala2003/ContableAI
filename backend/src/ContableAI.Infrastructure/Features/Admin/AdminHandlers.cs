@@ -529,6 +529,71 @@ public sealed class AdminDbResetHandler : IRequestHandler<AdminDbResetCommand, R
     }
 }
 
+public sealed class AdminNormalizeAccountsHandler
+    : IRequestHandler<AdminNormalizeAccountsCommand, Result<AdminNormalizeAccountsResponse>>
+{
+    private readonly ContableAIDbContext _db;
+    private readonly IAccountNameResolver _resolver;
+
+    public AdminNormalizeAccountsHandler(ContableAIDbContext db, IAccountNameResolver resolver)
+    {
+        _db = db;
+        _resolver = resolver;
+    }
+
+    public async Task<Result<AdminNormalizeAccountsResponse>> Handle(
+        AdminNormalizeAccountsCommand request, CancellationToken ct)
+    {
+        // Mapa companyId → estudio (el nombre canónico depende del plan del estudio + globales).
+        var companies = await _db.Companies.AsNoTracking()
+            .Select(c => new { c.Id, c.StudioTenantId })
+            .ToListAsync(ct);
+
+        var companyToStudio = companies.ToDictionary(
+            c => c.Id,
+            c => Guid.TryParse(c.StudioTenantId, out var g) ? (Guid?)g : null);
+
+        // Cache de mapas canónicos por estudio (null = solo cuentas globales).
+        var mapCache = new Dictionary<Guid?, CanonicalAccountMap>();
+        async Task<CanonicalAccountMap> GetMapAsync(Guid? studio)
+        {
+            if (!mapCache.TryGetValue(studio, out var map))
+            {
+                map = await _resolver.BuildMapAsync(studio, ct);
+                mapCache[studio] = map;
+            }
+            return map;
+        }
+
+        var transactions = await _db.BankTransactions
+            .Where(t => t.AssignedAccount != null
+                     && t.AssignedAccount != ""
+                     && t.AssignedAccount != "Pending")
+            .ToListAsync(ct);
+
+        int updated = 0;
+        foreach (var tx in transactions)
+        {
+            var studio = tx.CompanyId.HasValue && companyToStudio.TryGetValue(tx.CompanyId.Value, out var s)
+                ? s
+                : null;
+
+            var canonical = (await GetMapAsync(studio)).Resolve(tx.AssignedAccount!);
+            if (!string.Equals(canonical, tx.AssignedAccount, StringComparison.Ordinal))
+            {
+                tx.RenameAccount(canonical);
+                updated++;
+            }
+        }
+
+        if (updated > 0)
+            await _db.SaveChangesAsync(ct);
+
+        return Result<AdminNormalizeAccountsResponse>.Success(
+            new AdminNormalizeAccountsResponse(transactions.Count, updated));
+    }
+}
+
 file static class AdminHelpers
 {
     internal static TransactionType? ParseDirection(string? direction) => direction?.ToUpperInvariant() switch

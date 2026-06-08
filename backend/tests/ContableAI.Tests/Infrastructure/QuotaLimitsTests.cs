@@ -12,8 +12,8 @@ namespace ContableAI.Tests.Infrastructure;
 public class QuotaLimitsTests
 {
     [Theory]
-    [InlineData(StudioPlan.Free,       3,   20,    200)]
-    [InlineData(StudioPlan.Pro,       20,  200,   2000)]
+    [InlineData(StudioPlan.Free,        0,    0,      0)]   // Free bloqueado: requiere upgrade para operar
+    [InlineData(StudioPlan.Pro,        15,  250,     -1)]   // Pro: 15 empresas, 250 reglas, tx ilimitadas (-1)
     [InlineData(StudioPlan.Enterprise, -1,   -1,     -1)]
     public void ForPlan_ReturnsExpectedLimits(StudioPlan plan, int maxCompanies, int maxRules, int maxTx)
     {
@@ -43,8 +43,11 @@ public class QuotaLimitsTests
         var free = QuotaLimits.ForPlan(StudioPlan.Free);
         var pro  = QuotaLimits.ForPlan(StudioPlan.Pro);
 
-        free.MaxCompanies.Should().BeLessThan(pro.MaxCompanies);
-        free.MaxRulesPerCompany.Should().BeLessThan(pro.MaxRulesPerCompany);
-        free.MaxMonthlyTransactions.Should().BeLessThan(pro.MaxMonthlyTransactions);
+        // -1 representa "ilimitado" (el máximo), por eso se normaliza a int.MaxValue para comparar.
+        static int Effective(int limit) => limit == -1 ? int.MaxValue : limit;
+
+        Effective(free.MaxCompanies).Should().BeLessThan(Effective(pro.MaxCompanies));
+        Effective(free.MaxRulesPerCompany).Should().BeLessThan(Effective(pro.MaxRulesPerCompany));
+        Effective(free.MaxMonthlyTransactions).Should().BeLessThan(Effective(pro.MaxMonthlyTransactions));
     }
 }

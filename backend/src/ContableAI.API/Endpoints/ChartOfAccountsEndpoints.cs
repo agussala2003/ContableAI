@@ -50,8 +50,9 @@ public static class ChartOfAccountsEndpoints
             if (!Guid.TryParse(currentTenant.StudioTenantId, out var studioGuid))
                 return Results.Unauthorized();
 
+            var normalizedName = req.Name.Trim();
             var existing = await dbContext.ChartOfAccounts
-                .AnyAsync(a => a.Name == req.Name.Trim()
+                .AnyAsync(a => a.Name.ToLower() == normalizedName.ToLower()
                             && (a.StudioTenantId == null || a.StudioTenantId == studioGuid));
 
             if (existing)
@@ -73,7 +74,7 @@ public static class ChartOfAccountsEndpoints
         .WithName("CreateChartOfAccount")
         .WithTags("Plan de Cuentas")
         .WithSummary("Agregar una cuenta al plan de cuentas del estudio.")
-        .WithDescription("Body: { name: string }. No puede tener el mismo nombre que una cuenta global o ya existente del estudio (case-sensitive). Devuelve 201 con { id, name, isGlobal: false }.")
+        .WithDescription("Body: { name: string }. No puede tener el mismo nombre que una cuenta global o ya existente del estudio (case-insensitive). Devuelve 201 con { id, name, isGlobal: false }.")
         .Produces(201)
         .Produces<ProblemDetails>(409);
 

@@ -213,6 +213,43 @@ public class AfipParserTests
         result[0].Amount.Should().BeGreaterThan(0);
     }
 
+    // ── PDF consolidado (ARCA - Seti - Consulta VEP): multi-fila ─────────────
+    [Fact]
+    public void Parse_ConsolidatedVep_ExtractsOnlyPaidMappedRows()
+    {
+        var path = Path.Combine(RootAfipFolder, "PDF consolidado VEP",
+            "setidj_consultaveps_usuario_20224325399_fecha_20260531_204454.pdf");
+        if (!File.Exists(path)) return;
+
+        using var s = File.OpenRead(path);
+        var result = _parser.ParsePdf(s).ToList();
+
+        // 80 filas Pagado; se descartan 15 (14 ARCA + 1 AFIP sin detalle) → 65 mapeadas.
+        result.Should().HaveCount(65);
+
+        // Ninguna fila ARCA/AFIP genérica debe colarse.
+        result.Should().NotContain(r => r.TaxName.StartsWith("ARCA") || r.TaxName.StartsWith("AFIP"));
+
+        // Solo nombres canónicos conocidos.
+        result.Select(r => r.TaxName).Distinct().Should().BeSubsetOf(new[]
+        {
+            "Cargas Sociales", "IVA A Pagar", "Pago IIBB", "Honorarios Fiscales", "VEP Consolidado",
+        });
+
+        // Desglose esperado por tipo.
+        result.Count(r => r.TaxName == "Cargas Sociales").Should().Be(41);   // SIJPDJ
+        result.Count(r => r.TaxName == "IVA A Pagar").Should().Be(11);       // IVA DJ
+        result.Count(r => r.TaxName == "Pago IIBB").Should().Be(8);          // CM-SOP
+        result.Count(r => r.TaxName == "Honorarios Fiscales").Should().Be(3);// HEF-RF
+        result.Count(r => r.TaxName == "VEP Consolidado").Should().Be(2);    // VCON
+
+        // Spot-check de una fila concreta (SIJPDJ04/26 → Cargas Sociales).
+        result.Should().Contain(r =>
+            r.TaxName == "Cargas Sociales" &&
+            r.Amount == 9228670.33m &&
+            r.Date == new DateOnly(2026, 5, 22));
+    }
+
     // ── Smoke test: todos los PDFs del dataset deben devolver exactamente 1 resultado ──
     [Fact]
     public void Parse_AllVepDataset_EachYieldsOneResult()

@@ -1,6 +1,7 @@
 import { Component, input, output } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
 import { Direction, RuleForm } from '../rules.types';
+import { AccountCombobox } from '../../../../shared/components/account-combobox/account-combobox';
 
 export interface RuleFormFieldChange {
   field: keyof RuleForm;
@@ -10,7 +11,7 @@ export interface RuleFormFieldChange {
 @Component({
   selector: 'app-rule-form-slideover',
   standalone: true,
-  imports: [LucideAngularModule],
+  imports: [LucideAngularModule, AccountCombobox],
   templateUrl: './rule-form-slideover.html',
 })
 export class RuleFormSlideover {
@@ -44,6 +45,10 @@ export class RuleFormSlideover {
   onTextChange(field: 'keyword' | 'targetAccount', event: Event): void {
     const target = event.target as HTMLInputElement;
     this.formFieldChanged.emit({ field, value: target.value });
+  }
+
+  onAccountSelected(value: string): void {
+    this.formFieldChanged.emit({ field: 'targetAccount', value });
   }
 
   onDirectionChange(event: Event): void {

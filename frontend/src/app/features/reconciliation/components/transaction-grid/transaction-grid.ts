@@ -6,11 +6,12 @@ import { BankTransaction } from '../../../../core/services/transaction';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { LucideAngularModule } from 'lucide-angular';
+import { AccountCombobox } from '../../../../shared/components/account-combobox/account-combobox';
 
 @Component({
   selector: 'app-transaction-grid',
   standalone: true,
-  imports: [DecimalPipe, FormsModule, NgClass, LucideAngularModule],
+  imports: [DecimalPipe, FormsModule, NgClass, LucideAngularModule, AccountCombobox],
   templateUrl: './transaction-grid.html',
   styleUrl: './transaction-grid.scss',
 })
@@ -34,6 +35,13 @@ export class TransactionGrid {
   router        = inject(Router);
   selectedIds   = signal<Set<string>>(new Set());
   bulkAccount   = signal('');
+
+  // Estilo del input de asignación masiva (combobox), alineado al resto de la toolbar.
+  readonly bulkInputClass =
+    'w-full h-7 pl-2.5 pr-9 rounded-md border border-indigo-200 dark:border-indigo-700/50 ' +
+    'bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200 ' +
+    'placeholder:text-slate-400 dark:placeholder:text-slate-500 ' +
+    'focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 transition-colors';
 
   lastClickedId = signal<string | null>(null);
 
