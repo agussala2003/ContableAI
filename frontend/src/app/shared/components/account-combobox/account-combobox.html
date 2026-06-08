@@ -1,0 +1,44 @@
+<div class="relative">
+  <input
+    type="text"
+    [value]="displayValue()"
+    (focus)="onFocus()"
+    (input)="onInput($event)"
+    (keydown)="onKeydown($event)"
+    (click)="$event.stopPropagation()"
+    [placeholder]="placeholder()"
+    [class]="effectiveInputClass()"
+    autocomplete="off"
+  />
+  <lucide-icon
+    name="chevrons-up-down"
+    class="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none"
+  ></lucide-icon>
+
+  @if (isOpen()) {
+    <ul
+      class="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-xl py-1
+             border border-slate-200 dark:border-slate-700
+             bg-white dark:bg-slate-900 shadow-lg"
+    >
+      @for (acc of filtered(); track acc; let idx = $index) {
+        <li
+          (mousedown)="$event.preventDefault()"
+          (click)="select(acc)"
+          (mouseenter)="highlighted.set(idx)"
+          class="px-3 py-1.5 text-sm cursor-pointer truncate"
+          [ngClass]="idx === highlighted()
+            ? 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300'
+            : 'text-slate-700 dark:text-slate-200'"
+          [title]="acc"
+        >
+          {{ acc }}
+        </li>
+      } @empty {
+        <li class="px-3 py-2 text-xs italic text-slate-400 dark:text-slate-500">
+          Sin coincidencias
+        </li>
+      }
+    </ul>
+  }
+</div>
