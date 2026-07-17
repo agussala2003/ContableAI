@@ -100,7 +100,7 @@ public class PdfBankParser : IBankParser
                 // PDF digital: extracción de texto directa
                 bank = DetectBank(pages, fileName);
                 _logger.LogDebug("[PDF] Ruta DIGITAL — banco detectado: {Bank}", bank);
-                rows = ExtractPositionalRows(pages);
+                rows = MergeSplitAmountRows(ExtractPositionalRows(pages));
                 _logger.LogDebug("[PDF] Filas posicionales extraídas: {RowCount}", rows.Count);
             }
             else
@@ -239,6 +239,69 @@ public class PdfBankParser : IBankParser
         
         return rows;
     }
+
+    /// <summary>
+    /// Re-une filas que el agrupado por buckets fijos de Y partió en dos: los importes de una
+    /// fila pueden renderizarse con una línea base ~3 pts distinta a la del texto (ocurre
+    /// sistemáticamente en la primera y última fila de cada página BBVA), y el redondeo
+    /// Round(Y/3)*3 los manda a buckets distintos. El resultado sin este merge era una fila
+    /// "solo importes" (que generaba una transacción sin descripción y con fecha heredada) y
+    /// una fila con fecha y concepto pero sin importes (que se descartaba, perdiendo la
+    /// descripción real del movimiento).
+    /// Condiciones deliberadamente conservadoras: misma página, buckets adyacentes (|ΔY| ≤ 4.5),
+    /// una fila con importes y solo caracteres sueltos del margen vertical, la otra encabezada
+    /// por fecha y sin ningún importe.
+    /// </summary>
+    private static List<PdfRow> MergeSplitAmountRows(List<PdfRow> rows)
+    {
+        var result = new List<PdfRow>(rows.Count);
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var next = i + 1 < rows.Count ? rows[i + 1] : null;
+
+            if (next != null && next.PageNumber == row.PageNumber && Math.Abs(next.Y - row.Y) <= 4.5)
+            {
+                // Caso observado: importes arriba, fecha+concepto abajo
+                if (IsAmountsOnlyRow(row) && StartsWithDate(next) && !HasAmountCell(next))
+                {
+                    result.Add(new PdfRow(next.PageNumber, next.Y,
+                        next.Cells.Concat(row.Cells).OrderBy(c => c.X).ToList()));
+                    i++;
+                    continue;
+                }
+
+                // Caso inverso por simetría: fecha+concepto arriba, importes abajo
+                if (StartsWithDate(row) && !HasAmountCell(row) && IsAmountsOnlyRow(next))
+                {
+                    result.Add(new PdfRow(row.PageNumber, row.Y,
+                        row.Cells.Concat(next.Cells).OrderBy(c => c.X).ToList()));
+                    i++;
+                    continue;
+                }
+            }
+
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    private static bool HasAmountCell(PdfRow row) =>
+        row.Cells.Any(c => IsArgentineAmount(c.Text));
+
+    private static bool StartsWithDate(PdfRow row) =>
+        row.Cells.Count > 0 &&
+        RxDate.IsMatch(row.Cells[0].Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty);
+
+    /// <summary>
+    /// Fila compuesta por importes y, a lo sumo, caracteres sueltos del texto vertical de
+    /// margen (BBVA imprime leyendas letra por letra en X≈577-585 que caen en cualquier bucket).
+    /// </summary>
+    private static bool IsAmountsOnlyRow(PdfRow row) =>
+        row.Cells.Any(c => IsArgentineAmount(c.Text)) &&
+        row.Cells.All(c => IsArgentineAmount(c.Text) || c.Text.Length <= 1);
 
     /// <summary>
     /// Detecta el banco desde el texto ya extraído (usado en el path OCR donde no hay Pages de PdfPig).
@@ -874,7 +937,11 @@ public class PdfBankParser : IBankParser
             var tx   = txs[i];
             var desc = CleanBbvaDescription(tx.Description);
 
-            // Si la descripción quedó vacía o ilegible, reconstruir por contexto
+            // Si la descripción quedó vacía o ilegible, NUNCA copiar la de un vecino: eso
+            // asentaba transferencias/cheques/cupones con conceptos ajenos ("PAGOS AFIP",
+            // "LEY NRO 25.413..."). Solo se reconstruyen las filas de comisión/IVA, que son
+            // identificables sin ambigüedad por su importe nominal fijo; el resto queda
+            // marcado para revisión manual del contador.
             if (string.IsNullOrWhiteSpace(desc) || desc.Length <= 1)
             {
                 if (tx.Type == TransactionType.Debit && (tx.Amount == BbvaIvaAmount || tx.Amount == BbvaComiAmount))
@@ -884,7 +951,7 @@ public class PdfBankParser : IBankParser
                 }
                 else
                 {
-                    desc = InferBbvaDescription(txs, i);
+                    desc = UnreadableDescriptionMarker;
                 }
             }
 
@@ -948,38 +1015,11 @@ public class PdfBankParser : IBankParser
     }
 
     /// <summary>
-    /// Busca la descripción más probable escaneando transacciones adyacentes.
-    /// No retorna filas de comisión/IVA para evitar asignar descripciones erróneas.
+    /// Marcador para movimientos cuyo texto no pudo extraerse del PDF. Se prefiere exponer el
+    /// problema al contador antes que inventar una descripción (el sistema anterior copiaba la
+    /// de una transacción vecina del mismo día, generando conciliaciones erróneas).
     /// </summary>
-    private static string InferBbvaDescription(List<BankTransaction> txs, int idx)
-    {
-        var tx = txs[idx];
-
-        // Buscar hacia adelante dentro del mismo día (sin límite fijo: en extractos con cientos
-        // de transacciones diarias la ventana de 8 es insuficiente).
-        for (int j = idx + 1; j < txs.Count; j++)
-        {
-            var c = txs[j];
-            if (c.Date != tx.Date) break;
-
-            var cd = CleanBbvaDescription(c.Description);
-            if (c.Type == tx.Type && cd.Length > 2 && c.Amount != tx.Amount && !IsBbvaFeeRow(cd))
-                return cd;
-        }
-
-        // Buscar hacia atrás dentro del mismo día
-        for (int j = idx - 1; j >= 0; j--)
-        {
-            var c = txs[j];
-            if (c.Date != tx.Date) break;
-
-            var cd = CleanBbvaDescription(c.Description);
-            if (c.Type == tx.Type && cd.Length > 2 && c.Amount != tx.Amount && !IsBbvaFeeRow(cd))
-                return cd;
-        }
-
-        return tx.Description;
-    }
+    private const string UnreadableDescriptionMarker = "(MOVIMIENTO SIN DESCRIPCION LEGIBLE)";
 
     /// <summary>
     /// Reconstituye la descripción de filas de comisión o IVA buscando 
