@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -100,7 +101,7 @@ public class PdfBankParser : IBankParser
                 // PDF digital: extracción de texto directa
                 bank = DetectBank(pages, fileName);
                 _logger.LogDebug("[PDF] Ruta DIGITAL — banco detectado: {Bank}", bank);
-                rows = ExtractPositionalRows(pages);
+                rows = MergeSplitAmountRows(ExtractPositionalRows(pages));
                 _logger.LogDebug("[PDF] Filas posicionales extraídas: {RowCount}", rows.Count);
             }
             else
@@ -131,12 +132,24 @@ public class PdfBankParser : IBankParser
             }
 
             _logger.LogDebug("[PDF] Banco final: {Bank} — total filas: {Rows}", bank, rows.Count);
-            return bank switch
+
+            // Detección de moneda a nivel documento (una vez por PDF). Aborta si el extracto
+            // mezcla cuentas de distinta moneda (lanza InvalidOperationException, que se propaga).
+            var currency = DetectCurrency(rows);
+            _logger.LogDebug("[PDF] Moneda detectada: {Currency}", currency);
+
+            var txs = (bank switch
             {
                 BankMercadoPago => ParseMercadoPago(rows),
                 BankCiudad      => ParseBancoCiudad(rows, _logger),
                 _               => ParseStateful(rows, bank, fileName)
-            };
+            }).ToList();
+
+            // Post-pass: estampar la moneda detectada en todas las transacciones del extracto.
+            foreach (var tx in txs)
+                tx.Currency = currency;
+
+            return txs;
         }
         catch (InvalidOperationException)
         {
@@ -241,6 +254,69 @@ public class PdfBankParser : IBankParser
     }
 
     /// <summary>
+    /// Re-une filas que el agrupado por buckets fijos de Y partió en dos: los importes de una
+    /// fila pueden renderizarse con una línea base ~3 pts distinta a la del texto (ocurre
+    /// sistemáticamente en la primera y última fila de cada página BBVA), y el redondeo
+    /// Round(Y/3)*3 los manda a buckets distintos. El resultado sin este merge era una fila
+    /// "solo importes" (que generaba una transacción sin descripción y con fecha heredada) y
+    /// una fila con fecha y concepto pero sin importes (que se descartaba, perdiendo la
+    /// descripción real del movimiento).
+    /// Condiciones deliberadamente conservadoras: misma página, buckets adyacentes (|ΔY| ≤ 4.5),
+    /// una fila con importes y solo caracteres sueltos del margen vertical, la otra encabezada
+    /// por fecha y sin ningún importe.
+    /// </summary>
+    private static List<PdfRow> MergeSplitAmountRows(List<PdfRow> rows)
+    {
+        var result = new List<PdfRow>(rows.Count);
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var next = i + 1 < rows.Count ? rows[i + 1] : null;
+
+            if (next != null && next.PageNumber == row.PageNumber && Math.Abs(next.Y - row.Y) <= 4.5)
+            {
+                // Caso observado: importes arriba, fecha+concepto abajo
+                if (IsAmountsOnlyRow(row) && StartsWithDate(next) && !HasAmountCell(next))
+                {
+                    result.Add(new PdfRow(next.PageNumber, next.Y,
+                        next.Cells.Concat(row.Cells).OrderBy(c => c.X).ToList()));
+                    i++;
+                    continue;
+                }
+
+                // Caso inverso por simetría: fecha+concepto arriba, importes abajo
+                if (StartsWithDate(row) && !HasAmountCell(row) && IsAmountsOnlyRow(next))
+                {
+                    result.Add(new PdfRow(row.PageNumber, row.Y,
+                        row.Cells.Concat(next.Cells).OrderBy(c => c.X).ToList()));
+                    i++;
+                    continue;
+                }
+            }
+
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    private static bool HasAmountCell(PdfRow row) =>
+        row.Cells.Any(c => IsArgentineAmount(c.Text));
+
+    private static bool StartsWithDate(PdfRow row) =>
+        row.Cells.Count > 0 &&
+        RxDate.IsMatch(row.Cells[0].Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty);
+
+    /// <summary>
+    /// Fila compuesta por importes y, a lo sumo, caracteres sueltos del texto vertical de
+    /// margen (BBVA imprime leyendas letra por letra en X≈577-585 que caen en cualquier bucket).
+    /// </summary>
+    private static bool IsAmountsOnlyRow(PdfRow row) =>
+        row.Cells.Any(c => IsArgentineAmount(c.Text)) &&
+        row.Cells.All(c => IsArgentineAmount(c.Text) || c.Text.Length <= 1);
+
+    /// <summary>
     /// Detecta el banco desde el texto ya extraído (usado en el path OCR donde no hay Pages de PdfPig).
     /// </summary>
     private static string DetectBankFromRows(List<PdfRow> rows, string fileName)
@@ -266,6 +342,94 @@ public class PdfBankParser : IBankParser
         if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))         return BankCiudad;
 
         return "GENERIC";
+    }
+
+    #endregion
+
+    #region Detección de Moneda
+
+    /// <summary>Mensaje de rechazo cuando un mismo PDF contiene cuentas en más de una moneda.</summary>
+    public const string MixedCurrencyError =
+        "El extracto contiene cuentas en más de una moneda (pesos y dólares) en el mismo archivo. " +
+        "Subí el extracto de cada cuenta por separado.";
+
+    // Umbral de tokens de moneda (adyacentes a un importe) para inferir USD cuando el header
+    // no es reconocible. >= 2 evita falsos positivos por una mención suelta en texto legal.
+    private const int UsdTokenThreshold = 2;
+
+    // Una celda que ES un marcador de moneda dólar: "USD", "-USD", "US$", "U$S" y también la
+    // forma fusionada "USD607,62" que Galicia imprime en la columna de saldo.
+    private static readonly Regex RxUsdTokenCell = new(
+        @"^-?(?:USD|US\$|U\$S)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Detecta la moneda del extracto a nivel documento (una sola vez por PDF). Opera sobre las
+    /// filas ya extraídas, así que funciona igual en la ruta digital y en la de OCR.
+    ///
+    /// Señales, por orden de confianza:
+    ///  1. Header de tipo de cuenta: "Cuenta Corriente Especial en dolares" (Galicia) / "CC U$S"
+    ///     (BBVA) → USD; "Cuenta Corriente [Especial] en Pesos" / "CC $" → ARS. Son robustas
+    ///     frente al texto legal (que menciona "depósitos en pesos y en moneda extranjera" sin
+    ///     la forma "corriente en pesos").
+    ///  2. Tokens de moneda dólar adyacentes a un importe (columnas de importe), con umbral.
+    ///  3. Fallback: ARS.
+    ///
+    /// Si aparecen headers de ambas monedas en el mismo documento, lanza
+    /// <see cref="InvalidOperationException"/> (<see cref="MixedCurrencyError"/>): se rechaza el
+    /// archivo y se exige subir el extracto de cada cuenta por separado.
+    /// </summary>
+    private static string DetectCurrency(List<PdfRow> rows)
+    {
+        bool usdHeader = false;
+        bool arsHeader = false;
+        int  usdAmountTokens = 0;
+
+        foreach (var row in rows)
+        {
+            var line = RemoveDiacritics(JoinCells(row)).ToUpperInvariant();
+
+            if (line.Contains("ESPECIAL EN DOLARES") ||
+                line.Contains("CORRIENTE EN DOLARES") ||
+                line.Contains("CC U$S"))
+                usdHeader = true;
+
+            if (line.Contains("ESPECIAL EN PESOS") ||
+                line.Contains("CORRIENTE EN PESOS") ||
+                line.Contains("CC $"))
+                arsHeader = true;
+
+            // Tokens de moneda solo cuentan si están junto a un importe (columna de importe),
+            // no en descripciones ni texto legal.
+            for (int i = 0; i < row.Cells.Count; i++)
+            {
+                if (!RxUsdTokenCell.IsMatch(row.Cells[i].Text)) continue;
+
+                bool nextIsAmount = i + 1 < row.Cells.Count && IsArgentineAmount(row.Cells[i + 1].Text);
+                bool prevIsAmount = i - 1 >= 0             && IsArgentineAmount(row.Cells[i - 1].Text);
+                if (nextIsAmount || prevIsAmount) usdAmountTokens++;
+            }
+        }
+
+        return ResolveCurrency(usdHeader, arsHeader, usdAmountTokens);
+    }
+
+    /// <summary>
+    /// Tabla de decisión de moneda, separada del escaneo para poder testearla sin un PDF.
+    /// Headers de ambas monedas → excepción (extracto mixto). Un header reconocible manda sobre
+    /// los tokens. Sin header, se infiere por cantidad de tokens dólar en columnas de importe.
+    /// </summary>
+    internal static string ResolveCurrency(bool usdHeader, bool arsHeader, int usdAmountTokens)
+    {
+        if (usdHeader && arsHeader)
+            throw new InvalidOperationException(MixedCurrencyError);
+
+        // El header manda: si el tipo de cuenta es reconocible, la moneda es definitiva y los
+        // tokens sueltos en descripciones (ej. una transferencia que menciona USD en una cuenta
+        // en pesos) no pueden desviar la clasificación.
+        if (usdHeader) return Currencies.Usd;
+        if (arsHeader) return Currencies.Ars;
+
+        return usdAmountTokens >= UsdTokenThreshold ? Currencies.Usd : Currencies.Ars;
     }
 
     #endregion
@@ -565,14 +729,30 @@ public class PdfBankParser : IBankParser
 
     private static bool IsGaliciaSplitSummaryAmountRow(string rawDesc, int debitCount, int creditCount)
     {
-        if (debitCount == 0 || creditCount == 0) return false;
+        // Todas las filas reales de movimientos de Galicia arrancan con fecha; una fila sin
+        // fecha que trae importes solo puede ser la fila de totales (u otro fragmento de
+        // resumen), así que basta con que haya al menos un importe clasificado.
+        if (debitCount == 0 && creditCount == 0) return false;
 
-        var normalized = RemoveDiacritics(rawDesc).ToUpperInvariant();
+        var normalized = StripCurrencyTokens(RemoveDiacritics(rawDesc).ToUpperInvariant());
         var letters = new string(normalized.Where(char.IsLetter).ToArray());
 
         // Amount-only rows like "$ -$ $" (or with just "TOTAL") are summary fragments, not transactions.
+        // En extractos en dólares los importes vienen con prefijo de moneda en celdas propias
+        // ("Total USD 639,40 -USD 31,78 USD 607,62"), por eso se quitan los tokens USD antes
+        // de evaluar las letras restantes.
         return letters.Length == 0 || letters == "TOTAL";
     }
+
+    // Tokens de moneda que Galicia imprime como celdas sueltas junto a los importes en
+    // extractos en dólares ("USD", "-USD", "US$", "U$S"). El "$" de pesos no lleva letras,
+    // así que no necesita tratamiento.
+    private static readonly Regex RxCurrencyToken = new(
+        @"(?<![A-Z])(?:USD|US\$|U\$S)(?![A-Z])",
+        RegexOptions.Compiled);
+
+    private static string StripCurrencyTokens(string text) =>
+        RxCurrencyToken.Replace(text, " ");
 
     private static string RemoveDiacritics(string text)
     {
@@ -801,6 +981,13 @@ public class PdfBankParser : IBankParser
 
             if (bankCode == BankGalicia && IsGaliciaRetentionSummaryText(extra))
                 return;
+
+            // Fila con solo la etiqueta "Total" (extractos USD la imprimen en una fila Y
+            // aparte de sus importes): no es continuación de la descripción anterior.
+            if (bankCode == BankGalicia &&
+                new string(StripCurrencyTokens(RemoveDiacritics(extra).ToUpperInvariant())
+                    .Where(char.IsLetter).ToArray()) is "" or "TOTAL" or "TOTALES")
+                return;
             
             if (!string.IsNullOrWhiteSpace(extra) && !IsIrrelevantLine(extra))
             {
@@ -851,7 +1038,11 @@ public class PdfBankParser : IBankParser
             var tx   = txs[i];
             var desc = CleanBbvaDescription(tx.Description);
 
-            // Si la descripción quedó vacía o ilegible, reconstruir por contexto
+            // Si la descripción quedó vacía o ilegible, NUNCA copiar la de un vecino: eso
+            // asentaba transferencias/cheques/cupones con conceptos ajenos ("PAGOS AFIP",
+            // "LEY NRO 25.413..."). Solo se reconstruyen las filas de comisión/IVA, que son
+            // identificables sin ambigüedad por su importe nominal fijo; el resto queda
+            // marcado para revisión manual del contador.
             if (string.IsNullOrWhiteSpace(desc) || desc.Length <= 1)
             {
                 if (tx.Type == TransactionType.Debit && (tx.Amount == BbvaIvaAmount || tx.Amount == BbvaComiAmount))
@@ -861,7 +1052,7 @@ public class PdfBankParser : IBankParser
                 }
                 else
                 {
-                    desc = InferBbvaDescription(txs, i);
+                    desc = UnreadableDescriptionMarker;
                 }
             }
 
@@ -925,38 +1116,11 @@ public class PdfBankParser : IBankParser
     }
 
     /// <summary>
-    /// Busca la descripción más probable escaneando transacciones adyacentes.
-    /// No retorna filas de comisión/IVA para evitar asignar descripciones erróneas.
+    /// Marcador para movimientos cuyo texto no pudo extraerse del PDF. Se prefiere exponer el
+    /// problema al contador antes que inventar una descripción (el sistema anterior copiaba la
+    /// de una transacción vecina del mismo día, generando conciliaciones erróneas).
     /// </summary>
-    private static string InferBbvaDescription(List<BankTransaction> txs, int idx)
-    {
-        var tx = txs[idx];
-
-        // Buscar hacia adelante dentro del mismo día (sin límite fijo: en extractos con cientos
-        // de transacciones diarias la ventana de 8 es insuficiente).
-        for (int j = idx + 1; j < txs.Count; j++)
-        {
-            var c = txs[j];
-            if (c.Date != tx.Date) break;
-
-            var cd = CleanBbvaDescription(c.Description);
-            if (c.Type == tx.Type && cd.Length > 2 && c.Amount != tx.Amount && !IsBbvaFeeRow(cd))
-                return cd;
-        }
-
-        // Buscar hacia atrás dentro del mismo día
-        for (int j = idx - 1; j >= 0; j--)
-        {
-            var c = txs[j];
-            if (c.Date != tx.Date) break;
-
-            var cd = CleanBbvaDescription(c.Description);
-            if (c.Type == tx.Type && cd.Length > 2 && c.Amount != tx.Amount && !IsBbvaFeeRow(cd))
-                return cd;
-        }
-
-        return tx.Description;
-    }
+    private const string UnreadableDescriptionMarker = "(MOVIMIENTO SIN DESCRIPCION LEGIBLE)";
 
     /// <summary>
     /// Reconstituye la descripción de filas de comisión o IVA buscando 
@@ -1805,39 +1969,24 @@ public class PdfBankParser : IBankParser
 
     /// <summary>
     /// Devuelve el año y mes del período principal del extracto.
-    /// El nombre del archivo es la fuente autoritativa (ej. "0925.pdf" → sept 2025);
-    /// sólo se cae al escaneo de fechas en el documento cuando el nombre no es parseable.
-    /// Esto evita que fechas futuras en secciones suplementarias (ej. FECHA PAGO de cheques
-    /// con vencimiento en el año siguiente) corrompan el año asignado a las transacciones.
+    /// El nombre del archivo es la fuente autoritativa (ej. "0925.pdf" → sept 2025), aceptando
+    /// también variantes como "1225 (1).pdf", "05 2025.pdf", "BBVA TB 11.2024.pdf" o
+    /// "Extracto_2024_11_29.pdf". Si el nombre no contiene un período reconocible, se cae al
+    /// escaneo del documento tomando el mes/año MÁS FRECUENTE entre las fechas explícitas.
+    /// Nunca se toma la fecha máxima: los extractos traen fechas futuras sueltas en secciones
+    /// suplementarias y avisos ("a partir del 01/03/2026 se aplicarán comisiones...",
+    /// "información al: 02/01/2026") que corromperían el año de todas las transacciones.
     /// </summary>
     private static (int? stmtYear, int? primaryMonth) DetectStatementInfo(List<PdfRow> rows, string? fileName = null)
     {
-        // Intentar primero el nombre de archivo — es la fuente más confiable del período.
-        // Nombres como "0125.pdf" (MMYY) o "012025.pdf" (MMYYYY) se parsean como mes=1, año=2025.
-        if (!string.IsNullOrEmpty(fileName))
-        {
-            var baseName = Path.GetFileNameWithoutExtension(fileName);
-            var rxFile6 = new Regex(@"^(\d{2})(\d{4})$"); // MMYYYY ej. "012025"
-            var rxFile4 = new Regex(@"^(\d{2})(\d{2})$"); // MMYY   ej. "0125"
+        if (TryParsePeriodFromFileName(fileName, out var fromName))
+            return fromName;
 
-            Match mf = rxFile6.Match(baseName);
-            if (!mf.Success) mf = rxFile4.Match(baseName);
-
-            if (mf.Success &&
-                int.TryParse(mf.Groups[1].Value, out var fMo) && fMo >= 1 && fMo <= 12 &&
-                int.TryParse(mf.Groups[2].Value, out var fY))
-            {
-                if (fY < 100) fY += 2000;
-                if (fY >= 2020 && fY <= DateTime.Today.Year + 1)
-                    return (fY, fMo);
-            }
-        }
-
-        // Fallback: escanear fechas con año explícito en el documento.
-        // Se usa cuando el nombre del archivo no tiene el formato MMYY / MMYYYY esperado.
+        // Fallback: moda (mes/año más frecuente) de las fechas con año explícito del documento.
+        // Las fechas de la tabla de movimientos dominan por cantidad; una fecha futura aislada
+        // de un aviso legal o de la sección de cheques no puede desviar el resultado.
         var rx = new Regex(@"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})");
-        int maxYear = 0;
-        int? primaryMonth = null;
+        var counts = new Dictionary<(int Year, int Month), int>();
 
         foreach (var row in rows)
         {
@@ -1851,16 +2000,76 @@ public class PdfBankParser : IBankParser
 
                     if (!int.TryParse(m.Groups[2].Value, out var mo) || mo < 1 || mo > 12) continue;
 
-                    if (y > maxYear || (y == maxYear && mo > (primaryMonth ?? 0)))
-                    {
-                        maxYear = y;
-                        primaryMonth = mo;
-                    }
+                    counts[(y, mo)] = counts.GetValueOrDefault((y, mo)) + 1;
                 }
             }
         }
 
-        return maxYear >= 2020 ? (maxYear, primaryMonth) : (null, null);
+        if (counts.Count == 0) return (null, null);
+
+        // Empate de frecuencia (extracto a caballo entre dos meses): gana el período más tardío,
+        // que es el mes de cierre del extracto.
+        var best = counts
+            .OrderByDescending(kvp => kvp.Value)
+            .ThenByDescending(kvp => kvp.Key.Year * 12 + kvp.Key.Month)
+            .First().Key;
+
+        return (best.Year, best.Month);
+    }
+
+    /// <summary>
+    /// Extrae el período (mes, año) del nombre del archivo. Acepta, en orden de especificidad:
+    /// "MMYYYY"/"MMYY" exactos, "MM.YYYY"/"MM YYYY"/"MM-YYYY", "YYYY.MM"/"YYYY_MM", y por
+    /// último tokens MMYYYY/MMYY sueltos en cualquier parte del nombre (cubre sufijos de
+    /// descarga tipo "1225 (1).pdf"). Todo match se valida: mes 1..12, año 2020..hoy+1.
+    /// </summary>
+    private static bool TryParsePeriodFromFileName(string? fileName, out (int? stmtYear, int? primaryMonth) period)
+    {
+        period = (null, null);
+        if (string.IsNullOrEmpty(fileName)) return false;
+
+        var rawName = Path.GetFileNameWithoutExtension(fileName);
+
+        // Mismo saneo que DetectBank: "_20"/"%20" son espacios URL-encodeados
+        // (ej. "BBVA_20TB_2012.2024.pdf" es en realidad "BBVA TB 12.2024.pdf").
+        // Se prueba primero el nombre crudo: el saneo rompe nombres con años reales tipo
+        // "Extracto_2024_11_29" ("_2024" → " 24").
+        var sanitizedName = rawName.Replace("_20", " ").Replace("%20", " ");
+
+        // Cada patrón captura (mes, año) salvo los marcados YearFirst que capturan (año, mes).
+        (string Pattern, bool YearFirst)[] patterns =
+        [
+            (@"^(\d{2})(\d{4})$",                    false), // "012025"
+            (@"^(\d{2})(\d{2})$",                    false), // "0125"
+            (@"(?<!\d)(\d{1,2})[._ -](\d{4})(?!\d)", false), // "11.2024", "05 2025"
+            (@"(?<!\d)(20\d{2})[._ -](\d{1,2})(?!\d)", true), // "2024_11"
+            (@"(?<!\d)(\d{2})(\d{4})(?!\d)",         false), // "...012025..."
+            (@"(?<!\d)(\d{2})(\d{2})(?!\d)",         false), // "1225 (1)"
+        ];
+
+        string[] candidates = rawName == sanitizedName ? [rawName] : [rawName, sanitizedName];
+
+        foreach (var baseName in candidates)
+        {
+            foreach (var (pattern, yearFirst) in patterns)
+            {
+                foreach (Match m in Regex.Matches(baseName, pattern))
+                {
+                    var moText = yearFirst ? m.Groups[2].Value : m.Groups[1].Value;
+                    var yText  = yearFirst ? m.Groups[1].Value : m.Groups[2].Value;
+
+                    if (!int.TryParse(moText, out var mo) || mo < 1 || mo > 12) continue;
+                    if (!int.TryParse(yText, out var y)) continue;
+                    if (y < 100) y += 2000;
+                    if (y < 2020 || y > DateTime.Today.Year + 1) continue;
+
+                    period = (y, mo);
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static List<decimal> ExtractAmountsFromText(string text)

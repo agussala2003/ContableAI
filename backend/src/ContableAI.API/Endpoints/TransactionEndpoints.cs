@@ -68,6 +68,7 @@ public static class TransactionEndpoints
             [FromQuery] decimal? exactAmount = null,
             [FromQuery] decimal? minAmount   = null,
             [FromQuery] decimal? maxAmount   = null,
+            [FromQuery] string?  currency    = null,
             [FromQuery] int      page        = 1,
             [FromQuery] int      pageSize    = 100) =>
         {
@@ -134,6 +135,10 @@ public static class TransactionEndpoints
             if (type.HasValue)
                 query = query.Where(t => (int)t.Type == type.Value);
 
+            // Filtro por moneda (usa el índice IX_BankTransactions_CompanyId_Currency).
+            if (!string.IsNullOrWhiteSpace(currency))
+                query = query.Where(t => t.Currency == currency);
+
             if (exactAmount.HasValue)
                 query = query.Where(t => t.Amount == exactAmount.Value);
             else
@@ -174,15 +179,28 @@ public static class TransactionEndpoints
             page     = Math.Max(1, page);
 
             // ── Consolidación 2: 3 queries → 1 (count + ingresos + egresos filtrados) ──
-            // GROUP BY Type genera: SELECT Type, COUNT(*), SUM(Amount) en una sola roundtrip.
+            // GROUP BY (Type, Currency): permite totales por moneda sin sumar ARS con USD.
             var filteredStats = await query
-                .GroupBy(t => t.Type)
-                .Select(g => new { Type = g.Key, Count = g.Count(), Total = g.Sum(t => t.Amount) })
+                .GroupBy(t => new { t.Type, t.Currency })
+                .Select(g => new { g.Key.Type, g.Key.Currency, Count = g.Count(), Total = g.Sum(t => t.Amount) })
                 .ToListAsync();
 
             var totalCount            = filteredStats.Sum(x => x.Count);
-            var totalIngresosFiltered = filteredStats.FirstOrDefault(x => x.Type == TransactionType.Credit)?.Total ?? 0m;
-            var totalEgresosFiltered  = filteredStats.FirstOrDefault(x => x.Type == TransactionType.Debit)?.Total ?? 0m;
+            var totalIngresosFiltered = filteredStats.Where(x => x.Type == TransactionType.Credit).Sum(x => x.Total);
+            var totalEgresosFiltered  = filteredStats.Where(x => x.Type == TransactionType.Debit).Sum(x => x.Total);
+
+            // Totales por moneda: la UI muestra una línea por moneda, nunca ARS+USD fusionados.
+            var currencyTotals = filteredStats
+                .GroupBy(x => x.Currency)
+                .Select(g => new
+                {
+                    Currency = g.Key,
+                    Ingresos = g.Where(x => x.Type == TransactionType.Credit).Sum(x => x.Total),
+                    Egresos  = g.Where(x => x.Type == TransactionType.Debit).Sum(x => x.Total),
+                })
+                .OrderBy(x => x.Currency == Currencies.Ars ? 0 : 1)
+                .ThenBy(x => x.Currency)
+                .ToList();
 
             // ── Consolidación 3: 2 queries → 1 (ingresos + egresos totales sin filtro fecha/cuenta) ──
             var queryAll = dbContext.BankTransactions
@@ -227,6 +245,7 @@ public static class TransactionEndpoints
                 TotalEgresosFiltered  = totalEgresosFiltered,
                 TotalIngresosAll      = totalIngresosAll,
                 TotalEgresosAll       = totalEgresosAll,
+                CurrencyTotals        = currencyTotals,
                 AvailableAccounts     = normalizedAccounts,
                 AvailableMonths       = availableMonths,
                 AvailableYears        = availableYears,

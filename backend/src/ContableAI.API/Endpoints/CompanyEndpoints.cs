@@ -49,7 +49,7 @@ public static class CompanyEndpoints
             ICurrentTenantService tenant,
             IMediator             mediator) =>
         {
-            var cmd    = new CreateCompanyCommand(req.Name, req.Cuit, req.BusinessType, req.BankAccountName, tenant.StudioTenantId ?? "ESTUDIO_DEFAULT");
+            var cmd    = new CreateCompanyCommand(req.Name, req.Cuit, req.BusinessType, req.BankAccountName, tenant.StudioTenantId ?? "ESTUDIO_DEFAULT", req.UsdBankAccountName);
             var result = await mediator.Send(cmd);
             return result.StatusCode == 201
                 ? result.ToCreatedResult($"/api/companies/{result.Value?.Id}")
@@ -68,7 +68,7 @@ public static class CompanyEndpoints
             UpdateCompanyRequest req,
             IMediator            mediator) =>
         {
-            var cmd    = new UpdateCompanyCommand(id, req.Name, req.BusinessType, req.SplitChequeTax, req.BankAccountName);
+            var cmd    = new UpdateCompanyCommand(id, req.Name, req.BusinessType, req.SplitChequeTax, req.BankAccountName, req.UsdBankAccountName);
             var result = await mediator.Send(cmd);
             return result.ToHttpResult();
         })

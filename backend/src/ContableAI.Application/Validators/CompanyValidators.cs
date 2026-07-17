@@ -27,6 +27,10 @@ public class CreateCompanyCommandValidator : AbstractValidator<CreateCompanyComm
         RuleFor(x => x.BankAccountName)
             .MaximumLength(200)
             .When(x => x.BankAccountName is not null);
+
+        RuleFor(x => x.UsdBankAccountName)
+            .MaximumLength(200)
+            .When(x => x.UsdBankAccountName is not null);
     }
 }
 
@@ -44,6 +48,10 @@ public class UpdateCompanyCommandValidator : AbstractValidator<UpdateCompanyComm
         RuleFor(x => x.BusinessType)
             .MaximumLength(100)
             .When(x => x.BusinessType is not null);
+
+        RuleFor(x => x.UsdBankAccountName)
+            .MaximumLength(200)
+            .When(x => x.UsdBankAccountName is not null);
     }
 }
 

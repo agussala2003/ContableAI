@@ -18,6 +18,13 @@ public class BankTransaction : ITenantEntity
     public decimal BalanceAfter { get; init; }
     public string? SourceBank { get; init; }
 
+    /// <summary>
+    /// Moneda del movimiento (código ISO 4217, ver <see cref="Currencies"/>). La detecta el
+    /// parser a partir del extracto y se estampa en un post-pass; por eso es <c>set</c> (no
+    /// <c>init</c>), igual que <see cref="ExternalId"/>. Default <see cref="Currencies.Ars"/>.
+    /// </summary>
+    public string Currency { get; set; } = Currencies.Ars;
+
     public string? AssignedAccount { get; private set; }
     public Guid? AppliedRuleId { get; private set; }
     public bool NeedsTaxMatching { get; private set; } = false;

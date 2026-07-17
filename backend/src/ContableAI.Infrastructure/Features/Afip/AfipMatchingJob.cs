@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
@@ -26,8 +27,13 @@ public class AfipMatchingJob
 
         if (unmatchedVouchers.Count == 0) return;
 
+        // Guard multi-moneda: los VEPs de ARCA se pagan siempre en pesos, así que solo se
+        // cruzan movimientos en ARS. Un débito en USD de igual importe nunca debe "robarse"
+        // un VEP por coincidencia numérica.
         var pendingTxs = await _db.BankTransactions
-            .Where(t => t.CompanyId == companyId && t.NeedsTaxMatching)
+            .Where(t => t.CompanyId == companyId
+                     && t.NeedsTaxMatching
+                     && t.Currency == Currencies.Ars)
             .ToListAsync();
 
         if (pendingTxs.Count == 0) return;

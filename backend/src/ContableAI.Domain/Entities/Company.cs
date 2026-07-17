@@ -34,6 +34,14 @@ public class Company
     /// <summary>
     /// Nombre de la cuenta bancaria en el plan de cuentas del estudio (ej: "BBVA - CTA CTE Pesos").
     /// Se usa como contrapartida en los asientos de doble entrada al generar el libro diario.
+    /// Es la cuenta en pesos (ARS).
     /// </summary>
     public string BankAccountName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Nombre de la cuenta bancaria en dólares (USD) en el plan de cuentas del estudio
+    /// (ej: "Galicia - CC USD"). Contrapartida de los asientos generados a partir de movimientos
+    /// en dólares. <c>null</c> o vacío cuando la empresa no opera en moneda extranjera.
+    /// </summary>
+    public string? UsdBankAccountName { get; set; }
 }

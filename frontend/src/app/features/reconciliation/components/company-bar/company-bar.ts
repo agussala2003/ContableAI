@@ -35,6 +35,7 @@ export class CompanyBar implements OnInit {
     cuit: ['', [Validators.required, Validators.pattern(this.cuitRegex)]],
     businessType: ['GENERAL', [Validators.required]],
     bankAccountName: ['', [Validators.maxLength(120)]],
+    usdBankAccountName: ['', [Validators.maxLength(120)]],
   });
 
   editForm = this.fb.group({
@@ -42,6 +43,7 @@ export class CompanyBar implements OnInit {
     businessType: ['GENERAL', [Validators.required]],
     splitChequeTax: [false],
     bankAccountName: ['', [Validators.maxLength(120)]],
+    usdBankAccountName: ['', [Validators.maxLength(120)]],
   });
 
   readonly businessTypes = ['GENERAL', 'RESTAURANTE', 'PELUQUERIA', 'COMERCIO', 'SERVICIO'];
@@ -73,6 +75,7 @@ export class CompanyBar implements OnInit {
       cuit: formValue.cuit!.trim(),
       businessType: formValue.businessType ?? undefined,
       bankAccountName: (formValue.bankAccountName ?? '').trim() || undefined,
+      usdBankAccountName: (formValue.usdBankAccountName ?? '').trim() || undefined,
     };
     this.companyService.createCompany(req).subscribe({
       next: (company) => {
@@ -106,6 +109,7 @@ export class CompanyBar implements OnInit {
       cuit: '',
       businessType: 'GENERAL',
       bankAccountName: '',
+      usdBankAccountName: '',
     });
   }
 
@@ -120,6 +124,7 @@ export class CompanyBar implements OnInit {
       businessType: company.businessType,
       splitChequeTax: company.splitChequeTax ?? false,
       bankAccountName: company.bankAccountName ?? '',
+      usdBankAccountName: company.usdBankAccountName ?? '',
     });
     this.editingCompany.set(company);
   }
@@ -146,6 +151,7 @@ export class CompanyBar implements OnInit {
       businessType: formValue.businessType ?? undefined,
       splitChequeTax: formValue.splitChequeTax ?? false,
       bankAccountName: (formValue.bankAccountName ?? '').trim(),
+      usdBankAccountName: (formValue.usdBankAccountName ?? '').trim(),
     };
     this.companyService.updateCompany(company.id, req).subscribe({
       next: (updated) => {

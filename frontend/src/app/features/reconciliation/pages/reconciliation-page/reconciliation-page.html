@@ -100,6 +100,7 @@
           [companyId]="companyService.activeCompany()?.id"
           (uploadComplete)="svc.refreshAfipCount()"
           (skippedDuplicates)="onAfipSkippedDuplicates($event)"
+          (combinationApplied)="svc.loadData(); svc.refreshAfipCount()"
           class="block" />
       </div>
     </div>
@@ -262,10 +263,18 @@
       </div>
       <div>
         <p class="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Ingresos</p>
-        <p class="text-lg font-semibold text-slate-900 dark:text-white leading-none mt-0.5">${{ svc.totalIngresos() |
-          number: '1.2-2' }}</p>
-        @if (svc.hasActiveFilters()) {
-        <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">de ${{ svc.totalIngresosAll() | number: '1.2-2' }} totales</p>
+        @if (svc.isMultiCurrency()) {
+          @for (ct of svc.currencyTotals(); track ct.currency) {
+            <p class="text-base font-semibold text-slate-900 dark:text-white leading-tight mt-0.5">
+              <span class="text-[11px] font-medium opacity-60 mr-0.5">{{ ct.currency | currencySymbol }}</span>{{ ct.ingresos | number: '1.2-2' }}
+            </p>
+          }
+        } @else {
+          <p class="text-lg font-semibold text-slate-900 dark:text-white leading-none mt-0.5">${{ svc.totalIngresos() |
+            number: '1.2-2' }}</p>
+          @if (svc.hasActiveFilters()) {
+          <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">de ${{ svc.totalIngresosAll() | number: '1.2-2' }} totales</p>
+          }
         }
       </div>
     </div>
@@ -277,10 +286,18 @@
       </div>
       <div>
         <p class="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Egresos</p>
-        <p class="text-lg font-semibold text-slate-900 dark:text-white leading-none mt-0.5">${{ svc.totalEgresos() |
-          number: '1.2-2' }}</p>
-        @if (svc.hasActiveFilters()) {
-        <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">de ${{ svc.totalEgresosAll() | number: '1.2-2' }} totales</p>
+        @if (svc.isMultiCurrency()) {
+          @for (ct of svc.currencyTotals(); track ct.currency) {
+            <p class="text-base font-semibold text-slate-900 dark:text-white leading-tight mt-0.5">
+              <span class="text-[11px] font-medium opacity-60 mr-0.5">{{ ct.currency | currencySymbol }}</span>{{ ct.egresos | number: '1.2-2' }}
+            </p>
+          }
+        } @else {
+          <p class="text-lg font-semibold text-slate-900 dark:text-white leading-none mt-0.5">${{ svc.totalEgresos() |
+            number: '1.2-2' }}</p>
+          @if (svc.hasActiveFilters()) {
+          <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">de ${{ svc.totalEgresosAll() | number: '1.2-2' }} totales</p>
+          }
         }
       </div>
     </div>
@@ -293,10 +310,19 @@
       <div>
         <p class="text-[11px] font-medium text-indigo-600/70 dark:text-indigo-400/70 uppercase tracking-wide">Saldo Neto
         </p>
-        <p class="text-lg font-semibold leading-none mt-0.5"
-          [class]="svc.saldo() >= 0 ? 'text-indigo-700 dark:text-indigo-300' : 'text-red-600 dark:text-red-400'">
-          {{ svc.saldo() >= 0 ? '+' : '−' }}${{ (svc.saldo() < 0 ? svc.saldo() * -1 : svc.saldo()) | number: '1.2-2' }}
+        @if (svc.isMultiCurrency()) {
+          @for (ct of svc.currencyTotals(); track ct.currency) {
+            <p class="text-base font-semibold leading-tight mt-0.5"
+              [class]="(ct.ingresos - ct.egresos) >= 0 ? 'text-indigo-700 dark:text-indigo-300' : 'text-red-600 dark:text-red-400'">
+              <span class="text-[11px] font-medium opacity-60 mr-0.5">{{ ct.currency | currencySymbol }}</span>{{ (ct.ingresos - ct.egresos) >= 0 ? '+' : '−' }}{{ ((ct.ingresos - ct.egresos) < 0 ? (ct.egresos - ct.ingresos) : (ct.ingresos - ct.egresos)) | number: '1.2-2' }}
             </p>
+          }
+        } @else {
+          <p class="text-lg font-semibold leading-none mt-0.5"
+            [class]="svc.saldo() >= 0 ? 'text-indigo-700 dark:text-indigo-300' : 'text-red-600 dark:text-red-400'">
+            {{ svc.saldo() >= 0 ? '+' : '−' }}${{ (svc.saldo() < 0 ? svc.saldo() * -1 : svc.saldo()) | number: '1.2-2' }}
+          </p>
+        }
       </div>
     </div>
   </div>
@@ -362,6 +388,16 @@
       <option value="">Debe y Haber</option>
       <option value="debit">Solo Debe</option>
       <option value="credit">Solo Haber</option>
+    </select>
+
+    <select [ngModel]="svc.filters().currency ?? ''"
+      (ngModelChange)="svc.setFilter({ currency: $event === '' ? null : $event }); svc.applyFilters()"
+      title="Filtrar por moneda"
+      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
+             text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
+      <option value="">Todas las monedas</option>
+      <option value="ARS">Solo ARS</option>
+      <option value="USD">Solo USD</option>
     </select>
 
     <select [ngModel]="svc.filters().account" (ngModelChange)="svc.setFilter({ account: $event }); svc.applyFilters()"

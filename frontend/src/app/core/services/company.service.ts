@@ -11,6 +11,7 @@ export interface Company {
   isActive: boolean;
   splitChequeTax: boolean;
   bankAccountName: string;
+  usdBankAccountName?: string | null;
 }
 
 export interface CreateCompanyRequest {
@@ -18,6 +19,7 @@ export interface CreateCompanyRequest {
   cuit: string;
   businessType?: string;
   bankAccountName?: string;
+  usdBankAccountName?: string | null;
 }
 
 export interface UpdateCompanyRequest {
@@ -25,6 +27,7 @@ export interface UpdateCompanyRequest {
   businessType?: string;
   splitChequeTax?: boolean;
   bankAccountName?: string;
+  usdBankAccountName?: string | null;
 }
 
 @Injectable({ providedIn: 'root' })

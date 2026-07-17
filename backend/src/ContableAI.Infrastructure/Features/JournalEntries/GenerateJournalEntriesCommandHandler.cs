@@ -63,10 +63,23 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         var companiesMap = await _dbContext.Companies
             .AsNoTracking()
             .Where(c => companyIds.Contains(c.Id))
-            .ToDictionaryAsync(c => c.Id, c => c.BankAccountName, cancellationToken);
+            .ToDictionaryAsync(
+                c => c.Id,
+                c => new CompanyBankAccounts(c.BankAccountName, c.UsdBankAccountName),
+                cancellationToken);
 
-        var missingBank = companyIds
-            .Where(id => !companiesMap.ContainsKey(id) || string.IsNullOrWhiteSpace(companiesMap[id]))
+        // La cuenta en pesos es requisito para asentar cualquier movimiento ARS. Se mantiene el
+        // corte total (return) cuando falta, pero acotado a las empresas que efectivamente tienen
+        // movimientos en pesos en este lote (una empresa que solo opera en USD no debe frenar por
+        // no tener cuenta en pesos configurada).
+        var arsCompanyIds = transactions
+            .Where(t => t.Currency == Currencies.Ars)
+            .Select(t => t.CompanyId!.Value)
+            .Distinct()
+            .ToList();
+
+        var missingBank = arsCompanyIds
+            .Where(id => !companiesMap.TryGetValue(id, out var acc) || string.IsNullOrWhiteSpace(acc.Ars))
             .ToList();
         if (missingBank.Count > 0)
         {
@@ -76,7 +89,7 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                 .Select(c => c.Name)
                 .ToListAsync(cancellationToken);
             _logger.LogWarning(
-                "Cuenta bancaria no configurada para: {Companies}. Editá la empresa y completá el campo 'Nombre de cuenta bancaria' antes de asentar.",
+                "Cuenta bancaria en pesos no configurada para: {Companies}. Editá la empresa y completá el campo 'Nombre de cuenta bancaria' antes de asentar.",
                 string.Join(", ", names));
             return;
         }
@@ -104,11 +117,42 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                 StringComparer.Ordinal);
 
         var duplicatesSkipped = 0;
+        var skippedMissingUsdAccount = 0;
+
+        // Vouchers de cruces múltiples AFIP (un débito bancario = N VEPs): el asiento se
+        // desglosa con una línea por impuesto, así que se precargan en bloque.
+        var comboTxIds = transactions
+            .Where(t => t.ClassificationSource == ClassificationSources.AfipComboMatch)
+            .Select(t => t.Id)
+            .ToList();
+
+        var comboVouchersByTx = comboTxIds.Count == 0
+            ? new Dictionary<Guid, List<AfipVoucher>>()
+            : (await _dbContext.AfipVouchers
+                .AsNoTracking()
+                .Where(v => v.MatchedTransactionId != null && comboTxIds.Contains(v.MatchedTransactionId.Value))
+                .ToListAsync(cancellationToken))
+              .GroupBy(v => v.MatchedTransactionId!.Value)
+              .ToDictionary(g => g.Key, g => g.ToList());
 
         foreach (var tx in transactions)
         {
             JournalEntry entry;
-            var bankAccount = companiesMap[tx.CompanyId!.Value];
+            var accounts = companiesMap[tx.CompanyId!.Value];
+
+            // Contrapartida por moneda: USD → cuenta en dólares; ARS → cuenta en pesos.
+            // Si el movimiento es en dólares y la empresa no configuró su cuenta USD, se omite
+            // este movimiento (warning claro) sin frenar el resto del lote.
+            if (!TryResolveBankAccount(tx.Currency, accounts.Ars, accounts.Usd, out var bankAccount))
+            {
+                _logger.LogWarning(
+                    "Movimiento {TxId} en {Currency} omitido: la empresa {CompanyId} no tiene configurada la cuenta bancaria en esa moneda. " +
+                    "Completá la cuenta bancaria en dólares en la ficha de la empresa y reintentá.",
+                    tx.Id, tx.Currency, tx.CompanyId);
+                skippedMissingUsdAccount++;
+                continue;
+            }
+
             List<JournalEntryLine> projectedLines;
 
             if (tx.ClassificationSource == ClassificationSources.ChequeTaxSplit)
@@ -129,6 +173,36 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                     Description       = tx.Description,
                     CompanyId         = tx.CompanyId,
                     BankTransactionId = tx.Id,
+                    Currency          = tx.Currency,
+                    Lines             = projectedLines,
+                };
+            }
+            else if (tx.ClassificationSource == ClassificationSources.AfipComboMatch
+                     && comboVouchersByTx.TryGetValue(tx.Id, out var comboVouchers)
+                     && comboVouchers.Count >= 2
+                     && comboVouchers.Sum(v => v.Amount) == tx.Amount)
+            {
+                // Un pago agrupado de ARCA: una línea de débito por impuesto (VEPs con el
+                // mismo impuesto se consolidan) contra el banco por el total del movimiento.
+                projectedLines = comboVouchers
+                    .GroupBy(v => v.TaxName)
+                    .Select(g => new JournalEntryLine
+                    {
+                        Account = g.Key,
+                        Amount  = g.Sum(v => v.Amount),
+                        IsDebit = true,
+                    })
+                    .OrderByDescending(l => l.Amount)
+                    .Append(new JournalEntryLine { Account = bankAccount, Amount = tx.Amount, IsDebit = false })
+                    .ToList();
+
+                entry = new JournalEntry
+                {
+                    Date              = tx.Date,
+                    Description       = tx.Description,
+                    CompanyId         = tx.CompanyId,
+                    BankTransactionId = tx.Id,
+                    Currency          = tx.Currency,
                     Lines             = projectedLines,
                 };
             }
@@ -148,11 +222,12 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                     Description       = tx.Description,
                     CompanyId         = tx.CompanyId,
                     BankTransactionId = tx.Id,
+                    Currency          = tx.Currency,
                     Lines             = projectedLines,
                 };
             }
 
-            var signature = BuildEntrySignature(tx.CompanyId, tx.Date, tx.Description, projectedLines);
+            var signature = BuildEntrySignature(tx.CompanyId, tx.Date, tx.Description, tx.Currency, projectedLines);
             if (signatureToEntryIds.TryGetValue(signature, out var existingEntryIds)
                 && existingEntryIds.Count > 0)
             {
@@ -184,13 +259,31 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         totalGenerated += pendingEntries.Count;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Background job finished: Generated {Generated}, Skipped {Skipped}", totalGenerated, duplicatesSkipped);
+        _logger.LogInformation(
+            "Background job finished: Generated {Generated}, Skipped {Skipped}, MissingUsdAccount {MissingUsd}",
+            totalGenerated, duplicatesSkipped, skippedMissingUsdAccount);
+    }
+
+    /// <summary>Cuentas bancarias de una empresa por moneda (pesos y dólares).</summary>
+    private sealed record CompanyBankAccounts(string? Ars, string? Usd);
+
+    /// <summary>
+    /// Resuelve la cuenta bancaria de contrapartida según la moneda del movimiento: USD usa la
+    /// cuenta en dólares de la empresa; cualquier otra moneda usa la cuenta en pesos. Devuelve
+    /// <c>false</c> si la cuenta correspondiente no está configurada (para omitir el movimiento
+    /// sin frenar el lote). Método puro para poder testear la selección sin base de datos.
+    /// </summary>
+    internal static bool TryResolveBankAccount(string currency, string? arsAccount, string? usdAccount, out string account)
+    {
+        var resolved = currency == Currencies.Usd ? usdAccount : arsAccount;
+        account = string.IsNullOrWhiteSpace(resolved) ? string.Empty : resolved;
+        return account.Length > 0;
     }
 
     private static string BuildEntrySignature(JournalEntry entry)
-        => BuildEntrySignature(entry.CompanyId, entry.Date, entry.Description, entry.Lines);
+        => BuildEntrySignature(entry.CompanyId, entry.Date, entry.Description, entry.Currency, entry.Lines);
 
-    private static string BuildEntrySignature(Guid? companyId, DateOnly date, string description, IEnumerable<JournalEntryLine> lines)
+    private static string BuildEntrySignature(Guid? companyId, DateOnly date, string description, string currency, IEnumerable<JournalEntryLine> lines)
     {
         var normalizedDescription = NormalizeDescription(description);
         var lineSignature = string.Join(";", lines
@@ -205,6 +298,7 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         return string.Join("#",
             companyId?.ToString() ?? "NO_COMPANY",
             date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            currency,
             normalizedDescription,
             lineSignature);
     }
