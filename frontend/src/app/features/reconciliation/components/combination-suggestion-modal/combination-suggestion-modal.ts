@@ -1,8 +1,10 @@
 import { Component, inject, input, output, signal } from '@angular/core';
-import { DecimalPipe, DatePipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
 import { AfipService, AfipComboSuggestion } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
+import { CurrencyAmountPipe } from '../../../../shared/pipes/currency-amount.pipe';
+import { CurrencyBadge } from '../../../../shared/components/currency-badge/currency-badge';
 
 /**
  * Modal de confirmación de cruces múltiples AFIP: muestra, por cada débito bancario sin
@@ -13,7 +15,7 @@ import { ToastService } from '../../../../core/services/toast.service';
 @Component({
   selector: 'app-combination-suggestion-modal',
   standalone: true,
-  imports: [DecimalPipe, DatePipe, LucideAngularModule],
+  imports: [DatePipe, LucideAngularModule, CurrencyAmountPipe, CurrencyBadge],
   templateUrl: './combination-suggestion-modal.html',
 })
 export class CombinationSuggestionModal {

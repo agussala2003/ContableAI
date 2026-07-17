@@ -57,8 +57,9 @@
                 </p>
               </div>
             </div>
-            <span class="text-sm font-bold tabular-nums text-slate-800 dark:text-slate-100 shrink-0">
-              ${{ s.amount | number:'1.2-2' }}
+            <span class="text-sm font-bold tabular-nums text-slate-800 dark:text-slate-100 shrink-0 inline-flex items-center gap-1">
+              <app-currency-badge [currency]="s.currency" />
+              {{ s.amount | currencyAmount:s.currency }}
             </span>
           </div>
 
@@ -98,7 +99,7 @@
                         <span class="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{{ v.date | date:'dd/MM/yy' }}</span>
                       </div>
                       <span class="text-xs font-medium tabular-nums text-slate-600 dark:text-slate-300 shrink-0">
-                        ${{ v.amount | number:'1.2-2' }}
+                        {{ v.amount | currencyAmount }}
                       </span>
                     </div>
                   }
@@ -109,7 +110,7 @@
                       Suma de {{ alt.vouchers.length }} VEPs
                     </span>
                     <span class="inline-flex items-center gap-1 text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400 shrink-0">
-                      ${{ sumOf(s, altIdx) | number:'1.2-2' }}
+                      {{ sumOf(s, altIdx) | currencyAmount }}
                       <lucide-icon name="circle-check" class="w-3.5 h-3.5"></lucide-icon>
                     </span>
                   </div>

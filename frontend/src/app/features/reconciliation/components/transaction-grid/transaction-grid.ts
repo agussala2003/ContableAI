@@ -1,5 +1,5 @@
 import { Component, input, output, signal, computed, effect, untracked, inject, HostListener } from '@angular/core';
-import { DecimalPipe, NgClass } from '@angular/common';
+import { NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { BankTransaction } from '../../../../core/services/transaction';
@@ -7,11 +7,13 @@ import { ChartOfAccountService } from '../../../../core/services/chart-of-accoun
 import { ToastService } from '../../../../core/services/toast.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { AccountCombobox } from '../../../../shared/components/account-combobox/account-combobox';
+import { CurrencyAmountPipe } from '../../../../shared/pipes/currency-amount.pipe';
+import { CurrencyBadge } from '../../../../shared/components/currency-badge/currency-badge';
 
 @Component({
   selector: 'app-transaction-grid',
   standalone: true,
-  imports: [DecimalPipe, FormsModule, NgClass, LucideAngularModule, AccountCombobox],
+  imports: [FormsModule, NgClass, LucideAngularModule, AccountCombobox, CurrencyAmountPipe, CurrencyBadge],
   templateUrl: './transaction-grid.html',
   styleUrl: './transaction-grid.scss',
 })

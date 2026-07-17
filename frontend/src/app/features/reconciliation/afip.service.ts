@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../../core/config/config.service';
-import { SkippedDuplicate } from '../../core/services/transaction';
+import { SkippedDuplicate, Currency } from '../../core/services/transaction';
 
 export interface AfipVoucher {
   id: string;
@@ -36,6 +36,8 @@ export interface AfipComboSuggestion {
   date: string;
   description: string;
   amount: number;
+  /** Siempre ARS: los combos solo se ofrecen para movimientos en pesos (guard backend). */
+  currency?: Currency;
   alternatives: AfipComboAlternative[];
 }
 

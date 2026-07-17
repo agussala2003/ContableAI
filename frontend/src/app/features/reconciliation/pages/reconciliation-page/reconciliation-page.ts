@@ -17,6 +17,8 @@ import { DuplicatesModal } from '../../components/duplicates-modal/duplicates-mo
 import { OnboardingModal } from '../../../../core/components/onboarding-modal/onboarding-modal';
 import { RuleService, SaveRuleRequest, AccountingRule } from '../../../../core/services/rule.service';
 import { SkippedDuplicate } from '../../../../core/services/transaction';
+import { CurrencyAmountPipe } from '../../../../shared/pipes/currency-amount.pipe';
+import { CurrencyBadge } from '../../../../shared/components/currency-badge/currency-badge';
 import { KeyboardService } from '../../../../core/services/keyboard.service';
 import { AfipService } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -59,6 +61,8 @@ const DEMO_CSV = `Fecha,Referencia,Descripcion,Numero,Importe
     DuplicatesModal,
     OnboardingModal,
     LucideAngularModule,
+    CurrencyAmountPipe,
+    CurrencyBadge,
   ],
   templateUrl: './reconciliation-page.html',
 })

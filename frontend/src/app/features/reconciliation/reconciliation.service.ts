@@ -1,7 +1,7 @@
 import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer, switchMap, takeWhile } from 'rxjs';
-import { BankTransaction, Transaction, UploadResponse, SkippedDuplicate } from '../../core/services/transaction';
+import { BankTransaction, Transaction, UploadResponse, SkippedDuplicate, CurrencyTotals } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
 import { CompanyService } from '../../core/services/company.service';
@@ -31,7 +31,7 @@ export class ReconciliationService {
   // ── Private writable state ─────────────────────────────────────────────
   private _transactions     = signal<BankTransaction[]>([]);
   private _filters          = signal<ReconciliationFilters>({
-    month: null, year: null, search: '', account: '', direction: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact'
+    month: null, year: null, search: '', account: '', direction: null, currency: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact'
   });
   private _pagination       = signal<ReconciliationPagination>({
     page: 1, pageSize: 10, totalCount: 0, totalPages: 0,
@@ -42,6 +42,7 @@ export class ReconciliationService {
   private _totalEgresosFiltered   = signal(0);
   private _totalIngresosAll       = signal(0);
   private _totalEgresosAll        = signal(0);
+  private _currencyTotals         = signal<CurrencyTotals[]>([]);
   private _availableAccounts      = signal<string[]>([]);
   private _availableMonths        = signal<number[]>([]);
   private _availableYears         = signal<number[]>([]);
@@ -62,6 +63,9 @@ export class ReconciliationService {
   readonly totalEgresos     = this._totalEgresosFiltered.asReadonly();
   readonly totalIngresosAll = this._totalIngresosAll.asReadonly();
   readonly totalEgresosAll  = this._totalEgresosAll.asReadonly();
+  readonly currencyTotals   = this._currencyTotals.asReadonly();
+  /** True cuando el conjunto filtrado tiene más de una moneda: la UI separa totales por moneda. */
+  readonly isMultiCurrency  = computed(() => this._currencyTotals().length > 1);
   readonly availableAccounts = this._availableAccounts.asReadonly();
   readonly availableMonths   = this._availableMonths.asReadonly();
   readonly availableYears    = this._availableYears.asReadonly();
@@ -76,7 +80,7 @@ export class ReconciliationService {
   );
   readonly hasActiveFilters = computed(() => {
     const f = this._filters();
-    return !!(f.search || f.month || f.year || f.account || f.direction || f.exactAmount || f.minAmount || f.maxAmount);
+    return !!(f.search || f.month || f.year || f.account || f.direction || f.currency || f.exactAmount || f.minAmount || f.maxAmount);
   });
   readonly eligibleIds = computed(() =>
     this._transactions()
@@ -141,6 +145,7 @@ export class ReconciliationService {
       search:       f.search   || undefined,
       account:      f.account  || undefined,
       direction:    f.direction ?? undefined,
+      currency:     f.currency  ?? undefined,
       sortBy:       f.sortBy   ?? undefined,
       sortDir:      f.sortDir  ?? undefined,
       strictSearch: f.strictSearch || undefined,
@@ -161,6 +166,7 @@ export class ReconciliationService {
         this._totalEgresosFiltered.set(result.totalEgresosFiltered ?? 0);
         this._totalIngresosAll.set(result.totalIngresosAll ?? 0);
         this._totalEgresosAll.set(result.totalEgresosAll ?? 0);
+        this._currencyTotals.set(result.currencyTotals ?? []);
         this._availableAccounts.set(result.availableAccounts ?? []);
         this._availableMonths.set(result.availableMonths ?? []);
         this._availableYears.set(result.availableYears ?? []);
@@ -191,7 +197,7 @@ export class ReconciliationService {
   }
 
   clearFilters(): void {
-    this._filters.update(f => ({ ...f, search: '', account: '', direction: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
+    this._filters.update(f => ({ ...f, search: '', account: '', direction: null, currency: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
     this._pagination.update(p => ({ ...p, page: 1 }));
     this.loadData();
   }
@@ -367,10 +373,24 @@ export class ReconciliationService {
             }
           }
           if (response.parseErrors?.length) {
-            const count = response.parseErrors.length;
-            this.toast.warning(
-              `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
-            );
+            // Rechazo por extracto multi-cuenta (mezcla de monedas): mostrar el mensaje
+            // específico del backend en lugar del genérico de OCR.
+            const mixedCurrencyErrors = response.parseErrors.filter(e => /m[aá]s de una moneda/i.test(e));
+            const otherErrors = response.parseErrors.filter(e => !/m[aá]s de una moneda/i.test(e));
+
+            if (mixedCurrencyErrors.length) {
+              const n = mixedCurrencyErrors.length;
+              this.toast.error(
+                `${n} extracto${n > 1 ? 's contienen' : ' contiene'} cuentas en más de una moneda (pesos y dólares). ` +
+                `Subí el extracto de cada cuenta por separado.`
+              );
+            }
+            if (otherErrors.length) {
+              const count = otherErrors.length;
+              this.toast.warning(
+                `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
+              );
+            }
           }
           if (reapplied) {
             this.toast.success(`Se aplicaron tus reglas actualizadas a ${response.reappliedToExisting} transacciones existentes.`);
@@ -424,6 +444,7 @@ export class ReconciliationService {
         this._totalEgresosFiltered.set(0);
         this._totalIngresosAll.set(0);
         this._totalEgresosAll.set(0);
+        this._currencyTotals.set([]);
         this._availableAccounts.set([]);
         this._availableMonths.set([]);
         this._availableYears.set([]);

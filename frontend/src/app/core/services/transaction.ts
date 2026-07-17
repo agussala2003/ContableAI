@@ -3,12 +3,15 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
 
+export type Currency = 'ARS' | 'USD';
+
 export interface BankTransaction {
   id: string;
   date: string;
   description: string;
   externalId: string | null;
   amount: number;
+  currency: Currency;
   type: number; // 0 = Debit, 1 = Credit
   assignedAccount: string;
   needsTaxMatching: boolean;
@@ -21,6 +24,12 @@ export interface BankTransaction {
   journalEntryId: string | null;
 }
 
+export interface CurrencyTotals {
+  currency: Currency;
+  ingresos: number;
+  egresos: number;
+}
+
 export interface PagedResult<T> {
   items: T[];
   totalCount: number;
@@ -31,6 +40,7 @@ export interface PagedResult<T> {
   totalEgresosFiltered: number;
   totalIngresosAll: number;
   totalEgresosAll: number;
+  currencyTotals?: CurrencyTotals[];
   availableAccounts?: string[];
   availableMonths?: number[];
   availableYears?: number[];
@@ -49,6 +59,7 @@ export interface TransactionQueryParams {
   minAmount?:    number;
   maxAmount?:    number;
   exactAmount?:  number;
+  currency?:     Currency;
   page?:         number;
   pageSize?:     number;
 }
@@ -57,6 +68,7 @@ export interface SkippedDuplicate {
   date: string;
   amount: number;
   description: string;
+  currency?: Currency;
 }
 
 export interface PerFileResult {
@@ -135,6 +147,7 @@ export class Transaction {
     if (params.minAmount !== undefined)      httpParams = httpParams.set('minAmount', params.minAmount.toString());
     if (params.maxAmount !== undefined)      httpParams = httpParams.set('maxAmount', params.maxAmount.toString());
     if (params.exactAmount !== undefined)    httpParams = httpParams.set('exactAmount', params.exactAmount.toString());
+    if (params.currency)                     httpParams = httpParams.set('currency', params.currency);
     if (params.page)                         httpParams = httpParams.set('page', params.page.toString());
     if (params.pageSize)                     httpParams = httpParams.set('pageSize', params.pageSize.toString());
     return this.http.get<PagedResult<BankTransaction>>(this.apiUrl, { params: httpParams });

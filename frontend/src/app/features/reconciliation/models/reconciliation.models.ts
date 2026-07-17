@@ -1,9 +1,12 @@
+import { Currency } from '../../../core/services/transaction';
+
 export interface ReconciliationFilters {
   month: number | null;
   year: number | null;
   search: string;
   account: string;
   direction: 'debit' | 'credit' | null;
+  currency: Currency | null;
   sortBy: string | null;
   sortDir: 'asc' | 'desc' | null;
   strictSearch: boolean;
