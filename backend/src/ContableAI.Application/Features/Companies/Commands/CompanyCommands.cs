@@ -9,7 +9,8 @@ public record CreateCompanyCommand(
     string  Cuit,
     string? BusinessType,
     string? BankAccountName,
-    string  StudioTenantId)
+    string  StudioTenantId,
+    string? UsdBankAccountName = null)
     : IRequest<Result<CompanyResponse>>;
 
 // ── Update Company ─────────────────────────────────────────────────────────────
@@ -18,7 +19,8 @@ public record UpdateCompanyCommand(
     string? Name,
     string? BusinessType,
     bool?   SplitChequeTax,
-    string? BankAccountName)
+    string? BankAccountName,
+    string? UsdBankAccountName = null)
     : IRequest<Result<CompanyResponse>>;
 
 // ── Delete Company (soft-delete) ───────────────────────────────────────────────
@@ -54,7 +56,8 @@ public record CompanyResponse(
     string  BusinessType,
     bool    SplitChequeTax,
     string? BankAccountName,
-    string  StudioTenantId);
+    string  StudioTenantId,
+    string? UsdBankAccountName = null);
 
 public record RuleResponse(
     Guid    Id,

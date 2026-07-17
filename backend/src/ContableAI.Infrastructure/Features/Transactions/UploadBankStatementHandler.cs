@@ -244,7 +244,7 @@ public sealed class UploadBankStatementHandler
                     {
                         fileDups++;
                         totalDuplicates++;
-                        allSkippedDuplicates.Add(new SkippedDuplicateItem(tx.Date, tx.Amount, tx.Description));
+                        allSkippedDuplicates.Add(new SkippedDuplicateItem(tx.Date, tx.Amount, tx.Description, tx.Currency));
                     }
                     continue;
                 }

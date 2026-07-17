@@ -129,11 +129,12 @@ public sealed class CreateCompanyHandler
 
         var company = new Company
         {
-            Name            = cmd.Name,
-            Cuit            = cmd.Cuit,
-            BusinessType    = cmd.BusinessType ?? "GENERAL",
-            BankAccountName = cmd.BankAccountName ?? string.Empty,
-            StudioTenantId  = cmd.StudioTenantId,
+            Name               = cmd.Name,
+            Cuit               = cmd.Cuit,
+            BusinessType       = cmd.BusinessType ?? "GENERAL",
+            BankAccountName    = cmd.BankAccountName ?? string.Empty,
+            UsdBankAccountName = string.IsNullOrWhiteSpace(cmd.UsdBankAccountName) ? null : cmd.UsdBankAccountName,
+            StudioTenantId     = cmd.StudioTenantId,
         };
 
         _db.Companies.Add(company);
@@ -159,6 +160,9 @@ public sealed class UpdateCompanyHandler
         if (!string.IsNullOrWhiteSpace(cmd.BusinessType)) company.BusinessType = cmd.BusinessType;
         if (cmd.SplitChequeTax.HasValue)                  company.SplitChequeTax = cmd.SplitChequeTax.Value;
         if (cmd.BankAccountName is not null)               company.BankAccountName = cmd.BankAccountName;
+        // Cuenta USD: se guarda null cuando viene vacía (la empresa dejó de operar en dólares).
+        if (cmd.UsdBankAccountName is not null)
+            company.UsdBankAccountName = string.IsNullOrWhiteSpace(cmd.UsdBankAccountName) ? null : cmd.UsdBankAccountName;
 
         await _db.SaveChangesAsync(ct);
         return Result<CompanyResponse>.Success(Projections.ToResponse(company));
@@ -271,7 +275,7 @@ public sealed class CreateCompanyRuleHandler
 file static class Projections
 {
     internal static CompanyResponse ToResponse(Company c) => new(
-        c.Id, c.Name, c.Cuit, c.BusinessType, c.SplitChequeTax, c.BankAccountName, c.StudioTenantId);
+        c.Id, c.Name, c.Cuit, c.BusinessType, c.SplitChequeTax, c.BankAccountName, c.StudioTenantId, c.UsdBankAccountName);
 
     internal static RuleResponse ToRuleResponse(AccountingRule r) => new(
         r.Id, r.CompanyId, r.StudioTenantId, r.Keyword, r.TargetAccount, r.Direction?.ToString(), r.Priority, r.RequiresTaxMatching, r.IsActive);

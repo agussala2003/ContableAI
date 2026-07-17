@@ -10,7 +10,7 @@ public sealed record FileData(byte[] Content, string FileName, long Length);
 public sealed record FileUploadResult(string FileName, int Processed, int DuplicatesSkipped);
 
 /// <summary>Details of a single transaction that was skipped as a duplicate.</summary>
-public sealed record SkippedDuplicateItem(DateOnly Date, decimal Amount, string Description);
+public sealed record SkippedDuplicateItem(DateOnly Date, decimal Amount, string Description, string Currency);
 
 /// <summary>
 /// Command to parse, classify, deduplicate and persist one or more bank statement files.

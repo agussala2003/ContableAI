@@ -1,7 +1,7 @@
 record UpdateAccountRequest(string AssignedAccount);
 record BulkUpdateRequest(List<Guid> Ids, string AssignedAccount, Guid? RuleId = null);
-record CreateCompanyRequest(string Name, string Cuit, string? BusinessType, string? BankAccountName);
-record UpdateCompanyRequest(string? Name, string? BusinessType, bool? SplitChequeTax, string? BankAccountName);
+record CreateCompanyRequest(string Name, string Cuit, string? BusinessType, string? BankAccountName, string? UsdBankAccountName = null);
+record UpdateCompanyRequest(string? Name, string? BusinessType, bool? SplitChequeTax, string? BankAccountName, string? UsdBankAccountName = null);
 record CreateRuleRequest(
     string Keyword,
     string TargetAccount,
