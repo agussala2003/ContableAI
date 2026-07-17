@@ -31,4 +31,12 @@ public static class ClassificationSources
     /// El generador de asientos creará dos líneas (50% Débitos / 50% Créditos Bancarios).
     /// </summary>
     public const string ChequeTaxSplit = "ChequeTaxSplit";
+
+    /// <summary>
+    /// Cruce múltiple AFIP confirmado por el usuario: un único débito bancario corresponde a
+    /// la suma exacta de dos o más VEPs (ej. IVA + IIBB pagados juntos). El generador de
+    /// asientos creará una línea de débito por cada impuesto contra el banco por el total.
+    /// Nunca se asigna automáticamente: siempre requiere confirmación explícita en la UI.
+    /// </summary>
+    public const string AfipComboMatch = "AfipComboMatch";
 }

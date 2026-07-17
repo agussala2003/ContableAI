@@ -12,6 +12,19 @@
       </p>
     </div>
 
+    @if (comboSuggestions().length > 0) {
+      <button
+        (click)="showSuggestionsModal.set(true)"
+        title="Ver sugerencias de cruce múltiple (un movimiento = varios VEPs)"
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold
+               bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300
+               border border-violet-200 dark:border-violet-500/30
+               hover:bg-violet-100 dark:hover:bg-violet-500/20 transition-colors shrink-0">
+        <lucide-icon name="wand-sparkles" class="w-3 h-3"></lucide-icon>
+        {{ comboSuggestions().length }} cruce{{ comboSuggestions().length > 1 ? 's' : '' }} múltiple{{ comboSuggestions().length > 1 ? 's' : '' }}
+      </button>
+    }
+
     @if (pendingCount() > 0) {
       <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold
                    bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300
@@ -187,3 +200,12 @@
   }
 
 </div>
+
+@if (showSuggestionsModal() && companyId()) {
+  <app-combination-suggestion-modal
+    [companyId]="companyId()!"
+    [suggestions]="comboSuggestions()"
+    (applied)="onCombinationApplied()"
+    (close)="onSuggestionsModalClosed()"
+  />
+}

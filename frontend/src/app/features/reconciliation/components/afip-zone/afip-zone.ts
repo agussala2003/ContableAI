@@ -1,15 +1,16 @@
 import { Component, inject, input, output, signal, effect, computed } from '@angular/core';
 import { DecimalPipe, DatePipe } from '@angular/common';
-import { AfipService, AfipVoucher } from '../../afip.service';
+import { AfipService, AfipVoucher, AfipComboSuggestion } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { SkippedDuplicate } from '../../../../core/services/transaction';
 import { LucideAngularModule } from 'lucide-angular';
+import { CombinationSuggestionModal } from '../combination-suggestion-modal/combination-suggestion-modal';
 
 @Component({
   selector: 'app-afip-zone',
   standalone: true,
   templateUrl: './afip-zone.html',
-  imports: [LucideAngularModule, DecimalPipe, DatePipe],
+  imports: [LucideAngularModule, DecimalPipe, DatePipe, CombinationSuggestionModal],
 })
 export class AfipZone {
 
@@ -19,6 +20,8 @@ export class AfipZone {
   companyId         = input<string | undefined>(undefined);
   uploadComplete    = output<number>();
   skippedDuplicates = output<SkippedDuplicate[]>();
+  /** Emitido al aplicar un cruce múltiple: el padre debe refrescar la grilla de movimientos. */
+  combinationApplied = output<void>();
 
   isLoading     = signal(false);
   isLoadingList = signal(false);
@@ -26,6 +29,9 @@ export class AfipZone {
   vouchers      = signal<AfipVoucher[]>([]);
   selectedFiles = signal<File[]>([]);
   isDragging    = signal(false);
+
+  comboSuggestions     = signal<AfipComboSuggestion[]>([]);
+  showSuggestionsModal = signal(false);
 
   pendingCount = computed(() => this.vouchers().filter(v => !v.isMatched).length);
   matchedCount = computed(() => this.vouchers().filter(v => v.isMatched).length);
@@ -43,6 +49,24 @@ export class AfipZone {
       next: (v) => { this.vouchers.set(v); this.isLoadingList.set(false); },
       error: () => this.isLoadingList.set(false),
     });
+    this.loadComboSuggestions(companyId);
+  }
+
+  loadComboSuggestions(companyId: string) {
+    this.afipService.getCombinationSuggestions(companyId).subscribe({
+      next: (s) => this.comboSuggestions.set(s),
+      error: () => this.comboSuggestions.set([]),
+    });
+  }
+
+  onCombinationApplied() {
+    const id = this.companyId();
+    if (id) this.loadVouchers(id);
+    this.combinationApplied.emit();
+  }
+
+  onSuggestionsModalClosed() {
+    this.showSuggestionsModal.set(false);
   }
 
   onFileSelected(event: Event) {

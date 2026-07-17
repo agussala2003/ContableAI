@@ -2,6 +2,7 @@ using ContableAI.Application.Common;
 using ContableAI.Domain.Entities;
 using Hangfire;
 using Hangfire.PostgreSql;
+using ContableAI.Infrastructure.Features.Afip;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Options;
 using ContableAI.Infrastructure.Services;
@@ -74,6 +75,7 @@ public static class ServiceExtensions
         services.AddSingleton<BankParserFactory>();
         services.AddSingleton<IBankParserService>(sp => sp.GetRequiredService<BankParserFactory>());
         services.AddScoped<IAfipParserService, PdfAfipParserService>();
+        services.AddScoped<AfipCombinationService>();
         services.AddScoped<IExportService, ExcelExportService>();
 
         // ── Canonicalización de cuentas (evita duplicados por casing) ─────────

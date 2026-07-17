@@ -12,4 +12,5 @@ record CreateRuleRequest(
 record CreateChartOfAccountRequest(string Name, string? ExternalCode = null);
 record UpdateChartOfAccountRequest(string? ExternalCode);
 record GenerateJournalEntriesRequest(List<Guid> TransactionIds);
+record ApplyAfipCombinationRequest(Guid TransactionId, List<Guid> VoucherIds);
 record ClosePeriodRequest(int Year, int Month);

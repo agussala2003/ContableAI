@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Infrastructure.Features.Afip;
 using ContableAI.Infrastructure.Persistence;
@@ -123,6 +124,104 @@ public static class AfipEndpoints
         .WithSummary("Listar comprobantes VEP de AFIP para una empresa.")
         .WithDescription("Retorna todos los comprobantes AFIP cargados para la empresa con su estado de cruce (isMatched).")
         .Produces(200);
+
+        // -- GET /api/companies/{companyId}/afip/combination-suggestions --
+        // Calcula (sin persistir ni aplicar nada) las combinaciones de VEPs pendientes cuya
+        // sumatoria coincide exactamente con débitos AFIP sin conciliar.
+        app.MapGet("/api/companies/{companyId:guid}/afip/combination-suggestions", async (
+            Guid companyId,
+            [FromServices] AfipCombinationService combinationService,
+            CancellationToken ct) =>
+        {
+            var suggestions = await combinationService.ComputeSuggestionsAsync(companyId, ct);
+            return Results.Ok(suggestions);
+        })
+        .WithName("GetAfipCombinationSuggestions")
+        .WithTags("AFIP")
+        .WithSummary("Sugerir combinaciones de VEPs que suman el importe de un movimiento bancario.")
+        .WithDescription("Un débito a AFIP puede corresponder al pago agrupado de 2+ VEPs (ej. IVA + IIBB). Devuelve, por cada movimiento pendiente de cruce, las combinaciones de VEPs pendientes cuya sumatoria coincide exactamente. Solo sugiere: la aplicación requiere confirmación explícita vía apply-combination.")
+        .Produces(200);
+
+        // -- POST /api/companies/{companyId}/afip/apply-combination --
+        // Aplica una combinación PREVIAMENTE CONFIRMADA POR EL USUARIO: nunca se llama de
+        // forma automática. Revalida todo en servidor antes de asentar.
+        app.MapPost("/api/companies/{companyId:guid}/afip/apply-combination", async (
+            Guid companyId,
+            ApplyAfipCombinationRequest request,
+            [FromServices] ContableAIDbContext dbContext,
+            [FromServices] IAccountNameResolver accountResolver,
+            CancellationToken ct) =>
+        {
+            var voucherIds = (request.VoucherIds ?? []).Distinct().ToList();
+            if (voucherIds.Count < 2)
+                return Results.BadRequest("Una combinación requiere al menos 2 VEPs (el cruce 1:1 es automático).");
+
+            var tx = await dbContext.BankTransactions
+                .FirstOrDefaultAsync(t => t.Id == request.TransactionId && t.CompanyId == companyId, ct);
+            if (tx == null)
+                return Results.NotFound("Movimiento bancario no encontrado para esta empresa.");
+            if (tx.JournalEntryId != null)
+                return Results.Conflict("El movimiento ya fue asentado; no se puede aplicar la combinación.");
+
+            var vouchers = await dbContext.AfipVouchers
+                .Where(v => voucherIds.Contains(v.Id) && v.CompanyId == companyId)
+                .ToListAsync(ct);
+            if (vouchers.Count != voucherIds.Count)
+                return Results.NotFound("Uno o más VEPs no existen para esta empresa.");
+            if (vouchers.Any(v => v.IsMatched))
+                return Results.Conflict("Uno o más VEPs ya fueron conciliados con otro movimiento.");
+
+            var sum = vouchers.Sum(v => v.Amount);
+            if (sum != tx.Amount)
+                return Results.BadRequest(
+                    $"La sumatoria de los VEPs ({sum:0.00}) no coincide con el importe del movimiento ({tx.Amount:0.00}).");
+
+            // Canonicalizar los nombres de impuesto contra el plan de cuentas del estudio
+            // (mismo criterio que el cruce 1:1) y persistirlos: el generador de asientos usa
+            // voucher.TaxName como cuenta de cada línea del desglose.
+            var studioTenantId = await dbContext.Companies
+                .Where(c => c.Id == companyId)
+                .Select(c => c.StudioTenantId)
+                .FirstOrDefaultAsync(ct);
+            Guid? studioGuid = Guid.TryParse(studioTenantId, out var sg) ? sg : null;
+            var accountMap = await accountResolver.BuildMapAsync(studioGuid, ct);
+
+            foreach (var voucher in vouchers)
+            {
+                voucher.TaxName = accountMap.Resolve(voucher.TaxName);
+                voucher.IsMatched = true;
+                voucher.MatchedTransactionId = tx.Id;
+            }
+
+            // Cuenta visible en la grilla: los impuestos del desglose (el asiento real se
+            // genera con una línea por VEP vía ClassificationSources.AfipComboMatch).
+            var accountLabel = string.Join(" + ", vouchers
+                .GroupBy(v => v.TaxName)
+                .OrderByDescending(g => g.Sum(v => v.Amount))
+                .Select(g => g.Key));
+
+            tx.Assign(accountLabel, null, false, ClassificationSources.AfipComboMatch);
+            tx.Notes = $"Cruce múltiple AFIP ({vouchers.Count} VEPs): " + string.Join(" + ", vouchers
+                .OrderByDescending(v => v.Amount)
+                .Select(v => $"{v.TaxName} ${v.Amount:N2}"));
+
+            await dbContext.SaveChangesAsync(ct);
+
+            return Results.Ok(new
+            {
+                transactionId  = tx.Id,
+                assignedAccount = accountLabel,
+                vouchersMatched = vouchers.Count,
+            });
+        })
+        .WithName("ApplyAfipCombination")
+        .WithTags("AFIP")
+        .WithSummary("Aplicar una combinación de VEPs confirmada por el usuario a un movimiento bancario.")
+        .WithDescription("Marca los VEPs como conciliados contra el movimiento y clasifica la transacción como AfipComboMatch (el asiento se genera desglosado, una línea por impuesto). Valida en servidor que la sumatoria coincida exactamente y que nada haya sido conciliado en el medio.")
+        .Produces(200)
+        .Produces(400)
+        .Produces(404)
+        .Produces(409);
 
         // -- POST /api/companies/{companyId}/afip/rematch --
         // Re-dispara el matching job manualmente (útil tras subir nuevos extractos).

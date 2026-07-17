@@ -105,6 +105,22 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
 
         var duplicatesSkipped = 0;
 
+        // Vouchers de cruces múltiples AFIP (un débito bancario = N VEPs): el asiento se
+        // desglosa con una línea por impuesto, así que se precargan en bloque.
+        var comboTxIds = transactions
+            .Where(t => t.ClassificationSource == ClassificationSources.AfipComboMatch)
+            .Select(t => t.Id)
+            .ToList();
+
+        var comboVouchersByTx = comboTxIds.Count == 0
+            ? new Dictionary<Guid, List<AfipVoucher>>()
+            : (await _dbContext.AfipVouchers
+                .AsNoTracking()
+                .Where(v => v.MatchedTransactionId != null && comboTxIds.Contains(v.MatchedTransactionId.Value))
+                .ToListAsync(cancellationToken))
+              .GroupBy(v => v.MatchedTransactionId!.Value)
+              .ToDictionary(g => g.Key, g => g.ToList());
+
         foreach (var tx in transactions)
         {
             JournalEntry entry;
@@ -122,6 +138,34 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                     new JournalEntryLine { Account = "Impuesto a los Créditos Bancarios", Amount = half2,     IsDebit = true  },
                     new JournalEntryLine { Account = bankAccount,                          Amount = tx.Amount, IsDebit = false },
                 ];
+
+                entry = new JournalEntry
+                {
+                    Date              = tx.Date,
+                    Description       = tx.Description,
+                    CompanyId         = tx.CompanyId,
+                    BankTransactionId = tx.Id,
+                    Lines             = projectedLines,
+                };
+            }
+            else if (tx.ClassificationSource == ClassificationSources.AfipComboMatch
+                     && comboVouchersByTx.TryGetValue(tx.Id, out var comboVouchers)
+                     && comboVouchers.Count >= 2
+                     && comboVouchers.Sum(v => v.Amount) == tx.Amount)
+            {
+                // Un pago agrupado de ARCA: una línea de débito por impuesto (VEPs con el
+                // mismo impuesto se consolidan) contra el banco por el total del movimiento.
+                projectedLines = comboVouchers
+                    .GroupBy(v => v.TaxName)
+                    .Select(g => new JournalEntryLine
+                    {
+                        Account = g.Key,
+                        Amount  = g.Sum(v => v.Amount),
+                        IsDebit = true,
+                    })
+                    .OrderByDescending(l => l.Amount)
+                    .Append(new JournalEntryLine { Account = bankAccount, Amount = tx.Amount, IsDebit = false })
+                    .ToList();
 
                 entry = new JournalEntry
                 {
