@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ClosedXML.Excel;
@@ -175,31 +176,72 @@ public class ExcelExportService : IExportService
         var periodLabel = (month.HasValue && year.HasValue) ? $"{GetMonthName(month.Value)} {year}"
                         : year.HasValue ? $"{year}" : "Todos los períodos";
 
-        // ── Sheet 1: Formulario de Asiento (consolidated by account) ─────────
-        var ws1 = wb.Worksheets.Add("Formulario de Asiento");
+        var balanceSet = new HashSet<string>(
+            (balanceAccounts ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Separar por moneda: los totales de ARS y USD nunca se suman en la misma hoja. Con una
+        // sola moneda se conservan los nombres de hoja actuales (sin ruido para las cuentas que
+        // operan 100% en pesos); con ambas, se genera un par de hojas por moneda.
+        var byCurrency = entryList
+            .GroupBy(e => string.IsNullOrWhiteSpace(e.Currency) ? Currencies.Ars : e.Currency)
+            .OrderBy(g => g.Key == Currencies.Ars ? 0 : 1)
+            .ThenBy(g => g.Key, StringComparer.Ordinal)
+            .ToList();
+
+        bool multi = byCurrency.Count > 1;
+
+        if (byCurrency.Count == 0)
+        {
+            BuildFormularioSheet(wb, "Formulario de Asiento", entryList, companyName, periodLabel, balanceSet, externalCodes);
+            BuildDetalleSheet(wb, $"Detalle {sheetLabel}", entryList, companyName, periodLabel, externalCodes);
+        }
+        else
+        {
+            foreach (var group in byCurrency)
+            {
+                var suffix       = multi ? $" {group.Key}" : string.Empty;
+                var groupEntries = group.OrderBy(e => e.Date).ToList();
+                var groupPeriod  = multi ? $"{periodLabel} — {group.Key}" : periodLabel;
+                BuildFormularioSheet(wb, $"Formulario de Asiento{suffix}", groupEntries, companyName, groupPeriod, balanceSet, externalCodes);
+                BuildDetalleSheet(wb, $"Detalle {sheetLabel}{suffix}", groupEntries, companyName, groupPeriod, externalCodes);
+            }
+        }
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    // ── Hoja "Formulario de Asiento" (consolidado por cuenta) para un conjunto de asientos ──
+    private static void BuildFormularioSheet(
+        XLWorkbook wb, string sheetName, List<JournalEntry> entries, string companyName,
+        string periodLabel, HashSet<string> balanceSet, IReadOnlyDictionary<string, string>? externalCodes)
+    {
+        var ws = wb.Worksheets.Add(sheetName);
 
         // Title
-        ws1.Range("A1:C1").Merge();
-        ws1.Cell("A1").Value = "FORMULARIO DE ASIENTO";
-        ws1.Cell("A1").Style.Font.Bold = true;
-        ws1.Cell("A1").Style.Font.FontSize = 13;
-        ws1.Cell("A1").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-        ws1.Cell("A1").Style.Fill.BackgroundColor = XLColor.FromArgb(15, 118, 110);
-        ws1.Cell("A1").Style.Font.FontColor = XLColor.White;
+        ws.Range("A1:C1").Merge();
+        ws.Cell("A1").Value = "FORMULARIO DE ASIENTO";
+        ws.Cell("A1").Style.Font.Bold = true;
+        ws.Cell("A1").Style.Font.FontSize = 13;
+        ws.Cell("A1").Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        ws.Cell("A1").Style.Fill.BackgroundColor = XLColor.FromArgb(15, 118, 110);
+        ws.Cell("A1").Style.Font.FontColor = XLColor.White;
 
         // Company & period meta
-        ws1.Cell("A2").Value = "EMPRESA:";  ws1.Cell("A2").Style.Font.Bold = true;
-        ws1.Cell("B2").Value = companyName.ToUpper();
-        ws1.Cell("A3").Value = "PERÍODO:";  ws1.Cell("A3").Style.Font.Bold = true;
-        ws1.Cell("B3").Value = periodLabel.ToUpper();
-        ws1.Cell("A4").Value = $"ASIENTOS:"; ws1.Cell("A4").Style.Font.Bold = true;
-        ws1.Cell("B4").Value = entryList.Count;
+        ws.Cell("A2").Value = "EMPRESA:";  ws.Cell("A2").Style.Font.Bold = true;
+        ws.Cell("B2").Value = companyName.ToUpper();
+        ws.Cell("A3").Value = "PERÍODO:";  ws.Cell("A3").Style.Font.Bold = true;
+        ws.Cell("B3").Value = periodLabel.ToUpper();
+        ws.Cell("A4").Value = $"ASIENTOS:"; ws.Cell("A4").Style.Font.Bold = true;
+        ws.Cell("B4").Value = entries.Count;
 
         // Column headers at row 6: A=Descripción, B=Debe, C=Haber, D=Cód.Externo
         var hdr1 = new[] { "Descripción", "Debe", "Haber", "Cód. Externo" };
         for (int i = 0; i < hdr1.Length; i++)
         {
-            var c = ws1.Cell(6, i + 1);
+            var c = ws.Cell(6, i + 1);
             c.Value = hdr1[i];
             c.Style.Font.Bold = true;
             c.Style.Fill.BackgroundColor = XLColor.FromArgb(15, 118, 110);
@@ -208,12 +250,8 @@ public class ExcelExportService : IExportService
             c.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
         }
 
-        var balanceSet = new HashSet<string>(
-            (balanceAccounts ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()),
-            StringComparer.OrdinalIgnoreCase);
-
         // Group by account, but split configured balance accounts into exclusive Debe/Haber rows.
-        var groups = entryList
+        var groups = entries
             .SelectMany(e => e.Lines.Select(l =>
             {
                 var account = l.Account.Trim();
@@ -245,58 +283,63 @@ public class ExcelExportService : IExportService
             // Strip balance suffixes to look up the base account name
             var baseName = g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty).Trim();
             var extCode  = externalCodes?.GetValueOrDefault(baseName) ?? string.Empty;
-            ws1.Cell(row1, 1).Value = g.Account;
-            if (g.Debe  > 0) { ws1.Cell(row1, 2).Value = g.Debe;  ws1.Cell(row1, 2).Style.NumberFormat.Format = "#,##0.00"; ws1.Cell(row1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
-            if (g.Haber > 0) { ws1.Cell(row1, 3).Value = g.Haber; ws1.Cell(row1, 3).Style.NumberFormat.Format = "#,##0.00"; ws1.Cell(row1, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
-            if (!string.IsNullOrEmpty(extCode)) ws1.Cell(row1, 4).Value = extCode;
+            ws.Cell(row1, 1).Value = g.Account;
+            if (g.Debe  > 0) { ws.Cell(row1, 2).Value = g.Debe;  ws.Cell(row1, 2).Style.NumberFormat.Format = "#,##0.00"; ws.Cell(row1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
+            if (g.Haber > 0) { ws.Cell(row1, 3).Value = g.Haber; ws.Cell(row1, 3).Style.NumberFormat.Format = "#,##0.00"; ws.Cell(row1, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
+            if (!string.IsNullOrEmpty(extCode)) ws.Cell(row1, 4).Value = extCode;
             for (int col = 1; col <= 4; col++)
             {
-                ws1.Cell(row1, col).Style.Fill.BackgroundColor = bg1;
-                ws1.Cell(row1, col).Style.Border.BottomBorder = XLBorderStyleValues.Hair;
+                ws.Cell(row1, col).Style.Fill.BackgroundColor = bg1;
+                ws.Cell(row1, col).Style.Border.BottomBorder = XLBorderStyleValues.Hair;
             }
             alt1 = !alt1;
             row1++;
         }
 
         // Totals
-        ws1.Cell(row1, 1).Value = "TOTAL";
-        ws1.Cell(row1, 1).Style.Font.Bold = true;
+        ws.Cell(row1, 1).Value = "TOTAL";
+        ws.Cell(row1, 1).Style.Font.Bold = true;
         if (groups.Any())
         {
-            ws1.Cell(row1, 2).FormulaA1 = $"SUM(B7:B{row1 - 1})";
-            ws1.Cell(row1, 3).FormulaA1 = $"SUM(C7:C{row1 - 1})";
+            ws.Cell(row1, 2).FormulaA1 = $"SUM(B7:B{row1 - 1})";
+            ws.Cell(row1, 3).FormulaA1 = $"SUM(C7:C{row1 - 1})";
         }
-        ws1.Cell(row1, 2).Style.Font.Bold = true;
-        ws1.Cell(row1, 3).Style.Font.Bold = true;
-        ws1.Cell(row1, 2).Style.NumberFormat.Format = "#,##0.00";
-        ws1.Cell(row1, 3).Style.NumberFormat.Format = "#,##0.00";
-        ws1.Cell(row1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
-        ws1.Cell(row1, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        ws.Cell(row1, 2).Style.Font.Bold = true;
+        ws.Cell(row1, 3).Style.Font.Bold = true;
+        ws.Cell(row1, 2).Style.NumberFormat.Format = "#,##0.00";
+        ws.Cell(row1, 3).Style.NumberFormat.Format = "#,##0.00";
+        ws.Cell(row1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
+        ws.Cell(row1, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
         for (int col = 1; col <= 4; col++)
         {
-            ws1.Cell(row1, col).Style.Fill.BackgroundColor = XLColor.FromArgb(226, 232, 240);
-            ws1.Cell(row1, col).Style.Border.TopBorder = XLBorderStyleValues.Medium;
+            ws.Cell(row1, col).Style.Fill.BackgroundColor = XLColor.FromArgb(226, 232, 240);
+            ws.Cell(row1, col).Style.Border.TopBorder = XLBorderStyleValues.Medium;
         }
 
-        ws1.Column(1).Width = 40;
-        ws1.Column(2).Width = 20;
-        ws1.Column(3).Width = 20;
-        ws1.Column(4).Width = 15;
+        ws.Column(1).Width = 40;
+        ws.Column(2).Width = 20;
+        ws.Column(3).Width = 20;
+        ws.Column(4).Width = 15;
+    }
 
-        // ── Sheet 2: Detalle (individual entries, original format) ───────────
-        var ws2 = wb.Worksheets.Add($"Detalle {sheetLabel}");
+    // ── Hoja "Detalle" (asientos individuales, formato original) para un conjunto de asientos ──
+    private static void BuildDetalleSheet(
+        XLWorkbook wb, string sheetName, List<JournalEntry> entries, string companyName,
+        string periodLabel, IReadOnlyDictionary<string, string>? externalCodes)
+    {
+        var ws = wb.Worksheets.Add(sheetName);
 
-        ws2.Cell("A1").Value = companyName;
-        ws2.Cell("A1").Style.Font.Bold = true;
-        ws2.Cell("A1").Style.Font.FontSize = 14;
-        ws2.Cell("A2").Value = $"Libro Diario — {periodLabel}";
-        ws2.Cell("A2").Style.Font.Italic = true;
+        ws.Cell("A1").Value = companyName;
+        ws.Cell("A1").Style.Font.Bold = true;
+        ws.Cell("A1").Style.Font.FontSize = 14;
+        ws.Cell("A2").Value = $"Libro Diario — {periodLabel}";
+        ws.Cell("A2").Style.Font.Italic = true;
 
         // A=Fecha, B=Descripción, C=Cuenta, D=Cód.Externo, E=Debe, F=Haber
         var hdr2 = new[] { "Fecha", "Descripción", "Cuenta Contable", "Cód. Externo", "Debe", "Haber" };
         for (int i = 0; i < hdr2.Length; i++)
         {
-            var cell = ws2.Cell(4, i + 1);
+            var cell = ws.Cell(4, i + 1);
             cell.Value = hdr2[i];
             cell.Style.Font.Bold = true;
             cell.Style.Fill.BackgroundColor = XLColor.FromArgb(13, 110, 101);
@@ -306,7 +349,7 @@ public class ExcelExportService : IExportService
 
         int row2 = 5;
         bool alt2 = false;
-        foreach (var entry in entryList)
+        foreach (var entry in entries)
         {
             var lines = entry.Lines.OrderByDescending(l => l.IsDebit).ToList();
             bool first = true;
@@ -314,16 +357,16 @@ public class ExcelExportService : IExportService
             {
                 var bg2     = alt2 ? XLColor.FromArgb(240, 253, 251) : XLColor.White;
                 var extCode = externalCodes?.GetValueOrDefault(line.Account) ?? string.Empty;
-                ws2.Cell(row2, 1).Value = first ? entry.Date.ToString("dd/MM/yyyy") : string.Empty;
-                ws2.Cell(row2, 2).Value = first ? entry.Description : string.Empty;
-                ws2.Cell(row2, 3).Value = (line.IsDebit ? string.Empty : "        ") + line.Account;
-                ws2.Cell(row2, 4).Value = extCode;
-                if (line.IsDebit) ws2.Cell(row2, 5).Value = line.Amount;
-                else              ws2.Cell(row2, 6).Value = line.Amount;
-                ws2.Cell(row2, 5).Style.NumberFormat.Format = "#,##0.00";
-                ws2.Cell(row2, 6).Style.NumberFormat.Format = "#,##0.00";
+                ws.Cell(row2, 1).Value = first ? entry.Date.ToString("dd/MM/yyyy") : string.Empty;
+                ws.Cell(row2, 2).Value = first ? entry.Description : string.Empty;
+                ws.Cell(row2, 3).Value = (line.IsDebit ? string.Empty : "        ") + line.Account;
+                ws.Cell(row2, 4).Value = extCode;
+                if (line.IsDebit) ws.Cell(row2, 5).Value = line.Amount;
+                else              ws.Cell(row2, 6).Value = line.Amount;
+                ws.Cell(row2, 5).Style.NumberFormat.Format = "#,##0.00";
+                ws.Cell(row2, 6).Style.NumberFormat.Format = "#,##0.00";
                 for (int col = 1; col <= 6; col++)
-                    ws2.Cell(row2, col).Style.Fill.BackgroundColor = bg2;
+                    ws.Cell(row2, col).Style.Fill.BackgroundColor = bg2;
                 first = false;
                 row2++;
             }
@@ -331,26 +374,22 @@ public class ExcelExportService : IExportService
         }
 
         row2++;
-        ws2.Cell(row2, 2).Value = "TOTALES";
-        ws2.Cell(row2, 2).Style.Font.Bold = true;
-        if (entryList.Any())
+        ws.Cell(row2, 2).Value = "TOTALES";
+        ws.Cell(row2, 2).Style.Font.Bold = true;
+        if (entries.Any())
         {
-            ws2.Cell(row2, 5).FormulaA1 = $"SUM(E5:E{row2 - 2})";
-            ws2.Cell(row2, 6).FormulaA1 = $"SUM(F5:F{row2 - 2})";
+            ws.Cell(row2, 5).FormulaA1 = $"SUM(E5:E{row2 - 2})";
+            ws.Cell(row2, 6).FormulaA1 = $"SUM(F5:F{row2 - 2})";
         }
-        ws2.Cell(row2, 5).Style.Font.Bold = true;
-        ws2.Cell(row2, 6).Style.Font.Bold = true;
-        ws2.Cell(row2, 5).Style.NumberFormat.Format = "#,##0.00";
-        ws2.Cell(row2, 6).Style.NumberFormat.Format = "#,##0.00";
+        ws.Cell(row2, 5).Style.Font.Bold = true;
+        ws.Cell(row2, 6).Style.Font.Bold = true;
+        ws.Cell(row2, 5).Style.NumberFormat.Format = "#,##0.00";
+        ws.Cell(row2, 6).Style.NumberFormat.Format = "#,##0.00";
 
-        ws2.Columns().AdjustToContents();
-        ws2.Column(2).Width = Math.Max(ws2.Column(2).Width, 40);
-        ws2.Column(3).Width = Math.Max(ws2.Column(3).Width, 35);
-        ws2.Column(4).Width = Math.Max(ws2.Column(4).Width, 15);
-
-        using var ms = new MemoryStream();
-        wb.SaveAs(ms);
-        return ms.ToArray();
+        ws.Columns().AdjustToContents();
+        ws.Column(2).Width = Math.Max(ws.Column(2).Width, 40);
+        ws.Column(3).Width = Math.Max(ws.Column(3).Width, 35);
+        ws.Column(4).Width = Math.Max(ws.Column(4).Width, 15);
     }
 
     // =========================================================================
