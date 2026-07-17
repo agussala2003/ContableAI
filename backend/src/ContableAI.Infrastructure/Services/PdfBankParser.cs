@@ -565,14 +565,30 @@ public class PdfBankParser : IBankParser
 
     private static bool IsGaliciaSplitSummaryAmountRow(string rawDesc, int debitCount, int creditCount)
     {
-        if (debitCount == 0 || creditCount == 0) return false;
+        // Todas las filas reales de movimientos de Galicia arrancan con fecha; una fila sin
+        // fecha que trae importes solo puede ser la fila de totales (u otro fragmento de
+        // resumen), así que basta con que haya al menos un importe clasificado.
+        if (debitCount == 0 && creditCount == 0) return false;
 
-        var normalized = RemoveDiacritics(rawDesc).ToUpperInvariant();
+        var normalized = StripCurrencyTokens(RemoveDiacritics(rawDesc).ToUpperInvariant());
         var letters = new string(normalized.Where(char.IsLetter).ToArray());
 
         // Amount-only rows like "$ -$ $" (or with just "TOTAL") are summary fragments, not transactions.
+        // En extractos en dólares los importes vienen con prefijo de moneda en celdas propias
+        // ("Total USD 639,40 -USD 31,78 USD 607,62"), por eso se quitan los tokens USD antes
+        // de evaluar las letras restantes.
         return letters.Length == 0 || letters == "TOTAL";
     }
+
+    // Tokens de moneda que Galicia imprime como celdas sueltas junto a los importes en
+    // extractos en dólares ("USD", "-USD", "US$", "U$S"). El "$" de pesos no lleva letras,
+    // así que no necesita tratamiento.
+    private static readonly Regex RxCurrencyToken = new(
+        @"(?<![A-Z])(?:USD|US\$|U\$S)(?![A-Z])",
+        RegexOptions.Compiled);
+
+    private static string StripCurrencyTokens(string text) =>
+        RxCurrencyToken.Replace(text, " ");
 
     private static string RemoveDiacritics(string text)
     {
@@ -800,6 +816,13 @@ public class PdfBankParser : IBankParser
             var extra = string.Join(" ", descOnlyParts).Trim();
 
             if (bankCode == BankGalicia && IsGaliciaRetentionSummaryText(extra))
+                return;
+
+            // Fila con solo la etiqueta "Total" (extractos USD la imprimen en una fila Y
+            // aparte de sus importes): no es continuación de la descripción anterior.
+            if (bankCode == BankGalicia &&
+                new string(StripCurrencyTokens(RemoveDiacritics(extra).ToUpperInvariant())
+                    .Where(char.IsLetter).ToArray()) is "" or "TOTAL" or "TOTALES")
                 return;
             
             if (!string.IsNullOrWhiteSpace(extra) && !IsIrrelevantLine(extra))
