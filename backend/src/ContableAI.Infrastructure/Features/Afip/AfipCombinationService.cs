@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
@@ -54,11 +55,14 @@ public class AfipCombinationService
 
         // Mismo universo que AfipMatchingJob: movimientos marcados para cruce impositivo.
         // Solo débitos sin asentar — un pago a AFIP es siempre una salida.
+        // Guard multi-moneda: los VEPs de ARCA son en pesos, así que un movimiento en USD
+        // nunca dispara la búsqueda de combinaciones.
         var pendingTxs = await _db.BankTransactions
             .AsNoTracking()
             .Where(t => t.CompanyId == companyId
                      && t.NeedsTaxMatching
                      && t.Type == TransactionType.Debit
+                     && t.Currency == Currencies.Ars
                      && t.JournalEntryId == null)
             .OrderBy(t => t.Date)
             .ToListAsync(ct);

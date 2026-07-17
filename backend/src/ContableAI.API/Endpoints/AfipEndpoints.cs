@@ -163,6 +163,11 @@ public static class AfipEndpoints
             if (tx.JournalEntryId != null)
                 return Results.Conflict("El movimiento ya fue asentado; no se puede aplicar la combinación.");
 
+            // Guard multi-moneda (defensa en profundidad): la UI nunca ofrece combos para USD,
+            // pero el endpoint no debe confiar en la UI. Los VEPs de ARCA son siempre pesos.
+            if (tx.Currency != Currencies.Ars)
+                return Results.BadRequest("No se puede cruzar un movimiento en USD contra VEPs de AFIP (ARS).");
+
             var vouchers = await dbContext.AfipVouchers
                 .Where(v => voucherIds.Contains(v.Id) && v.CompanyId == companyId)
                 .ToListAsync(ct);
