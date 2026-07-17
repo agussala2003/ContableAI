@@ -1805,39 +1805,24 @@ public class PdfBankParser : IBankParser
 
     /// <summary>
     /// Devuelve el año y mes del período principal del extracto.
-    /// El nombre del archivo es la fuente autoritativa (ej. "0925.pdf" → sept 2025);
-    /// sólo se cae al escaneo de fechas en el documento cuando el nombre no es parseable.
-    /// Esto evita que fechas futuras en secciones suplementarias (ej. FECHA PAGO de cheques
-    /// con vencimiento en el año siguiente) corrompan el año asignado a las transacciones.
+    /// El nombre del archivo es la fuente autoritativa (ej. "0925.pdf" → sept 2025), aceptando
+    /// también variantes como "1225 (1).pdf", "05 2025.pdf", "BBVA TB 11.2024.pdf" o
+    /// "Extracto_2024_11_29.pdf". Si el nombre no contiene un período reconocible, se cae al
+    /// escaneo del documento tomando el mes/año MÁS FRECUENTE entre las fechas explícitas.
+    /// Nunca se toma la fecha máxima: los extractos traen fechas futuras sueltas en secciones
+    /// suplementarias y avisos ("a partir del 01/03/2026 se aplicarán comisiones...",
+    /// "información al: 02/01/2026") que corromperían el año de todas las transacciones.
     /// </summary>
     private static (int? stmtYear, int? primaryMonth) DetectStatementInfo(List<PdfRow> rows, string? fileName = null)
     {
-        // Intentar primero el nombre de archivo — es la fuente más confiable del período.
-        // Nombres como "0125.pdf" (MMYY) o "012025.pdf" (MMYYYY) se parsean como mes=1, año=2025.
-        if (!string.IsNullOrEmpty(fileName))
-        {
-            var baseName = Path.GetFileNameWithoutExtension(fileName);
-            var rxFile6 = new Regex(@"^(\d{2})(\d{4})$"); // MMYYYY ej. "012025"
-            var rxFile4 = new Regex(@"^(\d{2})(\d{2})$"); // MMYY   ej. "0125"
+        if (TryParsePeriodFromFileName(fileName, out var fromName))
+            return fromName;
 
-            Match mf = rxFile6.Match(baseName);
-            if (!mf.Success) mf = rxFile4.Match(baseName);
-
-            if (mf.Success &&
-                int.TryParse(mf.Groups[1].Value, out var fMo) && fMo >= 1 && fMo <= 12 &&
-                int.TryParse(mf.Groups[2].Value, out var fY))
-            {
-                if (fY < 100) fY += 2000;
-                if (fY >= 2020 && fY <= DateTime.Today.Year + 1)
-                    return (fY, fMo);
-            }
-        }
-
-        // Fallback: escanear fechas con año explícito en el documento.
-        // Se usa cuando el nombre del archivo no tiene el formato MMYY / MMYYYY esperado.
+        // Fallback: moda (mes/año más frecuente) de las fechas con año explícito del documento.
+        // Las fechas de la tabla de movimientos dominan por cantidad; una fecha futura aislada
+        // de un aviso legal o de la sección de cheques no puede desviar el resultado.
         var rx = new Regex(@"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})");
-        int maxYear = 0;
-        int? primaryMonth = null;
+        var counts = new Dictionary<(int Year, int Month), int>();
 
         foreach (var row in rows)
         {
@@ -1851,16 +1836,76 @@ public class PdfBankParser : IBankParser
 
                     if (!int.TryParse(m.Groups[2].Value, out var mo) || mo < 1 || mo > 12) continue;
 
-                    if (y > maxYear || (y == maxYear && mo > (primaryMonth ?? 0)))
-                    {
-                        maxYear = y;
-                        primaryMonth = mo;
-                    }
+                    counts[(y, mo)] = counts.GetValueOrDefault((y, mo)) + 1;
                 }
             }
         }
 
-        return maxYear >= 2020 ? (maxYear, primaryMonth) : (null, null);
+        if (counts.Count == 0) return (null, null);
+
+        // Empate de frecuencia (extracto a caballo entre dos meses): gana el período más tardío,
+        // que es el mes de cierre del extracto.
+        var best = counts
+            .OrderByDescending(kvp => kvp.Value)
+            .ThenByDescending(kvp => kvp.Key.Year * 12 + kvp.Key.Month)
+            .First().Key;
+
+        return (best.Year, best.Month);
+    }
+
+    /// <summary>
+    /// Extrae el período (mes, año) del nombre del archivo. Acepta, en orden de especificidad:
+    /// "MMYYYY"/"MMYY" exactos, "MM.YYYY"/"MM YYYY"/"MM-YYYY", "YYYY.MM"/"YYYY_MM", y por
+    /// último tokens MMYYYY/MMYY sueltos en cualquier parte del nombre (cubre sufijos de
+    /// descarga tipo "1225 (1).pdf"). Todo match se valida: mes 1..12, año 2020..hoy+1.
+    /// </summary>
+    private static bool TryParsePeriodFromFileName(string? fileName, out (int? stmtYear, int? primaryMonth) period)
+    {
+        period = (null, null);
+        if (string.IsNullOrEmpty(fileName)) return false;
+
+        var rawName = Path.GetFileNameWithoutExtension(fileName);
+
+        // Mismo saneo que DetectBank: "_20"/"%20" son espacios URL-encodeados
+        // (ej. "BBVA_20TB_2012.2024.pdf" es en realidad "BBVA TB 12.2024.pdf").
+        // Se prueba primero el nombre crudo: el saneo rompe nombres con años reales tipo
+        // "Extracto_2024_11_29" ("_2024" → " 24").
+        var sanitizedName = rawName.Replace("_20", " ").Replace("%20", " ");
+
+        // Cada patrón captura (mes, año) salvo los marcados YearFirst que capturan (año, mes).
+        (string Pattern, bool YearFirst)[] patterns =
+        [
+            (@"^(\d{2})(\d{4})$",                    false), // "012025"
+            (@"^(\d{2})(\d{2})$",                    false), // "0125"
+            (@"(?<!\d)(\d{1,2})[._ -](\d{4})(?!\d)", false), // "11.2024", "05 2025"
+            (@"(?<!\d)(20\d{2})[._ -](\d{1,2})(?!\d)", true), // "2024_11"
+            (@"(?<!\d)(\d{2})(\d{4})(?!\d)",         false), // "...012025..."
+            (@"(?<!\d)(\d{2})(\d{2})(?!\d)",         false), // "1225 (1)"
+        ];
+
+        string[] candidates = rawName == sanitizedName ? [rawName] : [rawName, sanitizedName];
+
+        foreach (var baseName in candidates)
+        {
+            foreach (var (pattern, yearFirst) in patterns)
+            {
+                foreach (Match m in Regex.Matches(baseName, pattern))
+                {
+                    var moText = yearFirst ? m.Groups[2].Value : m.Groups[1].Value;
+                    var yText  = yearFirst ? m.Groups[1].Value : m.Groups[2].Value;
+
+                    if (!int.TryParse(moText, out var mo) || mo < 1 || mo > 12) continue;
+                    if (!int.TryParse(yText, out var y)) continue;
+                    if (y < 100) y += 2000;
+                    if (y < 2020 || y > DateTime.Today.Year + 1) continue;
+
+                    period = (y, mo);
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static List<decimal> ExtractAmountsFromText(string text)
