@@ -8,12 +8,11 @@ import { ToastService } from '../../../../core/services/toast.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { AccountCombobox } from '../../../../shared/components/account-combobox/account-combobox';
 import { CurrencyAmountPipe } from '../../../../shared/pipes/currency-amount.pipe';
-import { CurrencyBadge } from '../../../../shared/components/currency-badge/currency-badge';
 
 @Component({
   selector: 'app-transaction-grid',
   standalone: true,
-  imports: [FormsModule, NgClass, LucideAngularModule, AccountCombobox, CurrencyAmountPipe, CurrencyBadge],
+  imports: [FormsModule, NgClass, LucideAngularModule, AccountCombobox, CurrencyAmountPipe],
   templateUrl: './transaction-grid.html',
   styleUrl: './transaction-grid.scss',
 })

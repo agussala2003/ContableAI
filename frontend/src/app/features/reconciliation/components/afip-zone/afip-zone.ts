@@ -1,16 +1,17 @@
 import { Component, inject, input, output, signal, effect, computed } from '@angular/core';
-import { DecimalPipe, DatePipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { AfipService, AfipVoucher, AfipComboSuggestion } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { SkippedDuplicate } from '../../../../core/services/transaction';
 import { LucideAngularModule } from 'lucide-angular';
 import { CombinationSuggestionModal } from '../combination-suggestion-modal/combination-suggestion-modal';
+import { CurrencyAmountPipe } from '../../../../shared/pipes/currency-amount.pipe';
 
 @Component({
   selector: 'app-afip-zone',
   standalone: true,
   templateUrl: './afip-zone.html',
-  imports: [LucideAngularModule, DecimalPipe, DatePipe, CombinationSuggestionModal],
+  imports: [LucideAngularModule, DatePipe, CombinationSuggestionModal, CurrencyAmountPipe],
 })
 export class AfipZone {
 

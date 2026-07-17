@@ -49,8 +49,7 @@
             </span>
             <span class="text-sm text-slate-700 dark:text-slate-300 truncate">{{ dup.description }}</span>
           </div>
-          <span class="text-sm font-medium tabular-nums shrink-0 text-slate-600 dark:text-slate-300 inline-flex items-center gap-1">
-            <app-currency-badge [currency]="dup.currency" />
+          <span class="text-sm font-medium tabular-nums shrink-0 text-slate-600 dark:text-slate-300">
             {{ dup.amount | currencyAmount:dup.currency }}
           </span>
         </div>
