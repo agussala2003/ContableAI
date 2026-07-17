@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using CsvHelper;
@@ -20,6 +21,11 @@ public interface IBankParserService
 
 public class CsvBankParserService : IBankParserService
 {
+    // Los formatos CSV/XLSX soportados (BBVA, Galicia, Santander) no traen columna de moneda,
+    // así que toda transacción importada por esta vía es en pesos. Se fija Currencies.Ars de
+    // forma explícita en cada BankTransaction para dejarlo documentado (el default de la entidad
+    // también es ARS). El soporte USD por ahora solo se detecta en PDFs (ver PdfBankParser).
+
     // ──────────────────────────────────────────────────────────────────────────
     //  Public entry points
     // ──────────────────────────────────────────────────────────────────────────
@@ -137,7 +143,8 @@ public class CsvBankParserService : IBankParserService
                 Date        = date,
                 Description = desc,
                 Amount      = amount,
-                Type        = type
+                Type        = type,
+                Currency    = Currencies.Ars,
             });
         }
 
@@ -207,7 +214,8 @@ public class CsvBankParserService : IBankParserService
                         Date        = date,
                         Description = desc.Trim(),
                         Amount      = Math.Abs(rawAmount),
-                        Type        = rawAmount >= 0 ? TransactionType.Credit : TransactionType.Debit
+                        Type        = rawAmount >= 0 ? TransactionType.Credit : TransactionType.Debit,
+                        Currency    = Currencies.Ars,
                     });
                 }
             }
@@ -298,7 +306,8 @@ public class CsvBankParserService : IBankParserService
                 Date        = date,
                 Description = desc,
                 Amount      = amount,
-                Type        = type
+                Type        = type,
+                Currency    = Currencies.Ars,
             });
         }
 
@@ -349,7 +358,8 @@ public class CsvBankParserService : IBankParserService
                     Date        = date,
                     Description = desc,
                     Amount      = Math.Abs(rawAmount),
-                    Type        = rawAmount >= 0 ? TransactionType.Credit : TransactionType.Debit
+                    Type        = rawAmount >= 0 ? TransactionType.Credit : TransactionType.Debit,
+                    Currency    = Currencies.Ars,
                 });
             }
             catch { continue; }

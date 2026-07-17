@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -131,12 +132,24 @@ public class PdfBankParser : IBankParser
             }
 
             _logger.LogDebug("[PDF] Banco final: {Bank} — total filas: {Rows}", bank, rows.Count);
-            return bank switch
+
+            // Detección de moneda a nivel documento (una vez por PDF). Aborta si el extracto
+            // mezcla cuentas de distinta moneda (lanza InvalidOperationException, que se propaga).
+            var currency = DetectCurrency(rows);
+            _logger.LogDebug("[PDF] Moneda detectada: {Currency}", currency);
+
+            var txs = (bank switch
             {
                 BankMercadoPago => ParseMercadoPago(rows),
                 BankCiudad      => ParseBancoCiudad(rows, _logger),
                 _               => ParseStateful(rows, bank, fileName)
-            };
+            }).ToList();
+
+            // Post-pass: estampar la moneda detectada en todas las transacciones del extracto.
+            foreach (var tx in txs)
+                tx.Currency = currency;
+
+            return txs;
         }
         catch (InvalidOperationException)
         {
@@ -329,6 +342,94 @@ public class PdfBankParser : IBankParser
         if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))         return BankCiudad;
 
         return "GENERIC";
+    }
+
+    #endregion
+
+    #region Detección de Moneda
+
+    /// <summary>Mensaje de rechazo cuando un mismo PDF contiene cuentas en más de una moneda.</summary>
+    public const string MixedCurrencyError =
+        "El extracto contiene cuentas en más de una moneda (pesos y dólares) en el mismo archivo. " +
+        "Subí el extracto de cada cuenta por separado.";
+
+    // Umbral de tokens de moneda (adyacentes a un importe) para inferir USD cuando el header
+    // no es reconocible. >= 2 evita falsos positivos por una mención suelta en texto legal.
+    private const int UsdTokenThreshold = 2;
+
+    // Una celda que ES un marcador de moneda dólar: "USD", "-USD", "US$", "U$S" y también la
+    // forma fusionada "USD607,62" que Galicia imprime en la columna de saldo.
+    private static readonly Regex RxUsdTokenCell = new(
+        @"^-?(?:USD|US\$|U\$S)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Detecta la moneda del extracto a nivel documento (una sola vez por PDF). Opera sobre las
+    /// filas ya extraídas, así que funciona igual en la ruta digital y en la de OCR.
+    ///
+    /// Señales, por orden de confianza:
+    ///  1. Header de tipo de cuenta: "Cuenta Corriente Especial en dolares" (Galicia) / "CC U$S"
+    ///     (BBVA) → USD; "Cuenta Corriente [Especial] en Pesos" / "CC $" → ARS. Son robustas
+    ///     frente al texto legal (que menciona "depósitos en pesos y en moneda extranjera" sin
+    ///     la forma "corriente en pesos").
+    ///  2. Tokens de moneda dólar adyacentes a un importe (columnas de importe), con umbral.
+    ///  3. Fallback: ARS.
+    ///
+    /// Si aparecen headers de ambas monedas en el mismo documento, lanza
+    /// <see cref="InvalidOperationException"/> (<see cref="MixedCurrencyError"/>): se rechaza el
+    /// archivo y se exige subir el extracto de cada cuenta por separado.
+    /// </summary>
+    private static string DetectCurrency(List<PdfRow> rows)
+    {
+        bool usdHeader = false;
+        bool arsHeader = false;
+        int  usdAmountTokens = 0;
+
+        foreach (var row in rows)
+        {
+            var line = RemoveDiacritics(JoinCells(row)).ToUpperInvariant();
+
+            if (line.Contains("ESPECIAL EN DOLARES") ||
+                line.Contains("CORRIENTE EN DOLARES") ||
+                line.Contains("CC U$S"))
+                usdHeader = true;
+
+            if (line.Contains("ESPECIAL EN PESOS") ||
+                line.Contains("CORRIENTE EN PESOS") ||
+                line.Contains("CC $"))
+                arsHeader = true;
+
+            // Tokens de moneda solo cuentan si están junto a un importe (columna de importe),
+            // no en descripciones ni texto legal.
+            for (int i = 0; i < row.Cells.Count; i++)
+            {
+                if (!RxUsdTokenCell.IsMatch(row.Cells[i].Text)) continue;
+
+                bool nextIsAmount = i + 1 < row.Cells.Count && IsArgentineAmount(row.Cells[i + 1].Text);
+                bool prevIsAmount = i - 1 >= 0             && IsArgentineAmount(row.Cells[i - 1].Text);
+                if (nextIsAmount || prevIsAmount) usdAmountTokens++;
+            }
+        }
+
+        return ResolveCurrency(usdHeader, arsHeader, usdAmountTokens);
+    }
+
+    /// <summary>
+    /// Tabla de decisión de moneda, separada del escaneo para poder testearla sin un PDF.
+    /// Headers de ambas monedas → excepción (extracto mixto). Un header reconocible manda sobre
+    /// los tokens. Sin header, se infiere por cantidad de tokens dólar en columnas de importe.
+    /// </summary>
+    internal static string ResolveCurrency(bool usdHeader, bool arsHeader, int usdAmountTokens)
+    {
+        if (usdHeader && arsHeader)
+            throw new InvalidOperationException(MixedCurrencyError);
+
+        // El header manda: si el tipo de cuenta es reconocible, la moneda es definitiva y los
+        // tokens sueltos en descripciones (ej. una transferencia que menciona USD en una cuenta
+        // en pesos) no pueden desviar la clasificación.
+        if (usdHeader) return Currencies.Usd;
+        if (arsHeader) return Currencies.Ars;
+
+        return usdAmountTokens >= UsdTokenThreshold ? Currencies.Usd : Currencies.Ars;
     }
 
     #endregion

@@ -148,8 +148,8 @@ public sealed class UploadBankStatementHandler
         foreach (var s in existingSignaturesList)
         {
             var sig = s.ExternalId != null
-                ? $"EXT|{s.ExternalId}|{s.Date}|{s.Amount}|{s.Description}|{s.Type}"
-                : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}";
+                ? $"EXT|{s.ExternalId}|{s.Date}|{s.Amount}|{s.Description}|{s.Type}|{s.Currency}"
+                : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}|{s.Currency}";
             existingFrequencies[sig] = existingFrequencies.GetValueOrDefault(sig, 0) + 1;
             existingFirstMatch.TryAdd(sig, s);
         }
@@ -182,7 +182,7 @@ public sealed class UploadBankStatementHandler
         var allRules = companyRules.Concat(studioRules).Concat(systemRules).ToList();
 
         // ── Union-duplicate candidates (single query for the batch date range) ──
-        var existingUnionCandidates = new List<(DateOnly Date, string Description, decimal Amount)>();
+        var existingUnionCandidates = new List<(DateOnly Date, string Description, decimal Amount, string Currency)>();
         if (company != null && minParsedDate.HasValue && maxParsedDate.HasValue)
         {
             var unionMin = minParsedDate.Value.AddDays(-3);
@@ -190,10 +190,10 @@ public sealed class UploadBankStatementHandler
 
             var raw = await _db.BankTransactions.AsNoTracking()
                 .Where(t => t.CompanyId == company.Id && t.Date >= unionMin && t.Date <= unionMax)
-                .Select(t => new { t.Date, t.Description, t.Amount })
+                .Select(t => new { t.Date, t.Description, t.Amount, t.Currency })
                 .ToListAsync(ct);
 
-            existingUnionCandidates = raw.Select(x => (x.Date, x.Description, x.Amount)).ToList();
+            existingUnionCandidates = raw.Select(x => (x.Date, x.Description, x.Amount, x.Currency)).ToList();
         }
 
         // ── Process each file ──────────────────────────────────────────────────
@@ -211,9 +211,11 @@ public sealed class UploadBankStatementHandler
 
             foreach (var tx in parsedTransactions)
             {
+                // La moneda forma parte de la firma: dos movimientos de igual importe/fecha en
+                // distinta moneda (ej. 639,40 ARS vs 639,40 USD) no son duplicados.
                 var sig = tx.ExternalId != null
-                    ? $"EXT|{tx.ExternalId}|{tx.Date}|{tx.Amount}|{tx.Description}|{tx.Type}"
-                    : $"{tx.Date}|{tx.Description}|{tx.Amount}|{tx.Type}";
+                    ? $"EXT|{tx.ExternalId}|{tx.Date}|{tx.Amount}|{tx.Description}|{tx.Type}|{tx.Currency}"
+                    : $"{tx.Date}|{tx.Description}|{tx.Amount}|{tx.Type}|{tx.Currency}";
 
                 // Consume one DB "slot" for this signature if available; only then it's a duplicate.
                 // This allows N identical transactions if the DB has fewer than N copies.
@@ -274,6 +276,7 @@ public sealed class UploadBankStatementHandler
 
                         bool dup = existingUnionCandidates.Any(e =>
                             e.Amount == tx.Amount &&
+                            e.Currency == tx.Currency &&
                             Math.Abs(e.Date.DayNumber - tx.Date.DayNumber) <= 2 &&
                             e.Description.Contains(kw, StringComparison.OrdinalIgnoreCase));
 
@@ -281,6 +284,7 @@ public sealed class UploadBankStatementHandler
                             dup = currentBatchView
                                 .Where(o => o != tx)
                                 .Any(o => o.Amount == tx.Amount &&
+                                          o.Currency == tx.Currency &&
                                           Math.Abs(o.Date.DayNumber - tx.Date.DayNumber) <= 2 &&
                                           o.Description.Contains(kw, StringComparison.OrdinalIgnoreCase));
 
