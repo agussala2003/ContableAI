@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
@@ -37,6 +38,18 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<BankTransaction>()
             .Property(b => b.BalanceAfter)
             .HasPrecision(18, 2);
+
+        // Moneda (ISO 4217, 3 letras). Default ARS: backfillea las filas existentes en el
+        // ALTER TABLE de la migración (metadata-only en Postgres 11+, sin rewrite).
+        modelBuilder.Entity<BankTransaction>()
+            .Property(b => b.Currency)
+            .HasMaxLength(Currencies.CodeLength)
+            .HasDefaultValue(Currencies.Ars);
+
+        // Índice para el filtro por moneda de la grilla (Fase D).
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.CompanyId, b.Currency })
+            .HasDatabaseName("IX_BankTransactions_CompanyId_Currency");
 
         // Índice en TenantId (legacy) y en CompanyId (FK real)
         modelBuilder.Entity<BankTransaction>()
@@ -96,6 +109,11 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<JournalEntry>()
             .HasIndex(j => j.BankTransactionId)
             .IsUnique(); // una transacción → un asiento
+
+        modelBuilder.Entity<JournalEntry>()
+            .Property(j => j.Currency)
+            .HasMaxLength(Currencies.CodeLength)
+            .HasDefaultValue(Currencies.Ars);
 
         modelBuilder.Entity<JournalEntryLine>()
             .Property(l => l.Amount)
@@ -157,6 +175,12 @@ public class ContableAIDbContext : DbContext
             .Property(v => v.Amount)
             .HasPrecision(18, 2);
 
+        modelBuilder.Entity<AfipVoucher>()
+            .Property(v => v.Currency)
+            .HasMaxLength(Currencies.CodeLength)
+            .HasDefaultValue(Currencies.Ars);
+
+        // El índice único no incluye Currency: los VEPs de ARCA son siempre ARS.
         modelBuilder.Entity<AfipVoucher>()
             .HasIndex(v => new { v.CompanyId, v.Date, v.Amount, v.TaxName })
             .IsUnique();
