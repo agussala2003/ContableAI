@@ -5,6 +5,7 @@ using ContableAI.API.Middleware;
 using ContableAI.Infrastructure.Services;
 using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Events;
@@ -58,6 +59,19 @@ builder.Services.AddOpenApi();
 builder.Services.AddContableCors(builder.Configuration);
 builder.Services.AddContableInfrastructure(builder.Configuration);
 builder.Services.AddContableAuth(builder.Configuration);
+
+// ── Forwarded Headers (M-1) ───────────────────────────────────────────────────
+// La API corre detrás del reverse proxy de Render, que termina TLS y agrega
+// X-Forwarded-For / X-Forwarded-Proto. Sin esto, Connection.RemoteIpAddress sería
+// la IP del proxy: el rate-limiter anti-fuerza-bruta particionaría a TODOS los
+// clientes en un único bucket y los logs registrarían la IP equivocada.
+// KnownNetworks/KnownProxies se limpian porque la IP del proxy de Render es dinámica.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 // ── Global exception handler (RFC 7807) ──────────────────────────────────────
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
@@ -73,6 +87,11 @@ if (app.Environment.IsDevelopment())
         options.Theme = ScalarTheme.DeepSpace;
     }).AllowAnonymous();
 }
+
+// M-1: debe ir PRIMERO en el pipeline para que la IP/esquema reales estén disponibles
+// para el rate-limiter, el request logging de Serilog y el resto de middlewares.
+app.UseForwardedHeaders();
+
 app.UseCors("AllowAngular");
 app.UseExceptionHandler();
 app.UseSerilogRequestLogging(opts =>
