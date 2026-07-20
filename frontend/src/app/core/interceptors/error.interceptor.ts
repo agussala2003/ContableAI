@@ -1,6 +1,6 @@
 import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { catchError, throwError } from 'rxjs';
+import { catchError, switchMap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { ToastService } from '../services/toast.service';
 
@@ -31,13 +31,36 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
         return throwError(() => error);
       }
 
-      // Token expirado o inválido
+      // Token expirado o inválido (A-3)
       if (error.status === 401) {
-        // No disparar en el endpoint de login (evita loop)
-        if (!req.url.includes('/auth/login') && !req.url.includes('/auth/register-studio')) {
+        const isAuthCall     = req.url.includes('/auth/');
+        const alreadyRetried = req.headers.has('X-Auth-Retry');
+
+        // Requests normales a la API: intentar UN silent-refresh y reintentar la original
+        // con el nuevo access token. Los endpoints /auth (login/refresh/logout) no se reintentan.
+        if (!isAuthCall && !alreadyRetried) {
+          return auth.refresh().pipe(
+            switchMap(newToken =>
+              next(req.clone({
+                setHeaders: { Authorization: `Bearer ${newToken}`, 'X-Auth-Retry': '1' },
+              })),
+            ),
+            catchError(() => {
+              // El refresh falló (cookie inválida/expirada/revocada) → cerrar sesión.
+              auth.logout();
+              toast.show('Tu sesión expiró. Ingresá nuevamente.', 'warning');
+              return throwError(() => error);
+            }),
+          );
+        }
+
+        // Ya se reintentó una request de API y volvió a fallar → cerrar sesión.
+        if (!isAuthCall && alreadyRetried) {
           auth.logout();
           toast.show('Tu sesión expiró. Ingresá nuevamente.', 'warning');
         }
+        // Los 401 de /auth/* (login, refresh en arranque anónimo, etc.) se propagan sin efectos:
+        // los maneja cada caller (componente de login / restoreSession del APP_INITIALIZER).
         return throwError(() => error);
       }
 
