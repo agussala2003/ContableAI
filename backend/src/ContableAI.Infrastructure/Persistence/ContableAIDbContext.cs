@@ -40,6 +40,7 @@ public class ContableAIDbContext : DbContext
     public DbSet<ClosedPeriod>     ClosedPeriods     { get; set; }
     public DbSet<RuleSuggestion>   RuleSuggestions   { get; set; }
     public DbSet<AfipVoucher>      AfipVouchers      { get; set; }
+    public DbSet<RefreshToken>     RefreshTokens     { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -209,6 +210,16 @@ public class ContableAIDbContext : DbContext
             .WithMany()
             .HasForeignKey(v => v.CompanyId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // ==========================================
+        // RefreshToken (A-3)
+        // ==========================================
+        modelBuilder.Entity<RefreshToken>()
+            .HasIndex(t => t.TokenHash)
+            .IsUnique();
+
+        modelBuilder.Entity<RefreshToken>()
+            .HasIndex(t => t.UserId);
 
         // Función unaccent de PostgreSQL para búsqueda sin distinción de tildes
         modelBuilder.HasDbFunction(

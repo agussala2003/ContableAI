@@ -1,5 +1,7 @@
+using ContableAI.API.Common;
 using ContableAI.Application.Common;
 using ContableAI.Domain.Entities;
+using ContableAI.Domain.Enums;
 using Hangfire;
 using Hangfire.PostgreSql;
 using ContableAI.Infrastructure.Features.Afip;
@@ -41,7 +43,10 @@ public static class ServiceExtensions
             options.AddPolicy("AllowAngular", policy =>
                 policy.WithOrigins(frontendUrl)
                       .AllowAnyHeader()
-                      .AllowAnyMethod()));
+                      .AllowAnyMethod()
+                      // A-3: necesario para que el navegador envíe/reciba la cookie HttpOnly del
+                      // refresh token. Requiere un origen explícito (no comodín), que ya es el caso.
+                      .AllowCredentials()));
         return services;
     }
 
@@ -85,6 +90,7 @@ public static class ServiceExtensions
         // ── Autenticación y tenant ────────────────────────────────────────────
         services.AddHttpContextAccessor();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<ICurrentTenantService, CurrentTenantService>();
         services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
         services.AddScoped<IQuotaService, QuotaService>();
@@ -150,9 +156,17 @@ public static class ServiceExtensions
             });
 
         services.AddAuthorization(opts =>
+        {
+            // Todo endpoint exige autenticación salvo que declare AllowAnonymous.
             opts.FallbackPolicy = new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
-                .Build());
+                .Build();
+
+            // M-4: acciones de gestión/destructivas reservadas al dueño del estudio
+            // (o al SystemAdmin, operador de plataforma). DataEntry queda excluido.
+            opts.AddPolicy(AuthorizationPolicies.RequireStudioOwner, p =>
+                p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()));
+        });
 
         // ── Rate Limiting ─────────────────────────────────────────────────────
         services.AddRateLimiter(options =>

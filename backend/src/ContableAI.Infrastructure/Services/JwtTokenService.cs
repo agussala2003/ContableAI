@@ -12,8 +12,8 @@ namespace ContableAI.Infrastructure.Services;
 public interface IJwtTokenService
 {
     /// <summary>
-    /// Genera un JWT firmado con las claims del usuario.
-    /// El token expira en 7 días.
+    /// Genera un JWT de acceso firmado con las claims del usuario.
+    /// Vida útil corta (ver <see cref="JwtOptions.AccessTokenMinutes"/>, A-3).
     /// </summary>
     string GenerateToken(User user);
 }
@@ -47,7 +47,8 @@ public class JwtTokenService : IJwtTokenService
             issuer:            _jwtOptions.Issuer,
             audience:          _jwtOptions.Audience,
             claims:            claims,
-            expires:           DateTime.UtcNow.AddDays(Math.Max(1, _jwtOptions.ExpirationDays)),
+            // A-3: access token de vida corta (minutos). La sesión persiste vía refresh tokens.
+            expires:           DateTime.UtcNow.AddMinutes(Math.Max(1, _jwtOptions.AccessTokenMinutes)),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
