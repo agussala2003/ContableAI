@@ -106,6 +106,13 @@ public static class JournalEntriesEndpoints
             var entry = await dbContext.JournalEntries.FindAsync(id);
             if (entry == null) return Results.NotFound();
 
+            // JournalEntry no tiene Global Query Filter (no expone navegación a Company), así que
+            // validamos la pertenencia al estudio de forma explícita: si el asiento no corresponde
+            // a una empresa del tenant autenticado, devolvemos NotFound (fix IDOR de borrado cross-tenant).
+            var belongsToStudio = entry.CompanyId.HasValue && await dbContext.Companies
+                .AnyAsync(c => c.Id == entry.CompanyId.Value);
+            if (!belongsToStudio) return Results.NotFound();
+
             if (await PeriodEndpoints.IsPeriodClosedAsync(dbContext, currentTenant.StudioTenantId!, entry.Date.Year, entry.Date.Month))
                 return Results.Problem(
                     title:      "Período cerrado",

@@ -129,7 +129,10 @@ public sealed class UploadBankStatementHandler
         }
 
         // ── Existing signatures (O(1) lookup dictionary) ───────
-        var existingSignaturesQuery = _db.BankTransactions.AsQueryable(); // Tracking if we want to mutate
+        // IgnoreQueryFilters: el handler ya validó la pertenencia de la empresa al tenant
+        // (Forbidden más arriba) y acota por CompanyId; además la rama sin empresa
+        // (TenantId == "ESTUDIO_DEFAULT") tiene CompanyId null y el filtro global la ocultaría.
+        var existingSignaturesQuery = _db.BankTransactions.IgnoreQueryFilters().AsQueryable(); // Tracking if we want to mutate
         existingSignaturesQuery = company != null
             ? existingSignaturesQuery.Where(t => t.CompanyId == company.Id)
             : existingSignaturesQuery.Where(t => t.TenantId == "ESTUDIO_DEFAULT");

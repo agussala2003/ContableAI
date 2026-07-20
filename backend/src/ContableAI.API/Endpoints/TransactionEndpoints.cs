@@ -267,7 +267,9 @@ public static class TransactionEndpoints
             ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger(nameof(TransactionEndpoints));
-            var tx = await dbContext.BankTransactions.FindAsync(id);
+            // FirstOrDefaultAsync aplica el Global Query Filter: una transacción de otro
+            // estudio devuelve null → NotFound. Cierra el IDOR de reasignación cross-tenant.
+            var tx = await dbContext.BankTransactions.FirstOrDefaultAsync(t => t.Id == id);
             if (tx == null) return Results.NotFound();
 
             if (await PeriodEndpoints.IsPeriodClosedAsync(dbContext, currentTenant.StudioTenantId!, tx.Date.Year, tx.Date.Month))
@@ -305,6 +307,8 @@ public static class TransactionEndpoints
             if (string.IsNullOrWhiteSpace(request.AssignedAccount))
                 return Results.BadRequest("La cuenta contable es obligatoria.");
 
+            // El Global Query Filter de tenant se aplica acá: los IDs que pertenezcan a otro
+            // estudio quedan fuera del resultado, por lo que nunca se modifican (fix IDOR bulk).
             var transactions = await dbContext.BankTransactions
                 .Where(t => request.Ids.Contains(t.Id))
                 .ToListAsync();

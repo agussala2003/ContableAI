@@ -59,10 +59,16 @@ public sealed class GetCompanyRulesHandler
 
     public async Task<Result<List<RuleResponse>>> Handle(GetCompanyRulesQuery q, CancellationToken ct)
     {
+        // Global Query Filter: empresa de otro estudio → null → NotFound. Sin esta guarda,
+        // la query de reglas de abajo (AccountingRule no lleva filtro global) filtraría por
+        // r.CompanyId == q.CompanyId y expondría las reglas de la empresa ajena (IDOR).
         var company = await _db.Companies.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == q.CompanyId, ct);
 
-        Guid? studioGuid = company != null && Guid.TryParse(company.StudioTenantId, out var g) ? g : null;
+        if (company is null)
+            return Result<List<RuleResponse>>.NotFound("Company not found.");
+
+        Guid? studioGuid = Guid.TryParse(company.StudioTenantId, out var g) ? g : null;
 
         var query = _db.AccountingRules.AsNoTracking()
             .Where(r => r.CompanyId == q.CompanyId
@@ -119,7 +125,9 @@ public sealed class CreateCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(CreateCompanyCommand cmd, CancellationToken ct)
     {
-        if (await _db.Companies.AnyAsync(c => c.Cuit == cmd.Cuit, ct))
+        // IgnoreQueryFilters: la unicidad de CUIT es GLOBAL (el índice único de BD lo es),
+        // así que el chequeo debe ver todos los estudios para no chocar contra la constraint.
+        if (await _db.Companies.IgnoreQueryFilters().AnyAsync(c => c.Cuit == cmd.Cuit, ct))
             return Result<CompanyResponse>.Conflict($"Ya existe una empresa con CUIT {cmd.Cuit}.");
 
         if (!await _quota.CanAddCompanyAsync(cmd.StudioTenantId))
@@ -152,7 +160,9 @@ public sealed class UpdateCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(UpdateCompanyCommand cmd, CancellationToken ct)
     {
-        var company = await _db.Companies.FindAsync([cmd.Id], ct);
+        // FirstOrDefaultAsync aplica el Global Query Filter de tenant: una empresa de otro
+        // estudio devuelve null y el handler responde NotFound (no 403, para no confirmar existencia).
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == cmd.Id, ct);
         if (company is null)
             return Result<CompanyResponse>.NotFound();
 
@@ -178,7 +188,9 @@ public sealed class DeleteCompanyHandler
 
     public async Task<Result<DeletedResponse>> Handle(DeleteCompanyCommand cmd, CancellationToken ct)
     {
-        var company = await _db.Companies.FindAsync([cmd.Id], ct);
+        // FirstOrDefaultAsync aplica el Global Query Filter de tenant: una empresa de otro
+        // estudio devuelve null y el handler responde NotFound (no 403, para no confirmar existencia).
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == cmd.Id, ct);
         if (company is null)
             return Result<DeletedResponse>.NotFound();
 
@@ -239,7 +251,9 @@ public sealed class CreateCompanyRuleHandler
 
     public async Task<Result<RuleResponse>> Handle(CreateCompanyRuleCommand cmd, CancellationToken ct)
     {
-        var company = await _db.Companies.FindAsync([cmd.CompanyId], ct);
+        // Global Query Filter: si la empresa pertenece a otro estudio, devuelve null → NotFound.
+        // Cierra el IDOR que permitía inyectar reglas en empresas ajenas (envenenamiento de clasificación).
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == cmd.CompanyId, ct);
         if (company is null)
             return Result<RuleResponse>.NotFound("Company not found.");
 

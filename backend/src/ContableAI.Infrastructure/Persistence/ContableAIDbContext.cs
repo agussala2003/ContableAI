@@ -1,5 +1,6 @@
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
+using ContableAI.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -7,7 +8,23 @@ namespace ContableAI.Infrastructure.Persistence;
 
 public class ContableAIDbContext : DbContext
 {
-    public ContableAIDbContext(DbContextOptions<ContableAIDbContext> options) : base(options) { }
+    // ── Aislamiento multi-tenant (Global Query Filters) ──────────────────────────
+    // Se capturan en el ctor a partir del usuario autenticado (scoped, post-auth).
+    // El filtro referencia estos campos y EF los re-evalúa en cada query, por lo que
+    // el modelo cacheado sirve a todas las instancias con su propio tenant.
+    private readonly string? _currentTenantId;
+
+    // El filtro se DESACTIVA cuando no hay tenant (seed, background jobs, login) o
+    // cuando el usuario es SystemAdmin (operador de plataforma, acceso cross-tenant).
+    private readonly bool _tenantFilterDisabled;
+
+    public ContableAIDbContext(
+        DbContextOptions<ContableAIDbContext> options,
+        ICurrentTenantService? tenant = null) : base(options)
+    {
+        _currentTenantId      = tenant?.StudioTenantId;
+        _tenantFilterDisabled = _currentTenantId is null || (tenant?.IsSystemAdmin ?? false);
+    }
 
     /// <summary>Mapeado a la función unaccent() de PostgreSQL (extensión unaccent).</summary>
     public static string Unaccent(string text) => throw new InvalidOperationException("Solo se puede usar en consultas LINQ-to-SQL.");
@@ -213,5 +230,28 @@ public class ContableAIDbContext : DbContext
             .HasColumnType("xid")
             .ValueGeneratedOnAddOrUpdate()
             .IsConcurrencyToken();
+
+        // ==========================================
+        // Global Query Filters — Aislamiento multi-tenant (fix IDOR/BOLA C-1)
+        // ==========================================
+        // Por defecto, TODA consulta LINQ sobre estas entidades queda acotada al estudio
+        // (StudioTenantId) del usuario autenticado, cerrando la clase entera de accesos
+        // cross-tenant por ID. El filtro se desactiva (_tenantFilterDisabled) cuando no hay
+        // tenant (seed / background jobs / login) o el usuario es SystemAdmin.
+        //
+        // Contextos que necesitan saltear el filtro deliberadamente usan .IgnoreQueryFilters():
+        //   · chequeo de unicidad GLOBAL de CUIT (coherente con el índice único de BD)
+        //   · lecturas de deduplicación del UploadBankStatementHandler (ya auto-scoped por CompanyId)
+
+        // Company: ancla directa por StudioTenantId (string).
+        modelBuilder.Entity<Company>()
+            .HasQueryFilter(c => _tenantFilterDisabled || c.StudioTenantId == _currentTenantId);
+
+        // BankTransaction: sin columna de estudio propia → se ancla vía la navegación Company.
+        // Las transacciones sin empresa (CompanyId null, bucket ESTUDIO_DEFAULT) quedan ocultas
+        // a los usuarios con tenant, en línea con los listados que ya exigen CompanyId propio.
+        modelBuilder.Entity<BankTransaction>()
+            .HasQueryFilter(b => _tenantFilterDisabled
+                                 || (b.Company != null && b.Company.StudioTenantId == _currentTenantId));
     }
 }
