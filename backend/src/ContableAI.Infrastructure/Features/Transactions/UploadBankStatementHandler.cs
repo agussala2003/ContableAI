@@ -20,6 +20,28 @@ public sealed class UploadBankStatementHandler
 
     private const long MaxFileSizeBytes = 25 * 1024 * 1024;
 
+    // ── Firmas binarias (magic bytes) esperadas por extensión (M-2) ──────────────
+    private static readonly byte[] SigPdf  = "%PDF-"u8.ToArray();
+    private static readonly byte[] SigZip  = [0x50, 0x4B, 0x03, 0x04];               // .xlsx (OOXML = ZIP)
+    private static readonly byte[] SigOle2 = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]; // .xls (OLE2 legacy)
+
+    /// <summary>
+    /// Verifica que el contenido empiece con la firma binaria correspondiente a su extensión.
+    /// CSV es texto plano sin firma → se acepta. Cualquier otra extensión → inválida.
+    /// </summary>
+    internal static bool HasValidSignature(string ext, byte[] content)
+    {
+        var span = content.AsSpan();
+        return ext.ToLowerInvariant() switch
+        {
+            ".csv"  => true,
+            ".pdf"  => span.StartsWith(SigPdf),
+            ".xlsx" => span.StartsWith(SigZip),
+            ".xls"  => span.StartsWith(SigOle2),
+            _       => false,
+        };
+    }
+
     private readonly ContableAIDbContext    _db;
     private readonly IBankParserService     _parser;
     private readonly IClassificationService _classifier;
@@ -61,6 +83,13 @@ public sealed class UploadBankStatementHandler
             if (!AllowedExtensions.Contains(ext))
                 return Result<UploadBankStatementResponse>.Failure(
                     $"Formato no soportado para '{file.FileName}'. Solo se permiten CSV, XLSX y PDF.");
+
+            // M-2: validar la firma binaria (magic bytes), no solo la extensión. Impide que un
+            // binario arbitrario renombrado a .pdf/.xlsx llegue a los parsers. Los archivos vacíos
+            // se dejan pasar acá y se saltean más abajo (file.Length == 0 → continue).
+            if (file.Length > 0 && !HasValidSignature(ext, file.Content))
+                return Result<UploadBankStatementResponse>.Failure(
+                    $"El archivo '{file.FileName}' no coincide con su extensión (firma binaria inválida).");
         }
 
         // ── Company resolution & tenant check ─────────────────────────────────
