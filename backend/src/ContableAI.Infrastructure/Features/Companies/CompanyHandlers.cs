@@ -125,10 +125,11 @@ public sealed class CreateCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(CreateCompanyCommand cmd, CancellationToken ct)
     {
-        // IgnoreQueryFilters: la unicidad de CUIT es GLOBAL (el índice único de BD lo es),
-        // así que el chequeo debe ver todos los estudios para no chocar contra la constraint.
-        if (await _db.Companies.IgnoreQueryFilters().AnyAsync(c => c.Cuit == cmd.Cuit, ct))
-            return Result<CompanyResponse>.Conflict($"Ya existe una empresa con CUIT {cmd.Cuit}.");
+        // M-3: la unicidad del CUIT es POR ESTUDIO (índice único compuesto StudioTenantId+Cuit),
+        // de modo que dos estudios distintos pueden gestionar el mismo contribuyente de forma
+        // independiente. El chequeo se acota explícitamente al estudio del comando.
+        if (await _db.Companies.AnyAsync(c => c.StudioTenantId == cmd.StudioTenantId && c.Cuit == cmd.Cuit, ct))
+            return Result<CompanyResponse>.Conflict($"Ya existe una empresa con CUIT {cmd.Cuit} en este estudio.");
 
         if (!await _quota.CanAddCompanyAsync(cmd.StudioTenantId))
             return Result<CompanyResponse>.PaymentRequired(

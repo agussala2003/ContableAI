@@ -113,8 +113,10 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<Company>()
             .HasIndex(c => c.StudioTenantId);
 
+        // M-3: unicidad de CUIT POR ESTUDIO (no global): dos estudios pueden gestionar el
+        // mismo contribuyente. El índice compuesto respalda a nivel de BD el chequeo del handler.
         modelBuilder.Entity<Company>()
-            .HasIndex(c => c.Cuit)
+            .HasIndex(c => new { c.StudioTenantId, c.Cuit })
             .IsUnique();
 
         // ==========================================
