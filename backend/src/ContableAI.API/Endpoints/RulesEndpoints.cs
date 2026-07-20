@@ -44,6 +44,7 @@ public static class RulesEndpoints
 
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("UpdateRule")
         .WithTags("Reglas")
         .WithSummary("Actualizar una regla de clasificación de empresa.")
@@ -59,6 +60,7 @@ public static class RulesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeleteRule")
         .WithTags("Reglas")
         .WithSummary("Eliminar una regla de clasificación de empresa.")
@@ -74,6 +76,7 @@ public static class RulesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeactivateRule")
         .WithTags("Reglas")
         .WithSummary("Desactivar (soft-delete) una regla.")
@@ -88,6 +91,7 @@ public static class RulesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("ActivateRule")
         .WithTags("Reglas")
         .WithSummary("Activar una regla previamente desactivada.")
@@ -158,6 +162,7 @@ public static class RulesEndpoints
                 AppliedAccount = rule.TargetAccount,
             });
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("ReapplyRule")
         .WithTags("Reglas")
         .WithSummary("Reaplicar una regla sobre movimientos sin clasificar ya cargados.")
@@ -189,7 +194,7 @@ public static class RulesEndpoints
         .WithName("ClearSuggestionsDebugLog")
         .WithTags("Reglas", "IA Proactiva")
         .WithSummary("Limpia el log de debug para empezar una sesión de prueba desde cero.")
-        .RequireAuthorization(p => p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()))
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .Produces(200);
 
         // Suggestion endpoints (GET/accept/reject) -> CompanyEndpoints.cs
@@ -219,6 +224,7 @@ public static class RulesEndpoints
                 ? result.ToCreatedResult($"/api/studio/rules/{result.Value?.Id}")
                 : result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("CreateStudioRule")
         .WithTags("Reglas", "Estudio")
         .WithSummary("Crear una regla global de estudio.")

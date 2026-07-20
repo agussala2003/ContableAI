@@ -41,12 +41,15 @@
       </div>
 
       <div class="flex items-center gap-1.5">
+        <!-- M-4: borrado masivo de asientos solo para el titular del estudio -->
+        @if (isStudioOwner) {
         <button (click)="deleteAllEntries()" [disabled]="isDeletingAll() || filteredEntries().length === 0" title="Borrar todos los asientos del alcance actual"
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 transition-colors shadow-sm">
           @if (isDeletingAll()) { <lucide-icon name="loader" class="w-3.5 h-3.5 animate-spin"></lucide-icon> }
           @else { <lucide-icon name="trash-2" class="w-3.5 h-3.5"></lucide-icon> }
           <span class="hidden sm:inline">Borrar todos</span>
         </button>
+        }
 
         <button id="tour-journal-export" (click)="exportExcel()" [disabled]="isExporting() || filteredEntries().length === 0" title="Exportar Excel"
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm">
@@ -250,7 +253,7 @@
                     </div>
 
                     <div class="px-2 py-1.5 flex items-center justify-center">
-                      @if (lineIdx === 0) {
+                      @if (lineIdx === 0 && isStudioOwner) {
                         <button (click)="deleteEntry(entry.id)" [disabled]="deletingId() === entry.id" title="Eliminar asiento"
                           class="p-1.5 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40 transition-colors">
                           @if (deletingId() === entry.id) { <lucide-icon name="loader" class="w-3.5 h-3.5 animate-spin"></lucide-icon> }

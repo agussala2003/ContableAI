@@ -130,6 +130,7 @@ public static class JournalEntriesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeleteJournalEntry")
         .WithTags("Libro Diario")
         .WithSummary("Revertir un asiento contable.")
@@ -172,6 +173,7 @@ public static class JournalEntriesEndpoints
             var result = await mediator.Send(cmd);
             return result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeleteAllJournalEntries")
         .WithTags("Libro Diario")
         .WithSummary("Borrar masivamente asientos contables por alcance filtrado.")

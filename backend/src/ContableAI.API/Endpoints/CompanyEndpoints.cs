@@ -55,6 +55,7 @@ public static class CompanyEndpoints
                 ? result.ToCreatedResult($"/api/companies/{result.Value?.Id}")
                 : result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("CreateCompany")
         .WithTags("Empresas")
         .WithSummary("Crear una nueva empresa.")
@@ -72,6 +73,7 @@ public static class CompanyEndpoints
             var result = await mediator.Send(cmd);
             return result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("UpdateCompany")
         .WithTags("Empresas")
         .WithSummary("Actualizar parcialmente una empresa.")
@@ -84,6 +86,7 @@ public static class CompanyEndpoints
             var result = await mediator.Send(new DeleteCompanyCommand(id));
             return result.IsSuccess ? Results.NoContent() : result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeleteCompany")
         .WithTags("Empresas")
         .WithSummary("Dar de baja una empresa (IsActive = false).")
@@ -114,6 +117,7 @@ public static class CompanyEndpoints
                 ? result.ToCreatedResult($"/api/companies/{companyId}/rules/{result.Value?.Id}")
                 : result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("CreateCompanyRule")
         .WithTags("Reglas")
         .WithSummary("Agregar una regla de clasificación a una empresa.")
@@ -150,6 +154,7 @@ public static class CompanyEndpoints
                     new { Rule = result.Value!.Rule, UpdatedTransactionCount = result.Value.UpdatedTransactionCount })
                 : result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("AcceptRuleSuggestion")
         .WithTags("Reglas", "IA Proactiva")
         .WithSummary("Aceptar una sugerencia")
@@ -166,6 +171,7 @@ public static class CompanyEndpoints
             var result = await mediator.Send(new RejectRuleSuggestionCommand(companyId, id));
             return result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("RejectRuleSuggestion")
         .WithTags("Reglas", "IA Proactiva")
         .WithSummary("Rechazar una sugerencia")
@@ -270,6 +276,7 @@ public static class CompanyEndpoints
 
             return Results.Ok(new { NewSuggestions = newSuggestions });
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("RecalculateRuleSuggestions")
         .WithTags("Reglas", "IA Proactiva")
         .WithSummary("Forzar recalculate de sugerencias de reglas para una empresa (sin esperar el job de 24h).")

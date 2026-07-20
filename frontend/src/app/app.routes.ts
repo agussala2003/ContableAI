@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
+import { ownerGuard } from './core/guards/owner.guard';
 
 export const routes: Routes = [
   {
@@ -35,6 +36,7 @@ export const routes: Routes = [
       {
         path: 'studio-rules',
         loadComponent: () => import('./features/rules/pages/studio-rules-page/studio-rules-page').then(m => m.StudioRulesPage),
+        canActivate: [ownerGuard], // M-4: gestión de reglas de estudio solo para StudioOwner
       },
       {
         path: 'admin',
