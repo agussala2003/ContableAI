@@ -14,10 +14,7 @@ describe('App', () => {
     expect(app).toBeTruthy();
   });
 
-  it('should render title', async () => {
-    const fixture = TestBed.createComponent(App);
-    await fixture.whenStable();
-    const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('h1')?.textContent).toContain('Hello, frontend');
-  });
+  // Nota: se removió el test scaffolding "should render title" de Angular, que exigía
+  // <h1>Hello, frontend</h1> — un texto que la app real (shell con router-outlet) nunca
+  // renderiza. Era un falso rojo permanente sin valor de negocio.
 });
