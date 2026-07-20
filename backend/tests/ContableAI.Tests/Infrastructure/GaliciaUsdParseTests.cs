@@ -16,27 +16,26 @@ namespace ContableAI.Tests.Infrastructure;
 /// </summary>
 public class GaliciaUsdParseTests
 {
-    private static readonly string BaseDir =
-        @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\GALICIA USD";
+    private static readonly string BaseDir = TestData.PathTo("extractos", "GALICIA USD");
 
+    /// <summary>Parsea el PDF pedido; si no está disponible, salta el test (Skipped, no Passed).</summary>
     private static IReadOnlyList<BankTransaction> Parse(string fileName)
     {
         var path = Path.Combine(BaseDir, fileName);
-        if (!File.Exists(path)) return [];
+        TestData.RequireFile(path);
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(path);
         return parser.Parse(stream, fileName).ToList();
     }
 
     // Totales de débitos del período de cada extracto: el bug los insertaba como un débito más.
-    [Theory]
+    [SkippableTheory]
     [InlineData("Extracto_Cuentas_Galicia_2024_11_29.pdf", 10, "31.78")]
     [InlineData("Extracto_Cuentas_Galicia_2024_12_30.pdf", 3, "12.16")]
     [InlineData("Extracto_Cuentas_Galicia_2025_01_31 (1).pdf", 5, "651.56")]
     public void Parse_ExcludesTotalsRow(string fileName, int expectedCount, string totalDebitsRaw)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return; // PDF no disponible en este entorno, omitir
 
         Console.WriteLine($"=== {fileName} — {txs.Count} transacciones ===");
         foreach (var tx in txs)
@@ -59,11 +58,10 @@ public class GaliciaUsdParseTests
             $"el total de débitos ({totalDebits}) no debe insertarse como transacción");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Parse_November_KeepsRealMovementsIntact()
     {
         var txs = Parse("Extracto_Cuentas_Galicia_2024_11_29.pdf");
-        if (txs.Count == 0) return;
 
         // El único crédito real del período debe seguir presente y con su descripción
         var credit = txs.SingleOrDefault(t => t.Type == TransactionType.Credit);

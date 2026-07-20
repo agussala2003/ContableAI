@@ -15,19 +15,19 @@ namespace ContableAI.Tests.Infrastructure;
 /// </summary>
 public class StatementYearDetectionTests
 {
-    private static readonly string BaseDir =
-        @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\BBVA FALLAS 15-7-2026";
+    private static readonly string BaseDir = TestData.PathTo("extractos", "BBVA FALLAS 15-7-2026");
 
+    /// <summary>Parsea el PDF pedido; si no está disponible, salta el test (Skipped, no Passed).</summary>
     private static IReadOnlyList<BankTransaction> Parse(string fileName)
     {
         var path = Path.Combine(BaseDir, fileName);
-        if (!File.Exists(path)) return [];
+        TestData.RequireFile(path);
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(path);
         return parser.Parse(stream, fileName).ToList();
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("0725.pdf", 2025, 7)]
     [InlineData("0825.pdf", 2025, 8)]
     [InlineData("0925.pdf", 2025, 9)]
@@ -37,7 +37,6 @@ public class StatementYearDetectionTests
     public void Parse_AssignsStatementYear_NotNoticeYear(string fileName, int expectedYear, int expectedMonth)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return; // PDF no disponible en este entorno, omitir
 
         // Ningún movimiento puede caer en un año posterior al del extracto (el bug los mandaba a 2026)
         txs.Should().NotContain(t => t.Date.Year > expectedYear,
@@ -56,13 +55,12 @@ public class StatementYearDetectionTests
             $"{fileName}: solo se admite el mes del extracto y el arrastre del mes anterior");
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("1125.pdf")]
     [InlineData("1225 (1).pdf")]
     public void Parse_NovemberAndDecember_NeverLeakIntoNextYear(string fileName)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return;
 
         // Guarda explícita del síntoma reportado: "noviembre y diciembre se pasan como 2026"
         txs.Should().NotContain(t => t.Date.Year == 2026,

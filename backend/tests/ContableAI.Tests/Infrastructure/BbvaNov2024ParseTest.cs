@@ -6,13 +6,13 @@ namespace ContableAI.Tests.Infrastructure;
 
 public class BbvaNov2024ParseTest
 {
-    private const string PdfNov2024 = @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\BBVA\BBVA TB 11.2024.pdf";
-    private const string PdfJan2025 = @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\BBVA\012025.pdf";
+    private static readonly string PdfNov2024 = TestData.PathTo("extractos", "BBVA", "BBVA TB 11.2024.pdf");
+    private static readonly string PdfJan2025 = TestData.PathTo("extractos", "BBVA", "012025.pdf");
 
-    [Fact]
+    [SkippableFact]
     public void ParseNov2024_OutputsTransactions()
     {
-        if (!File.Exists(PdfNov2024)) return;
+        TestData.RequireFile(PdfNov2024);
 
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(PdfNov2024);
@@ -37,10 +37,10 @@ public class BbvaNov2024ParseTest
             "Balance marker must be stripped from all descriptions");
     }
 
-    [Fact]
+    [SkippableFact]
     public void ParseJan2025_DebitoDirectoAndCablevisio()
     {
-        if (!File.Exists(PdfJan2025)) return;
+        TestData.RequireFile(PdfJan2025);
 
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(PdfJan2025);

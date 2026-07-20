@@ -19,19 +19,19 @@ namespace ContableAI.Tests.Infrastructure;
 /// </summary>
 public class BbvaSplitRowDescriptionTests
 {
-    private static readonly string BaseDir =
-        @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\BBVA FALLAS 15-7-2026";
+    private static readonly string BaseDir = TestData.PathTo("extractos", "BBVA FALLAS 15-7-2026");
 
+    /// <summary>Parsea el PDF pedido; si no está disponible, salta el test (Skipped, no Passed).</summary>
     private static IReadOnlyList<BankTransaction> Parse(string fileName)
     {
         var path = Path.Combine(BaseDir, fileName);
-        if (!File.Exists(path)) return [];
+        TestData.RequireFile(path);
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(path);
         return parser.Parse(stream, fileName).ToList();
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("0725.pdf")]
     [InlineData("0825.pdf")]
     [InlineData("0925.pdf")]
@@ -41,7 +41,6 @@ public class BbvaSplitRowDescriptionTests
     public void Parse_NoEmptyOrPlaceholderDescriptions(string fileName)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return; // PDF no disponible en este entorno, omitir
 
         txs.Should().NotContain(t => string.IsNullOrWhiteSpace(t.Description),
             $"{fileName}: ninguna transacción puede quedar sin descripción");
@@ -54,28 +53,26 @@ public class BbvaSplitRowDescriptionTests
 
     // Conteos de "PAGOS AFIP" verificados a mano contra la tabla principal de cada PDF.
     // El bug inflaba este número: movimientos ajenos heredaban la descripción del vecino.
-    [Theory]
+    [SkippableTheory]
     [InlineData("0925.pdf", 4)]
     [InlineData("1125.pdf", 2)]
     [InlineData("1225 (1).pdf", 5)]
     public void Parse_PagosAfipCount_MatchesPdf(string fileName, int expectedCount)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return;
 
         txs.Count(t => t.Description.Contains("PAGOS AFIP", StringComparison.OrdinalIgnoreCase))
             .Should().Be(expectedCount,
                 $"{fileName}: nadie más que las filas reales del PDF puede decir PAGOS AFIP");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Parse_ChequeAtPageBreak_KeepsOwnDateAndDescription()
     {
         // Caso replicado en la auditoría: "09/09 PAGO CHEQUE 48HS CAP.FED. N 90000390" al pie
         // de página quedaba como un débito del 08/09 con descripción "LEY NRO 25.413 SOBRE
         // CREDIT" (prestada del movimiento anterior).
         var txs = Parse("0925.pdf");
-        if (txs.Count == 0) return;
 
         var cheque = txs.SingleOrDefault(t => t.Amount == 5_027_579.04m);
         cheque.Should().NotBeNull("el cheque de $5.027.579,04 debe existir como transacción");
@@ -85,13 +82,12 @@ public class BbvaSplitRowDescriptionTests
         cheque.Description.Should().NotContain("LEY NRO");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Parse_LeyNro25413_OnlyOnRealTaxRows()
     {
         // Los impuestos Ley 25.413 son montos chicos; el bug estampaba esa descripción en
         // transferencias y cheques millonarios.
         var txs = Parse("0925.pdf");
-        if (txs.Count == 0) return;
 
         var suspicious = txs.Where(t =>
             t.Description.Contains("LEY NRO 25.413", StringComparison.OrdinalIgnoreCase) &&

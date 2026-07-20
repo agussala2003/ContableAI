@@ -13,8 +13,8 @@ public class AfipParserTests
 {
     private readonly IAfipParserService _parser = new PdfAfipParserService();
 
-    private const string VepFolder        = @"C:\Users\aguss\Documents\Projects\ContableAI\tests\afip\vep AFIP CONTABLE AI";
-    private const string RootAfipFolder   = @"C:\Users\aguss\Documents\Projects\ContableAI\tests\afip";
+    private static readonly string VepFolder      = TestData.PathTo("afip", "vep AFIP CONTABLE AI");
+    private static readonly string RootAfipFolder = TestData.Afip;
 
     [Fact]
     public void ParsePdf_EmptyStream_ReturnsEmpty()
@@ -30,11 +30,11 @@ public class AfipParserTests
     }
 
     // ── IVA A Pagar ───────────────────────────────────────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_IvaDJ_ExtractsTaxNameAndAmount()
     {
         var path = Path.Combine(VepFolder, "afip_vep_cuit_30703957540_nrovep_1383967092_nropago_284000592185.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -46,11 +46,11 @@ public class AfipParserTests
     }
 
     // ── Cargas Sociales (SIJP) ────────────────────────────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_SijpDJ_ExtractsCargas()
     {
         var path = Path.Combine(VepFolder, "afip_vep_cuit_30703957540_nrovep_1391317468_nropago_244000069711.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -62,11 +62,11 @@ public class AfipParserTests
     }
 
     // ── Pago IIBB (CM-PY) ─────────────────────────────────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_CmPyp_ExtractsPagoIIBB()
     {
         var path = Path.Combine(VepFolder, "afip_vep_cuit_30703957540_nrovep_1395814020_nropago_274000322223.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -78,11 +78,11 @@ public class AfipParserTests
     }
 
     // ── VEP Consolidado (VCON) ───────────────────────────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_VconPdf_ExtractsVepConsolidado()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1591844188_nropago_2163421783.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -93,11 +93,11 @@ public class AfipParserTests
         result[0].Amount.Should().Be(274484.61m);
     }
 
-    [Fact]
+    [SkippableFact]
     public void Parse_Vcon2Pdf_ExtractsVepConsolidado()
     {
         var path = Path.Combine(VepFolder, "afip_vep_cuit_30703957540_nrovep_1509503815_nropago_234000204667 (1).pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -108,11 +108,11 @@ public class AfipParserTests
     }
 
     // ── Seg. Riesgo Trabajo (ARCA OTROS PAGOS + ASEG.RIESGO en body) ─────────
-    [Fact]
+    [SkippableFact]
     public void Parse_ArcaAseg_ExtractsSegRiesgoTrabajo()
     {
         var path = Path.Combine(VepFolder, "afip_vep_cuit_30703957540_nrovep_1489200424_nropago_224000561413 (1).pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -123,11 +123,11 @@ public class AfipParserTests
     }
 
     // ── IVA A Pagar via ARCA OTROS PAGOS (body scan) ─────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_ArcaIva_ExtractsIvaAPagar()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1588342826_nropago_2162860848.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -139,11 +139,11 @@ public class AfipParserTests
     }
 
     // ── Honorarios Fiscales (HEF-RF) ─────────────────────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_HefRf_ExtractsHonorariosFiscales()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1452154187_nropago_2037436526 (1).pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -154,11 +154,11 @@ public class AfipParserTests
     }
 
     // ── Plan de Facilidades (MIS FACILIDADES) ────────────────────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_MisFacilidades_ExtractsPlanFacilidades()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1566053347_nropago_2141556156.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -170,11 +170,11 @@ public class AfipParserTests
     }
 
     // ── Cargas Sociales via ARCA OTROS PAGOS multa (body scan) ───────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_AfipMulta_ExtractsCargas()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1250785244_nropago_1872100751 (1).pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -185,11 +185,11 @@ public class AfipParserTests
     }
 
     // ── VEP expirado sin IMPORTE PAGADO: debe ser ignorado ───────────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_ExpiredVepWithoutImporte_ReturnsEmpty()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1181355860.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -198,11 +198,11 @@ public class AfipParserTests
     }
 
     // ── VEP pendiente (usa Fecha Generación + Importe total a pagar) ─────────
-    [Fact]
+    [SkippableFact]
     public void Parse_PendingVep_UsesGeneracionDateAndTotalImporte()
     {
         var path = Path.Combine(RootAfipFolder, "afip_vep_cuit_30715723693_nrovep_1593072109.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -214,12 +214,12 @@ public class AfipParserTests
     }
 
     // ── PDF consolidado (ARCA - Seti - Consulta VEP): multi-fila ─────────────
-    [Fact]
+    [SkippableFact]
     public void Parse_ConsolidatedVep_ExtractsOnlyPaidMappedRows()
     {
         var path = Path.Combine(RootAfipFolder, "PDF consolidado VEP",
             "setidj_consultaveps_usuario_20224325399_fecha_20260531_204454.pdf");
-        if (!File.Exists(path)) return;
+        TestData.RequireFile(path);
 
         using var s = File.OpenRead(path);
         var result = _parser.ParsePdf(s).ToList();
@@ -251,13 +251,10 @@ public class AfipParserTests
     }
 
     // ── Smoke test: todos los PDFs del dataset deben devolver exactamente 1 resultado ──
-    [Fact]
+    [SkippableFact]
     public void Parse_AllVepDataset_EachYieldsOneResult()
     {
-        if (!Directory.Exists(VepFolder)) return;
-
-        var files = Directory.GetFiles(VepFolder, "*.pdf");
-        files.Should().NotBeEmpty();
+        var files = TestData.RequirePdfs(VepFolder);
 
         var failures = new List<string>();
         foreach (var file in files)

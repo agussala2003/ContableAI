@@ -13,13 +13,13 @@ namespace ContableAI.Tests.Infrastructure;
 /// </summary>
 public class BbvaFixPreProdParseTest
 {
-    private static readonly string BaseDir =
-        @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\FIX PREPROD";
+    private static readonly string BaseDir = TestData.PathTo("extractos", "FIX PREPROD");
 
+    /// <summary>Parsea el PDF pedido; si no está disponible, salta el test (Skipped, no Passed).</summary>
     private static IReadOnlyList<BankTransaction> Parse(string fileName)
     {
         var path = Path.Combine(BaseDir, fileName);
-        if (!File.Exists(path)) return [];
+        TestData.RequireFile(path);
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(path);
         return parser.Parse(stream, fileName).ToList();
@@ -27,7 +27,7 @@ public class BbvaFixPreProdParseTest
 
     // ── Bug 1: fechas en año correcto ────────────────────────────────────────
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("0925.pdf", 2025, 9)]
     [InlineData("1025.pdf", 2025, 10)]
     [InlineData("1125.pdf", 2025, 11)]
@@ -35,7 +35,6 @@ public class BbvaFixPreProdParseTest
     public void Parse_AllDatesHaveCorrectYear(string fileName, int expectedYear, int expectedPrimaryMonth)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return; // archivo no disponible, omitir
 
         Console.WriteLine($"=== {fileName} — {txs.Count} transacciones ===");
         foreach (var tx in txs)
@@ -52,7 +51,7 @@ public class BbvaFixPreProdParseTest
 
     // ── Bug 2: PAGO CHEQUE no debe tener descripción vacía ni fecha desfasada ─
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("0925.pdf")]
     [InlineData("1025.pdf")]
     [InlineData("1125.pdf")]
@@ -60,7 +59,6 @@ public class BbvaFixPreProdParseTest
     public void Parse_PagoChequeHasDescriptionAndNoEmptyRows(string fileName)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return;
 
         // No debe haber transacciones con descripción vacía
         var emptyDesc = txs.Where(t => string.IsNullOrWhiteSpace(t.Description)).ToList();
@@ -78,7 +76,7 @@ public class BbvaFixPreProdParseTest
 
     // ── Sanidad general ──────────────────────────────────────────────────────
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("0925.pdf")]
     [InlineData("1025.pdf")]
     [InlineData("1125.pdf")]
@@ -86,7 +84,6 @@ public class BbvaFixPreProdParseTest
     public void Parse_NoSummaryRowsLeakIntoTransactions(string fileName)
     {
         var txs = Parse(fileName);
-        if (txs.Count == 0) return;
 
         txs.Should().NotContain(t => t.Description.Contains("SALDO AL", StringComparison.OrdinalIgnoreCase),
             "Las filas de saldo final no deben incluirse como transacciones");

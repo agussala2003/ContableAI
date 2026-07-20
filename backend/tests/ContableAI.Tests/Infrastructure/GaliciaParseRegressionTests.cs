@@ -7,20 +7,13 @@ namespace ContableAI.Tests.Infrastructure;
 
 public class GaliciaParseRegressionTests
 {
-    private const string GaliciaFolder = @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\GALICIA";
+    private static readonly string GaliciaFolder = TestData.PathTo("extractos", "GALICIA");
 
-    [Fact]
+    [SkippableFact]
     public void Parse_Galicia_ShouldNotIncludeTotalRetentionSummaryRows()
     {
         var parser = new PdfBankParser();
-        if (!Directory.Exists(GaliciaFolder)) return;
-
-        var galiciaPdfs = Directory
-            .EnumerateFiles(GaliciaFolder, "*.pdf", SearchOption.TopDirectoryOnly)
-            .OrderBy(p => p)
-            .ToList();
-
-        galiciaPdfs.Should().NotBeEmpty("se esperaba al menos un PDF en la carpeta de pruebas de Galicia");
+        var galiciaPdfs = TestData.RequirePdfs(GaliciaFolder);
 
         foreach (var pdfPath in galiciaPdfs)
         {

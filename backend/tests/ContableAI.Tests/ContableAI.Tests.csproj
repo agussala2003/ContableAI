@@ -14,6 +14,21 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- Permite marcar tests como "Skipped" (no "Passed") cuando faltan los PDFs de prueba. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+  </ItemGroup>
+
+  <!--
+    Datos de prueba (PDFs de extractos/AFIP). Viven en backend/tests/TestData (fuera del
+    proyecto) y se copian al output para que los tests los resuelvan por ruta relativa,
+    sin rutas absolutas de ninguna máquina. Los PDFs reales NO se versionan: cada dev/CI
+    coloca los suyos anonimizados. Ver backend/tests/TestData/README.md.
+  -->
+  <ItemGroup>
+    <None Include="..\TestData\**\*"
+          Exclude="..\TestData\**\*.md"
+          Link="TestData\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
