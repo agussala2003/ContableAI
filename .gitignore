@@ -63,9 +63,11 @@ Thumbs.db
 docker-compose.override.yml
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Tests - excluir la carpeta tests
+#  Tests — solo la carpeta /tests de la RAÍZ (PDFs de muestra de extractos/AFIP).
+#  Anclada con "/" para NO ignorar backend/tests (el proyecto de tests .NET, que sí
+#  se versiona: sin el ancla, los tests nuevos quedaban fuera del repo).
 # ──────────────────────────────────────────────────────────────────────────────
-tests/
+/tests/
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Dics - De la carpeta docs solo dejar lo que sea .md
