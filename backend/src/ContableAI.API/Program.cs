@@ -1,3 +1,4 @@
+using ContableAI.API.Common;
 using ContableAI.API.Endpoints;
 using ContableAI.API.Extensions;
 using ContableAI.API.Middleware;
@@ -113,7 +114,11 @@ app.MapPeriodEndpoints();
 app.MapDashboardEndpoints();
 app.MapJobsEndpoints();
 
-app.UseHangfireDashboard("/hangfire");
+// A-2: dashboard de Hangfire protegido — requiere JWT válido con rol SystemAdmin.
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireDashboardAuthorizationFilter() }
+});
 
 app.MapGet("/api/banks", (BankParserFactory factory) =>
     Results.Ok(factory.AvailableBanks.Select(b => new { code = b.Code, displayName = b.DisplayName })))

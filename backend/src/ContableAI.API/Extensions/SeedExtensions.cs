@@ -4,6 +4,7 @@ using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace ContableAI.API.Extensions;
@@ -27,19 +28,43 @@ public static class SeedExtensions
         try { await db.Database.ExecuteSqlRawAsync("CREATE EXTENSION IF NOT EXISTS unaccent;"); }
         catch { /* Si no hay permisos o la extensión no está disponible, continuar */ }
 
-        await SeedAdminUserAsync(db, hasher, logger);
+        await SeedAdminUserAsync(db, hasher, app.Environment, logger);
         await SeedGlobalRulesAsync(db, logger);
         await SeedChartOfAccountsAsync(db, logger);
     }
 
-    private static async Task SeedAdminUserAsync(ContableAIDbContext db, IPasswordHasher<User> hasher, ILogger logger)
+    private const int MinAdminPasswordLength = 12;
+
+    private static async Task SeedAdminUserAsync(
+        ContableAIDbContext db, IPasswordHasher<User> hasher, IHostEnvironment env, ILogger logger)
     {
         const string adminEmail = "admin@contableai.com";
         if (await db.Users.AnyAsync(u => u.Email == adminEmail))
             return;
 
-        // Password leído de env var; fallback a default solo en entornos de desarrollo
-        var adminPassword = Environment.GetEnvironmentVariable("SEED_ADMIN_PASSWORD") ?? "Admin123!";
+        // A-1: la contraseña del admin se toma de la env var SEED_ADMIN_PASSWORD.
+        // Fuera de Development es OBLIGATORIA: si falta, el arranque falla (no hay password
+        // por defecto débil en producción). En Development se admite un fallback local.
+        var adminPassword = Environment.GetEnvironmentVariable("SEED_ADMIN_PASSWORD");
+
+        if (string.IsNullOrWhiteSpace(adminPassword))
+        {
+            if (!env.IsDevelopment())
+                throw new InvalidOperationException(
+                    "SEED_ADMIN_PASSWORD es obligatoria fuera de Development. Definí una contraseña " +
+                    $"fuerte (mínimo {MinAdminPasswordLength} caracteres) en las variables de entorno " +
+                    "del servidor antes de arrancar. No existe contraseña por defecto en producción.");
+
+            adminPassword = "Admin123!";
+            logger.LogWarning(
+                "[Seed] SEED_ADMIN_PASSWORD no definida — usando contraseña de DESARROLLO para {Email}. " +
+                "Nunca uses este fallback en producción.", adminEmail);
+        }
+        else if (adminPassword.Length < MinAdminPasswordLength)
+        {
+            throw new InvalidOperationException(
+                $"SEED_ADMIN_PASSWORD debe tener al menos {MinAdminPasswordLength} caracteres.");
+        }
 
         var admin = new User
         {
