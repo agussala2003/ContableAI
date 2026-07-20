@@ -2,16 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  backend-build:
-    name: Backend Build
+  backend:
+    name: Backend Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -30,8 +30,15 @@ jobs:
         run: dotnet build ./ContableAI.slnx --no-restore --configuration Release
         working-directory: backend
 
-  frontend-build:
-    name: Frontend Build
+      # La CI falla si algún test no pasa (o si el proyecto de tests no compila).
+      # Los tests que dependen de PDFs reales (no versionados) se reportan como "Skipped",
+      # nunca como "Passed" en verde: ver backend/tests/TestData/README.md.
+      - name: Test
+        run: dotnet test ./ContableAI.slnx --no-build --configuration Release --verbosity normal
+        working-directory: backend
+
+  frontend:
+    name: Frontend Build & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -50,4 +57,10 @@ jobs:
 
       - name: Build
         run: npm run build
+        working-directory: frontend
+
+      # ng test → runner Vitest sobre jsdom (Node, headless). --no-watch fuerza una
+      # única corrida y salida con código de error si algún spec falla.
+      - name: Test
+        run: npm test -- --no-watch
         working-directory: frontend
