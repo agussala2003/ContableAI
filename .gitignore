@@ -45,6 +45,9 @@ frontend/.env.*
 .env.*.local
 appsettings.Production.json
 
+# Plantilla de referencia SIN valores reales — sí se versiona
+!.env.template
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  IDEs y herramientas de desarrollo local
 # ──────────────────────────────────────────────────────────────────────────────

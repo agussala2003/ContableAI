@@ -1,22 +1,21 @@
 services:
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    environment:
-      ACCEPT_EULA: "Y"
-      SA_PASSWORD: "YourStrongPass123!"
-    ports:
-      - "1433:1433"
-
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: CHANGE_ME
-      POSTGRES_DB: contableai_dev
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Sin valor por defecto: `docker compose up` falla si POSTGRES_PASSWORD no está
+      # definida en el archivo .env local. Nunca hardcodear credenciales acá.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatoria (definila en .env)}
+      POSTGRES_DB: ${POSTGRES_DB:-contableai_dev}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-contableai_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:
