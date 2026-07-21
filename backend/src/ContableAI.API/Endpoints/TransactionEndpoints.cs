@@ -242,21 +242,35 @@ public static class TransactionEndpoints
             if (!string.IsNullOrWhiteSpace(search))
                 filterBaseQuery = filterBaseQuery.Where(t => t.Description.Contains(search));
 
-            // ── Consolidación 1: 3 queries → 1 (accounts + months + years) ──
-            // Una sola query proyecta las 3 columnas livianas; los Distinct/Sort se hacen en memoria.
-            var filterMeta = await filterBaseQuery
-                .Select(t => new { t.AssignedAccount, Month = t.Date.Month, Year = t.Date.Year })
+            // C-3: antes una sola query traía TODAS las filas filtradas (AssignedAccount/mes/año de
+            // cada transacción) solo para poblar los dropdowns de filtro — con un estudio grande eso
+            // materializaba la tabla entera en cada carga de la grilla. Ahora son 3 queries de
+            // valores DISTINCT resueltas en Postgres (el índice IX_BankTransactions_CompanyId_Date
+            // cubre el filtro por empresa+fecha); solo el normalizado "Pending"/orden de cuentas se
+            // hace en memoria, y sobre un set chico (cuentas distintas), no sobre todas las filas.
+            var distinctAccounts = await filterBaseQuery
+                .Select(t => t.AssignedAccount)
+                .Distinct()
                 .ToListAsync();
 
-            var normalizedAccounts = filterMeta
-                .Select(x => string.IsNullOrWhiteSpace(x.AssignedAccount) ? "Pending" : x.AssignedAccount.Trim())
+            var normalizedAccounts = distinctAccounts
+                .Select(a => string.IsNullOrWhiteSpace(a) ? "Pending" : a.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(a => a == "Pending" ? 0 : 1)
                 .ThenBy(a => a, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var availableMonths = filterMeta.Select(x => x.Month).Distinct().OrderBy(m => m).ToList();
-            var availableYears  = filterMeta.Select(x => x.Year).Distinct().OrderByDescending(y => y).ToList();
+            var availableMonths = await filterBaseQuery
+                .Select(t => t.Date.Month)
+                .Distinct()
+                .OrderBy(m => m)
+                .ToListAsync();
+
+            var availableYears = await filterBaseQuery
+                .Select(t => t.Date.Year)
+                .Distinct()
+                .OrderByDescending(y => y)
+                .ToListAsync();
 
             pageSize = Math.Clamp(pageSize, 1, 500);
             page     = Math.Max(1, page);
@@ -496,7 +510,8 @@ public static class TransactionEndpoints
 
         app.MapDelete("/api/transactions", async (
             ICurrentTenantService tenant,
-            ContableAIDbContext dbContext) =>
+            ContableAIDbContext   dbContext,
+            HttpContext           httpContext) =>
         {
             var studioId = tenant.StudioTenantId;
 
@@ -506,16 +521,34 @@ public static class TransactionEndpoints
                 .Select(c => c.Id)
                 .ToListAsync();
 
-            var allTransactions = await dbContext.BankTransactions
+            // P-10: ExecuteDeleteAsync borra directo en SQL sin materializar ni trackear las filas.
+            // Al no pasar por SaveChangesAsync tampoco dispara AuditInterceptor (que audita altas/
+            // bajas de BankTransaction una por una) — para no perder el rastro de "se borró todo" se
+            // agrega abajo UNA fila de auditoría consolidada con la cantidad borrada, en vez de las N
+            // filas individuales que generaba el interceptor (que además serían puro ruido acá).
+            var deletedCount = await dbContext.BankTransactions
                 .Where(t => t.CompanyId.HasValue && studioCompanyIds.Contains(t.CompanyId.Value))
-                .ToListAsync();
+                .ExecuteDeleteAsync();
 
-            if (allTransactions.Count == 0)
+            if (deletedCount == 0)
                 return Results.Ok(new { message = "No había movimientos para limpiar." });
 
-            dbContext.BankTransactions.RemoveRange(allTransactions);
+            var userId = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "system";
+            var userEmail = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "system";
+
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                TenantId   = studioId ?? string.Empty,
+                UserId     = userId,
+                UserEmail  = userEmail,
+                Action     = AuditAction.Deleted.ToString(),
+                EntityName = nameof(BankTransaction),
+                EntityId   = "BULK",
+                Changes    = JsonSerializer.Serialize(new { DeletedCount = deletedCount }),
+            });
             await dbContext.SaveChangesAsync();
-            return Results.Ok(new { message = $"Se eliminaron {allTransactions.Count} movimientos." });
+
+            return Results.Ok(new { message = $"Se eliminaron {deletedCount} movimientos." });
         })
         .WithName("DeleteAllTransactions")
         .WithTags("Transacciones")
