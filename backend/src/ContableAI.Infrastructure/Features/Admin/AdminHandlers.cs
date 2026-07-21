@@ -211,42 +211,27 @@ public sealed class DeleteUserHandler : IRequestHandler<DeleteUserCommand, Resul
 
         if (studioMates == 0)
         {
-            var companyIds = await _db.Companies
-                .Where(c => c.StudioTenantId == user.StudioTenantId)
-                .Select(c => c.Id)
-                .ToListAsync(ct);
-
-            var jeIds = await _db.JournalEntries
-                .Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value))
-                .Select(je => je.Id)
-                .ToListAsync(ct);
-
-            await _db.JournalEntryLines
-                .Where(l => jeIds.Contains(l.JournalEntryId))
-                .ExecuteDeleteAsync(ct);
-            await _db.JournalEntries
-                .Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value))
-                .ExecuteDeleteAsync(ct);
-            await _db.BankTransactions
-                .Where(t => t.CompanyId != null && companyIds.Contains(t.CompanyId.Value))
-                .ExecuteDeleteAsync(ct);
-            await _db.AccountingRules
-                .Where(r => r.CompanyId != null && companyIds.Contains(r.CompanyId.Value))
-                .ExecuteDeleteAsync(ct);
-            await _db.ClosedPeriods
-                .Where(p => p.StudioTenantId == user.StudioTenantId)
-                .ExecuteDeleteAsync(ct);
-            await _db.Companies
-                .Where(c => c.StudioTenantId == user.StudioTenantId)
-                .ExecuteDeleteAsync(ct);
-
-            if (Guid.TryParse(user.StudioTenantId, out var tenantGuid))
-            {
-                await _db.ChartOfAccounts
-                    .Where(c => c.StudioTenantId == tenantGuid)
-                    .ExecuteDeleteAsync(ct);
-            }
+            // Último usuario del estudio → cascada COMPLETA del tenant (misma que el cierre
+            // formal de cuenta, P-1/P-3): incluye reglas de estudio, UploadJobResults,
+            // RefreshTokens, sugerencias, vouchers AFIP y seudonimización de AuditLogs.
+            // El purger también elimina al propio usuario.
+            await StudioTenantPurger.PurgeAsync(_db, user.StudioTenantId, ct);
+            return Result<AdminMessageResponse>.Success(
+                new AdminMessageResponse($"Usuario {user.Email} eliminado junto con todos los datos de su estudio."));
         }
+
+        // Quedan otros usuarios en el estudio: se borra solo este usuario, pero sin dejar
+        // residuos personales (P-3): sesiones activas y email en la auditoría.
+        if (_db.Database.IsRelational())
+        {
+            await _db.RefreshTokens.Where(t => t.UserId == request.Id).ExecuteDeleteAsync(ct);
+        }
+        else
+        {
+            _db.RefreshTokens.RemoveRange(await _db.RefreshTokens.Where(t => t.UserId == request.Id).ToListAsync(ct));
+        }
+
+        await StudioTenantPurger.AnonymizeAuditLogsAsync(_db, studioTenantId: null, [request.Id.ToString()], ct);
 
         _db.Users.Remove(user);
         await _db.SaveChangesAsync(ct);

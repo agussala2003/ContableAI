@@ -40,9 +40,11 @@ public sealed class GetCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(GetCompanyQuery q, CancellationToken ct)
     {
+        // P-2: las empresas dadas de baja (IsActive = false) no se devuelven por ID — para el
+        // consumidor de la API una empresa borrada no existe (mismo 404 que una inexistente).
         var company = await _db.Companies
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == q.Id, ct);
+            .FirstOrDefaultAsync(c => c.Id == q.Id && c.IsActive, ct);
 
         return company is null
             ? Result<CompanyResponse>.NotFound("Company not found.")
@@ -195,7 +197,11 @@ public sealed class DeleteCompanyHandler
         if (company is null)
             return Result<DeletedResponse>.NotFound();
 
-        company.IsActive = false;
+        // P-2: soft-delete con marca temporal. DeletedAt inicia la ventana de retención de
+        // 90 días para la purga diferida (política en docs/AUDITORIA.MD); el job de retención
+        // (P-4) hará el hard-delete de las empresas con DeletedAt vencido.
+        company.IsActive  = false;
+        company.DeletedAt ??= DateTime.UtcNow; // idempotente: un segundo DELETE no corre la ventana
         await _db.SaveChangesAsync(ct);
         return Result<DeletedResponse>.Success(new DeletedResponse("Company deactivated."), 204);
     }

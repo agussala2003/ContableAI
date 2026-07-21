@@ -2,6 +2,7 @@ using ContableAI.API.Common;
 using ContableAI.Application.Features.Admin.Commands;
 using ContableAI.Application.Features.Admin.Queries;
 using MediatR;
+using System.Security.Claims;
 
 namespace ContableAI.API.Endpoints;
 
@@ -105,6 +106,28 @@ public static class AdminEndpoints
         .WithSummary("Eliminar un usuario y todos los datos de su estudio.")
         .WithDescription("Si es el último usuario del estudio, elimina en cascada: líneas de asiento, asientos, transacciones, reglas, períodos cerrados, empresas y plan de cuentas propio. No se puede eliminar un SystemAdmin. Acción irreversible.")
         .Produces(200)
+        .Produces(400)
+        .Produces(404);
+
+        app.MapDelete("/api/admin/tenants/{studioTenantId}", async (
+            string studioTenantId,
+            string? reason,
+            ClaimsPrincipal user,
+            IMediator mediator,
+            CancellationToken ct) =>
+        {
+            var requestedBy = user.FindFirst(ClaimTypes.Email)?.Value
+                           ?? user.FindFirst("email")?.Value
+                           ?? "system-admin";
+            var result = await mediator.Send(new DeleteStudioTenantCommand(studioTenantId, requestedBy, reason), ct);
+            return result.ToHttpResult();
+        })
+        .RequireAuthorization(p => p.RequireRole("SystemAdmin"))
+        .WithName("AdminDeleteStudioTenant")
+        .WithTags("Administración", "Privacidad")
+        .WithSummary("Cierre formal de cuenta: eliminar un estudio completo (derecho al olvido).")
+        .WithDescription("Elimina transaccionalmente TODOS los datos del tenant (usuarios, sesiones, empresas —incluidas las dadas de baja—, transacciones, asientos, reglas de empresa y de estudio, sugerencias, comprobantes AFIP, plan de cuentas propio, períodos cerrados y resultados de jobs) y seudonimiza los AuditLogs (email → deleted-user-{id}@anonymized.local, diffs vaciados) conservándolos por trazabilidad legal. Query param opcional: ?reason= (se persiste en el AuditLog de cierre junto con el email del admin ejecutante). Devuelve el conteo por tabla como evidencia. No aplica a tenants con SystemAdmin. Acción irreversible — Ley 25.326 / GDPR (P-1).")
+        .Produces<DeleteStudioTenantResponse>(200)
         .Produces(400)
         .Produces(404);
 

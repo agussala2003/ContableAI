@@ -333,25 +333,37 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
 > hallazgo fue remediado aún: todo el bloque queda pendiente.** Veredicto de licencias: no hay
 > GPL/AGPL en ninguna dependencia directa (backend ni frontend).
 
-## ⏳ Pendiente — Riesgos de Privacidad de Datos (P-1 a P-6)
+## Ya completado — Privacidad de Datos (P-1, P-2 y P-3)
 
-- [ ] **🔴 P-1 · Sin mecanismo formal de cierre de cuenta (derecho al olvido).** No existe
-  endpoint, job ni script que un estudio pueda usar para solicitar el borrado de su cuenta.
-  El único hard-delete es `DELETE /api/admin/users/{id}` (solo SystemAdmin,
-  [AdminHandlers.cs](../backend/src/ContableAI.Infrastructure/Features/Admin/AdminHandlers.cs)),
-  y su cascada es **incompleta**: sobreviven `AuditLogs` (con email del usuario),
-  `UploadJobResults`, las reglas a nivel estudio (`CompanyId == null`) y los `RefreshTokens`.
-  → Diseñar un comando `DeleteStudioTenant` que cubra todas las tablas del tenant, con
-  anonimización del email en auditoría y registro del pedido y de la ejecución.
-- [ ] **🔴 P-2 · Soft-delete inseguro de `Company`.** `DELETE /api/companies/{id}` solo setea
-  `IsActive = false`: transacciones, asientos, reglas y CUIT quedan vivos en la base
-  indefinidamente. No hay `DeletedAt` ni job de purga diferida, y `GetCompanyHandler` sigue
-  devolviendo por ID empresas "borradas".
-  → Agregar marca temporal de borrado + política de purga documentada (p. ej. hard-delete a
-  los 90 días).
-- [ ] **🟠 P-3 · Datos residuales del hard-delete admin.** (Detalle de P-1: `AuditLogs`,
-  `UploadJobResults`, reglas de estudio, `RefreshTokens` huérfanos.) Cubierto por el diseño
-  del comando de cierre de cuenta.
+- [x] **🔴 P-1 · Cierre formal de cuenta implementado (2026-07-21).** Nuevo comando
+  `DeleteStudioTenantCommand` + endpoint `DELETE /api/admin/tenants/{studioTenantId}` (solo
+  `SystemAdmin`, con `?reason=` opcional). Ejecuta dentro de una transacción (execution
+  strategy compatible con el retry de R-1) la cascada completa del tenant vía
+  [StudioTenantPurger.cs](../backend/src/ContableAI.Infrastructure/Features/Admin/StudioTenantPurger.cs):
+  usuarios, `RefreshTokens`, empresas (incluidas las soft-deleted), transacciones, asientos y
+  líneas, vouchers AFIP, reglas de empresa **y de estudio**, sugerencias, plan de cuentas
+  propio, períodos cerrados, `UploadJobResults` y purga defensiva de `StagedUploadFiles`
+  huérfanos (> 24 h, adelanto de P-5). Los `AuditLogs` NO se borran: se **seudonimizan**
+  (email → `deleted-user-{userId}@anonymized.local`, diffs `Changes` vaciados — pueden
+  contener importes y CUITs), y la ejecución queda registrada con un AuditLog de cierre
+  (solicitante, motivo y conteo por tabla, que también devuelve la API como evidencia).
+  Deletes set-based (`ExecuteDeleteAsync`/`ExecuteUpdateAsync`, P-10) en el proveedor
+  relacional. Tests de integración en
+  [DeleteStudioTenantHandlerTests.cs](../backend/tests/ContableAI.Tests/Infrastructure/DeleteStudioTenantHandlerTests.cs).
+- [x] **🔴 P-2 · Soft-delete de `Company` corregido (2026-07-21).** `Company.DeletedAt`
+  (migración `AddCompanyDeletedAt`) se estampa en el DELETE de forma idempotente (un segundo
+  DELETE no corre la ventana), y `GetCompanyHandler` ya no devuelve por ID empresas dadas de
+  baja (404, igual que una inexistente). **Política de purga diferida:** las empresas con
+  `DeletedAt` > 90 días deben hard-deletearse; la ejecución recurrente queda a cargo del job
+  de retención de P-4 (pendiente), que ya tiene en `DeletedAt` la marca que necesita. Tests en
+  [CompanySoftDeleteTests.cs](../backend/tests/ContableAI.Tests/Infrastructure/CompanySoftDeleteTests.cs).
+- [x] **🟠 P-3 · Residuos del hard-delete admin eliminados (2026-07-21).** `DeleteUserHandler`
+  ahora delega en el mismo `StudioTenantPurger` cuando cae el último usuario del estudio
+  (cascada idéntica al cierre formal, sin residuos), y cuando quedan otros usuarios borra los
+  `RefreshTokens` del usuario y seudonimiza su email en `AuditLogs`.
+
+## ⏳ Pendiente — Riesgos de Privacidad de Datos (P-4 a P-6)
+
 - [ ] **🟠 P-4 · `UploadJobResults` acumula datos financieros sin retención.** El JSON completo
   del resultado de cada procesamiento de extracto se persiste (jsonb, por `StudioTenantId`) y
   **nunca se borra** — solo existe el `Add`.
@@ -360,9 +372,13 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   los bytes (bien), pero si el job de Hangfire nunca ejecuta (reintentos agotados, deploy a
   mitad de cola), el archivo completo queda huérfano en la base para siempre.
   → Incluir purga de huérfanos por `CreatedAt` en el mismo job de retención de P-4.
+  *Avance parcial (P-1):* el cierre de cuenta ya purga defensivamente los staged files con
+  más de 24 h; falta el job recurrente.
 - [ ] **🟡 P-6 · `AuditLogs` sin política de retención documentada.** Retención larga es
   defendible en una plataforma financiera, pero debe documentarse como política e incluir la
   seudonimización del email tras el cierre de cuenta.
+  *Avance parcial (P-1):* la seudonimización tras el cierre de cuenta ya está implementada
+  (`StudioTenantPurger.AnonymizeAuditLogsAsync`); falta documentar la política de retención.
 
 ## Ya completado — Riesgos de Licenciamiento (L-1 y L-4)
 

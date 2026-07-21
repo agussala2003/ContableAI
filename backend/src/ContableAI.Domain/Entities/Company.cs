@@ -22,6 +22,14 @@ public class Company
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// Fecha UTC de la baja (soft-delete). <c>null</c> = empresa nunca dada de baja.
+    /// Marca el inicio de la ventana de retención para la purga diferida (P-2: hard-delete
+    /// a los 90 días, ver política en docs/AUDITORIA.MD); permite además auditar cuándo
+    /// se solicitó la baja.
+    /// </summary>
+    public DateTime? DeletedAt { get; set; }
+
     /// <summary>Multi-tenant: identifica al estudio contable propietario de esta empresa.</summary>
     public string StudioTenantId { get; set; } = "ESTUDIO_DEFAULT";
 
