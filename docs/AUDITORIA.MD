@@ -220,3 +220,63 @@ Multi-moneda (ARS/USD) completo. **No hay que rehacer nada de esto.**
 - [ ] **P-9 · Configurar `WorkerCount`/colas de Hangfire** explícitamente, para que el upload
   asíncrono (ya acotado por su propio `SemaphoreSlim`) no compita sin límite por workers con
   otros jobs (cruce AFIP, generación de asientos) en el mismo proceso que la API.
+
+---
+
+## ☁️ Auditoría de Arquitectura e Infraestructura — Estado
+
+Bloque de *Infrastructure & Observability Hardening* ejecutado sobre `dev`. Cierra los
+hallazgos de la auditoría SRE (Riesgos de Infraestructura, Brechas de Observabilidad y
+Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
+*cloud-readiness* para contenedores efímeros (Render) y trazabilidad de punta a punta.
+
+### ✅ Resuelto
+
+- [x] **R-1 · Resiliencia de conexión a PostgreSQL.** `UseNpgsql` con
+  `EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: 10s)` + `CommandTimeout(30)`
+  ([ServiceExtensions.cs](../backend/src/ContableAI.API/Extensions/ServiceExtensions.cs)).
+  Los fallos transitorios / failovers del PostgreSQL gestionado se reintentan con backoff
+  en vez de propagarse al usuario. No hizo falta `CreateExecutionStrategy`: no existe uso de
+  `BeginTransaction()` en el código.
+- [x] **R-2 / R-3 · Health checks reales con separación liveness/readiness.** Antes
+  `AddHealthChecks()` no registraba ningún check y `/healthz` devolvía siempre `Healthy`
+  aunque la base estuviera caída. Ahora `AddNpgSql` (tag `ready`) + dos endpoints:
+  `/health/live` (liveness, sin dependencias externas → un micro-corte de la base no reinicia
+  el contenedor) y `/health/ready` (readiness → PostgreSQL alcanzable)
+  ([Program.cs](../backend/src/ContableAI.API/Program.cs)).
+- [x] **O-2 · Logs aptos para contenedores efímeros.** Eliminado el *Serilog File Sink*
+  (bootstrap y host logger); se perdía en cada redeploy y no se agregaba entre réplicas.
+  Queda solo el Console sink (stdout estructurado), que la plataforma captura. Removido el
+  paquete `Serilog.Sinks.File`.
+- [x] **O-1 · Correlation ID de punta a punta.** Nuevo
+  [`CorrelationIdMiddleware`](../backend/src/ContableAI.API/Middleware/CorrelationIdMiddleware.cs)
+  (lee/genera y **sanitiza** el header `X-Correlation-Id`, lo publica en `LogContext`,
+  `Activity`, `HttpContext.Items`, header de respuesta y un contexto ambiente `AsyncLocal`) +
+  [`HangfireCorrelationIdFilter`](../backend/src/ContableAI.API/Common/HangfireCorrelationIdFilter.cs)
+  (el filtro de cliente captura el ID vía `AsyncLocal` al encolar y el de servidor lo restaura
+  al `LogContext` del worker). Cierra la traza Kestrel → MediatR → Hangfire.
+- [x] **O-3 · `traceId` en `ProblemDetails`.** El `GlobalExceptionHandler` inyecta el
+  Correlation ID como `Extensions["traceId"]`, correlacionando el error que ve el usuario con
+  los logs del servidor. El frontend lo muestra en el toast de error 500 para reporte a soporte.
+- [x] **R-5 (parcial P-7) · `ProactiveLearning` como cron de Hangfire.** Eliminado el
+  `BackgroundService` con `Task.Delay(24h)` (corría en **cada** réplica → trabajo duplicado y
+  *race* al insertar sugerencias; su timer se reiniciaba en cada redeploy). Reemplazado por
+  [`ProactiveLearningJob`](../backend/src/ContableAI.Infrastructure/BackgroundJobs/ProactiveLearningJob.cs)
+  agendado con `RecurringJob.AddOrUpdate(Cron.Daily)`: corrida única garantizada por el lock
+  distribuido de Hangfire sobre PostgreSQL, scheduling durable. *Nota: falta aún el acotado por
+  tenant/página de P-7.*
+- [x] **B-2 · Cloud readiness.** Eliminados los endpoints `suggestions-debug` de
+  `RulesEndpoints.cs` que leían/escribían `logs/suggestions-debug.jsonl` en disco local
+  (código muerto que acoplaba falsamente al file system efímero).
+
+### 🔧 Acciones operativas manuales (fuera del código)
+
+- [ ] **CRÍTICO — Render → Settings → Health Check Path:** cambiar de `/healthz` a
+  **`/health/ready`**. Si no se actualiza, Render seguirá pegándole a la ruta vieja (ahora 404)
+  y marcará el servicio como no saludable, bloqueando el deploy.
+- [ ] Verificar `/health/live` y `/health/ready` tras el primer deploy con estos cambios.
+
+### ⏳ Pendiente relacionado
+
+- **B-1 · Estrategia de backup/retención** (RETEN-01 en `BACKLOG.md`): sin configuración
+  asertiva ni runbook de restore/RPO/RTO. Documentar antes de onboardear clientes reales.

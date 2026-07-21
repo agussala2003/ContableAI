@@ -10,6 +10,10 @@ interface ProblemDetails {
   detail?: string;
   message?: string;
   errors?: Record<string, string[] | string>;
+  // O-3: correlation id que el backend inyecta en el ProblemDetails para correlacionar
+  // el error con los logs del servidor. Puede venir en la raíz o dentro de `extensions`.
+  traceId?: string;
+  extensions?: { traceId?: string };
 }
 
 /**
@@ -109,7 +113,11 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
       // Errores de servidor (500+)
       if (error.status >= 500) {
         const payload = (error.error ?? {}) as ProblemDetails;
-        const msg = payload.detail ?? payload.title ?? payload.message ?? 'Ocurrió un error inesperado, intentá de nuevo.';
+        const baseMsg = payload.detail ?? payload.title ?? payload.message ?? 'Ocurrió un error inesperado, intentá de nuevo.';
+        // O-3: si el backend adjuntó un traceId, mostrarlo para que el usuario pueda
+        // reportarlo a soporte y correlacionarlo con los logs del servidor.
+        const traceId = payload.traceId ?? payload.extensions?.traceId;
+        const msg = traceId ? `${baseMsg} (Traza: ${traceId})` : baseMsg;
         toast.show(msg, 'error');
         return throwError(() => error);
       }
