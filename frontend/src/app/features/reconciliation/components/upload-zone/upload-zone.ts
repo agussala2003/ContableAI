@@ -26,8 +26,20 @@ export class UploadZone {
 
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    if (files.length) this.selectedFiles = files;
+    this.addFiles(Array.from(input.files ?? []));
+    // Permite volver a elegir el mismo archivo (p. ej. tras quitarlo de la lista):
+    // sin esto el <input> no dispara "change" si la selección nativa no cambió.
+    input.value = '';
+  }
+
+  /** Acumula archivos a la selección actual, ignorando los que ya están en la lista. */
+  private addFiles(files: File[]) {
+    if (!files.length) return;
+    const merged = [...this.selectedFiles];
+    for (const file of files) {
+      if (!merged.some(f => f.name === file.name)) merged.push(file);
+    }
+    this.selectedFiles = merged;
   }
 
   onUploadClick() {
@@ -62,7 +74,6 @@ export class UploadZone {
     event.preventDefault();
     event.stopPropagation();
     this.isDragging.set(false);
-    const files = Array.from(event.dataTransfer?.files ?? []);
-    if (files.length) this.selectedFiles = files;
+    this.addFiles(Array.from(event.dataTransfer?.files ?? []));
   }
 }

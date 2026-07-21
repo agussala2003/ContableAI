@@ -1,8 +1,9 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ToastService } from './toast.service';
 import { ConfigService } from '../config/config.service';
+import { SKIP_LOADING } from '../interceptors/loading.interceptor';
 
 export interface JournalEntryLine {
   account: string;
@@ -50,8 +51,12 @@ export class JournalEntryService {
     });
   }
 
+  // Polling cada 3s: SKIP_LOADING evita que cada ciclo dispare el overlay global bloqueante.
   getJobStatus(jobId: string): Observable<{ jobId: string; state: string; createdAt: string }> {
-    return this.http.get<{ jobId: string; state: string; createdAt: string }>(`${this.configService.config().apiUrl}/jobs/${jobId}/status`);
+    return this.http.get<{ jobId: string; state: string; createdAt: string }>(
+      `${this.configService.config().apiUrl}/jobs/${jobId}/status`,
+      { context: new HttpContext().set(SKIP_LOADING, true) },
+    );
   }
 
   getEntries(params?: { companyId?: string; month?: number; year?: number }): Observable<JournalEntry[]> {

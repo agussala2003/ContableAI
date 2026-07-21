@@ -560,16 +560,20 @@ export class ReconciliationService {
     this._isGenerating.set(true);
     this.journalEntryService.generate(ids).subscribe({
       next: (res) => {
-        this._isGenerating.set(false);
         this.toast.success(res.message || 'Generación de asientos iniciada en segundo plano. Esto puede demorar unos minutos.');
-        
+
         if (res.jobId) {
+          // _isGenerating queda en true durante todo el polling: el botón "Asentar" permanece
+          // deshabilitado mientras el job de Hangfire corre, evitando una doble generación.
           timer(3000, 3000).pipe(
             switchMap(() => this.journalEntryService.getJobStatus(res.jobId!)),
             takeWhile(status => status.state === 'Processing' || status.state === 'Enqueued', true),
             takeUntilDestroyed(this.destroyRef),
           ).subscribe({
             next: (status) => {
+              if (status.state === 'Processing' || status.state === 'Enqueued') return;
+              // Cualquier estado terminal (Succeeded, Failed, u otro inesperado) libera el botón.
+              this._isGenerating.set(false);
               if (status.state === 'Succeeded') {
                 this.toast.success('¡Asientos generados correctamente!');
                 this.loadData();
@@ -577,9 +581,13 @@ export class ReconciliationService {
                 this.toast.error('La generación de asientos falló. Revisa los logs del servidor.');
               }
             },
-            error: () => this.toast.error('Error al monitorear el estado de la generación de asientos.'),
+            error: () => {
+              this._isGenerating.set(false);
+              this.toast.error('Error al monitorear el estado de la generación de asientos.');
+            },
           });
         } else {
+          this._isGenerating.set(false);
           this.loadData();
         }
       },

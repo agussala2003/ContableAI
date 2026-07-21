@@ -1,7 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
+import { SKIP_LOADING } from '../interceptors/loading.interceptor';
 
 export type Currency = 'ARS' | 'USD';
 
@@ -153,8 +154,11 @@ export class Transaction {
     return this.http.post<EnqueueUploadResponse>(`${this.apiUrl}/upload`, formData);
   }
 
+  // Polling cada 2s: SKIP_LOADING evita que cada ciclo dispare el overlay global bloqueante.
   getUploadResult(uploadId: string): Observable<UploadJobResultEnvelope> {
-    return this.http.get<UploadJobResultEnvelope>(`${this.apiUrl}/upload/${uploadId}/result`);
+    return this.http.get<UploadJobResultEnvelope>(`${this.apiUrl}/upload/${uploadId}/result`, {
+      context: new HttpContext().set(SKIP_LOADING, true),
+    });
   }
 
   getTransactions(params: TransactionQueryParams = {}): Observable<PagedResult<BankTransaction>> {
