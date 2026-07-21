@@ -364,17 +364,29 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   defendible en una plataforma financiera, pero debe documentarse como política e incluir la
   seudonimización del email tras el cierre de cuenta.
 
-## ⏳ Pendiente — Riesgos de Licenciamiento (L-1 y L-4)
+## Ya completado — Riesgos de Licenciamiento (L-1)
 
-- [ ] **🔴 L-1 · Procedencia opaca de `UglyToad.PdfPig 1.7.0-custom-5`.** La versión referida en
+- [x] **🔴 L-1 · Migrado al paquete oficial `PdfPig 0.1.15` (2026-07-21).** Se eliminó
+  `UglyToad.PdfPig 1.7.0-custom-5` de
   [ContableAI.Infrastructure.csproj](../backend/src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj)
-  no existe en nuget.org (las oficiales son 0.1.x), el repo no tiene `nuget.config` ni feed
-  local, y el nuspec cacheado no declara licencia, autor ni URL de repositorio (solo un hash
-  de commit). Doble riesgo: cumplimiento (el upstream Apache 2.0 exige conservar
-  LICENSE/NOTICE, imposible de demostrar) y cadena de suministro (el restore solo funciona en
-  máquinas con caché; un entorno limpio falla o podría resolver un paquete ajeno).
-  → Localizar el fork de origen y publicarlo en un feed privado con su LICENSE/NOTICE, o
-  migrar a la versión oficial de PdfPig. **Resolver antes de cualquier due diligence.**
+  y se lo reemplazó por el paquete oficial del proyecto, que publica bajo el **ID `PdfPig`**
+  (autores `UglyToad`, owners `EliotJones`/`BobLd`/`PdfPig`, Apache 2.0, ~26,5M descargas,
+  última estable 0.1.15). El paquete oficial conserva el namespace `UglyToad.PdfPig`, por lo
+  que no hubo cambios de código: `PdfDocument.Open(Stream)`, `GetPages()`, `GetWords()`,
+  `BoundingBox` y `page.Text` funcionan idéntico, se mantienen los `Stream` en memoria y el
+  `SemaphoreSlim(2,2)` del OCR. Suite completa validada contra el dataset real de PDFs
+  (193/193 en verde, extractos y VEPs incluidos).
+  **Hallazgo adicional (más grave que lo auditado):** el ID `UglyToad.PdfPig` en nuget.org
+  NO es del proyecto oficial — pertenece a un tercero no verificado (`grinay`), sin licencia,
+  sin autor real ni URL de repo, con solo dos versiones prerelease (`1.7.0-custom-5` y
+  `0.1.9-alpha001-patch1`). Es decir, no era solo un problema de caché local: cualquier
+  restore limpio descargaba ese paquete de procedencia opaca desde nuget.org. Recomendado:
+  purgar `~/.nuget/packages/uglytoad.pdfpig*` en las máquinas del equipo y considerar
+  bloquear el prefijo `UglyToad.*` vía `nuget.config` (`packageSourceMapping`) para evitar
+  reintroducciones accidentales.
+
+## ⏳ Pendiente — Riesgos de Licenciamiento (L-4)
+
 - [ ] **🟡 L-4 · Gobernanza de MediatR.** La versión en uso (12.4.1) es Apache 2.0, pero a
   partir de v13 MediatR pasó a licenciamiento comercial.
   → Fijar la versión en < 13 y establecer como política no subir de major en dependencias
