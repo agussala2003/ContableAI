@@ -285,3 +285,97 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
 - [ ] Verificar `/health/live` y `/health/ready` tras el primer deploy con estos cambios.
 - [ ] Ver `RUNBOOK_DB.md` §6 para las acciones pendientes de la política de backups
   (verificar ventana de retención de Neon, simulacro de restauración).
+
+---
+
+# 🎨 Auditoría de Usabilidad y Accesibilidad (UX/A11y) — Estado
+
+> Anotado el 2026-07-21. Fase ejecutada en rama `dev`. Los fixes críticos de la conciliación
+> quedaron aplicados en el commit `1e8cc4e`; el resto de los hallazgos queda registrado como
+> pendiente.
+
+## Ya completado (commit `1e8cc4e`)
+
+- **UX-1 · Overlay bloqueante eliminado.** El polling de estado de los jobs (subida de
+  extractos y generación de asientos) usa el contexto `SKIP_LOADING`, de modo que las
+  requests periódicas ya no disparan el overlay global de carga: la UI queda usable mientras
+  el job corre en segundo plano
+  ([transaction.ts](../frontend/src/app/core/services/transaction.ts),
+  [journal-entry.service.ts](../frontend/src/app/core/services/journal-entry.service.ts)).
+- **UX-2 / UX-3 · Estado `_isGenerating` corregido.** El flag se mantiene activo durante todo
+  el ciclo del job (no solo durante la request inicial), lo que deshabilita el botón de
+  generación mientras hay un job en vuelo y evita el **doble asentamiento** por doble clic
+  ([reconciliation.service.ts](../frontend/src/app/features/reconciliation/reconciliation.service.ts)).
+- **FL-1 · Dropzone acumulativa.** La zona de subida de extractos acumula los archivos de
+  selecciones sucesivas en vez de reemplazar la lista anterior
+  ([upload-zone.ts](../frontend/src/app/features/reconciliation/components/upload-zone/upload-zone.ts)).
+
+## ⏳ Pendiente
+
+- [ ] **A11y-1 a A11y-6 · Hallazgos de accesibilidad.** Barrido completo de accesibilidad:
+  roles/labels ARIA en controles interactivos, foco visible y orden de tabulación, contraste
+  de colores, navegación por teclado en la grilla de conciliación y en los modales, textos
+  alternativos, y anuncio de cambios de estado (toasts/polling) a lectores de pantalla.
+- [ ] **Timeout del polling.** El polling de jobs (subida de extractos / generación de
+  asientos) no tiene tope: si el job nunca escribe resultado, el front pollea indefinidamente.
+  → Definir timeout con mensaje claro de "reintentar / contactar soporte".
+- [ ] **Mensajes de error orientados al contador.** Reemplazar errores técnicos genéricos por
+  mensajes accionables en el dominio del usuario (qué pasó, qué hacer, con qué archivo/fila).
+- [ ] **Fricción de la dropzone de AFIP.** La subida de comprobantes AFIP no tiene la misma
+  ergonomía que la de extractos (acumulación de archivos, feedback de progreso por archivo).
+  → Unificar comportamiento con la dropzone principal.
+
+---
+
+# ⚖️ Auditoría de Cumplimiento Legal y Privacidad — Estado
+
+> Anotado el 2026-07-21. Fase de inspección (solo lectura) ejecutada en rama `dev`. **Ningún
+> hallazgo fue remediado aún: todo el bloque queda pendiente.** Veredicto de licencias: no hay
+> GPL/AGPL en ninguna dependencia directa (backend ni frontend).
+
+## ⏳ Pendiente — Riesgos de Privacidad de Datos (P-1 a P-6)
+
+- [ ] **🔴 P-1 · Sin mecanismo formal de cierre de cuenta (derecho al olvido).** No existe
+  endpoint, job ni script que un estudio pueda usar para solicitar el borrado de su cuenta.
+  El único hard-delete es `DELETE /api/admin/users/{id}` (solo SystemAdmin,
+  [AdminHandlers.cs](../backend/src/ContableAI.Infrastructure/Features/Admin/AdminHandlers.cs)),
+  y su cascada es **incompleta**: sobreviven `AuditLogs` (con email del usuario),
+  `UploadJobResults`, las reglas a nivel estudio (`CompanyId == null`) y los `RefreshTokens`.
+  → Diseñar un comando `DeleteStudioTenant` que cubra todas las tablas del tenant, con
+  anonimización del email en auditoría y registro del pedido y de la ejecución.
+- [ ] **🔴 P-2 · Soft-delete inseguro de `Company`.** `DELETE /api/companies/{id}` solo setea
+  `IsActive = false`: transacciones, asientos, reglas y CUIT quedan vivos en la base
+  indefinidamente. No hay `DeletedAt` ni job de purga diferida, y `GetCompanyHandler` sigue
+  devolviendo por ID empresas "borradas".
+  → Agregar marca temporal de borrado + política de purga documentada (p. ej. hard-delete a
+  los 90 días).
+- [ ] **🟠 P-3 · Datos residuales del hard-delete admin.** (Detalle de P-1: `AuditLogs`,
+  `UploadJobResults`, reglas de estudio, `RefreshTokens` huérfanos.) Cubierto por el diseño
+  del comando de cierre de cuenta.
+- [ ] **🟠 P-4 · `UploadJobResults` acumula datos financieros sin retención.** El JSON completo
+  del resultado de cada procesamiento de extracto se persiste (jsonb, por `StudioTenantId`) y
+  **nunca se borra** — solo existe el `Add`.
+  → Job recurrente de purga por antigüedad (p. ej. > 7 días).
+- [ ] **🟡 P-5 · `StagedUploadFiles` sin red de seguridad.** El handler borra la fila al leer
+  los bytes (bien), pero si el job de Hangfire nunca ejecuta (reintentos agotados, deploy a
+  mitad de cola), el archivo completo queda huérfano en la base para siempre.
+  → Incluir purga de huérfanos por `CreatedAt` en el mismo job de retención de P-4.
+- [ ] **🟡 P-6 · `AuditLogs` sin política de retención documentada.** Retención larga es
+  defendible en una plataforma financiera, pero debe documentarse como política e incluir la
+  seudonimización del email tras el cierre de cuenta.
+
+## ⏳ Pendiente — Riesgos de Licenciamiento (L-1 y L-4)
+
+- [ ] **🔴 L-1 · Procedencia opaca de `UglyToad.PdfPig 1.7.0-custom-5`.** La versión referida en
+  [ContableAI.Infrastructure.csproj](../backend/src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj)
+  no existe en nuget.org (las oficiales son 0.1.x), el repo no tiene `nuget.config` ni feed
+  local, y el nuspec cacheado no declara licencia, autor ni URL de repositorio (solo un hash
+  de commit). Doble riesgo: cumplimiento (el upstream Apache 2.0 exige conservar
+  LICENSE/NOTICE, imposible de demostrar) y cadena de suministro (el restore solo funciona en
+  máquinas con caché; un entorno limpio falla o podría resolver un paquete ajeno).
+  → Localizar el fork de origen y publicarlo en un feed privado con su LICENSE/NOTICE, o
+  migrar a la versión oficial de PdfPig. **Resolver antes de cualquier due diligence.**
+- [ ] **🟡 L-4 · Gobernanza de MediatR.** La versión en uso (12.4.1) es Apache 2.0, pero a
+  partir de v13 MediatR pasó a licenciamiento comercial.
+  → Fijar la versión en < 13 y establecer como política no subir de major en dependencias
+  sin revisión de licencia previa.
