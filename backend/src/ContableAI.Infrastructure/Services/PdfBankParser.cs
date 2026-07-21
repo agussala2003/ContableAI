@@ -3,28 +3,36 @@ using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using PDFtoImage;
-using SkiaSharp;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
-using Tesseract;
-using UglyToad.PdfPig;
-using UglyToad.PdfPig.Content;
-using PdfPage = UglyToad.PdfPig.Content.Page;
 
 namespace ContableAI.Infrastructure.Services;
 
 /// <summary>
-/// Extrae transacciones bancarias desde extractos PDF usando PdfPig con análisis posicional avanzado.
-/// Soporta descripciones multilínea, detección automática de columnas y casos específicos por banco.
+/// Interpreta un extracto bancario ya leído (líneas posicionadas) y produce las transacciones:
+/// detección de columnas, descripciones multilínea, moneda y casos específicos por banco.
+/// La lectura física del PDF (PdfPig/Tesseract) queda detrás de <see cref="IStatementTextExtractor"/>,
+/// inyectado para cumplir el Principio de Inversión de Dependencias y poder testear la
+/// interpretación con fixtures de texto en lugar de PDFs reales.
 /// </summary>
 public class PdfBankParser : IBankParser
 {
+    private readonly IStatementTextExtractor _extractor;
     private readonly ILogger<PdfBankParser> _logger;
 
-    public PdfBankParser(ILogger<PdfBankParser> logger) { _logger = logger; }
-    public PdfBankParser() { _logger = NullLogger<PdfBankParser>.Instance; }
+    // internal: recibe la abstracción (interna a Infrastructure). La componen el factory y los
+    // tests (InternalsVisibleTo). Producción nunca instancia el parser por fuera del factory.
+    internal PdfBankParser(IStatementTextExtractor extractor, ILogger<PdfBankParser> logger)
+    {
+        _extractor = extractor;
+        _logger    = logger;
+    }
+
+    // Sobrecargas de conveniencia: usan el extractor real (OCR/PdfPig). Se mantienen para el
+    // factory y para los tests de regresión con PDFs reales, que instancian el parser sin DI.
+    public PdfBankParser(ILogger<PdfBankParser> logger) : this(new OcrStatementExtractor(), logger) { }
+    public PdfBankParser() : this(new OcrStatementExtractor(), NullLogger<PdfBankParser>.Instance) { }
 
     #region Constantes y Expresiones Regulares
 
@@ -46,11 +54,13 @@ public class PdfBankParser : IBankParser
         @"^-?\d+,\d{2}$",
         RegexOptions.Compiled);
 
-    private const string BankBbva        = "BBVA";
-    private const string BankGalicia     = "GALICIA";
-    private const string BankCredicoop   = "CREDICOOP";
-    private const string BankMercadoPago = "MERCADOPAGO";
-    private const string BankCiudad      = "CIUDAD";
+    // Vocabulario de bancos compartido con el extractor (ver BankCodes). Se aliasan para no
+    // tocar el cuerpo del parser, que sigue usando estos nombres.
+    private const string BankBbva        = BankCodes.Bbva;
+    private const string BankGalicia     = BankCodes.Galicia;
+    private const string BankCredicoop   = BankCodes.Credicoop;
+    private const string BankMercadoPago = BankCodes.MercadoPago;
+    private const string BankCiudad      = BankCodes.Ciudad;
 
     // Detecta importes en formato US (coma=miles, punto=decimal) — usado por Banco Ciudad
     private static readonly Regex RxCiudadAmount = new(
@@ -61,8 +71,6 @@ public class PdfBankParser : IBankParser
 
     #region Clases de Soporte Internas
 
-    private sealed record PdfRow(int PageNumber, double Y, List<PdfCell> Cells);
-    private sealed record PdfCell(double X, double Right, string Text);
     private sealed record BbvaChequeData(DateOnly Emision, DateOnly Pago);
     private sealed record TxAnchor(int PageNumber, double RowY, DateOnly Date, decimal Amount, TransactionType Type);
 
@@ -72,77 +80,31 @@ public class PdfBankParser : IBankParser
 
     public IEnumerable<BankTransaction> Parse(Stream stream, string fileName)
     {
-        const long MaxBytes = 150 * 1024 * 1024; // 150 MB hard limit
-
-        var ms = new MemoryStream();
-        stream.CopyTo(ms);
-        ms.Position = 0;
-
-        if (ms.Length > MaxBytes)
-            throw new InvalidOperationException(
-                $"El archivo PDF supera el límite de 150 MB ({ms.Length / 1_048_576} MB).");
-
-        var pdfBytes = ms.ToArray();
-
         try
         {
-            using var doc = PdfDocument.Open(pdfBytes);
-            var pages = doc.GetPages().ToList();
+            // Lectura física delegada al extractor (PdfPig digital u OCR Tesseract). Devuelve las
+            // líneas posicionadas crudas + el banco detectado + cómo se leyó.
+            var doc = _extractor.Extract(stream, fileName);
 
-            var totalWords = pages.Take(3).Sum(p => p.GetWords().Count());
-            _logger.LogDebug("[PDF] '{File}' — {Pages} pags, {Words} palabras digitales en primeras 3 pags",
-                fileName, pages.Count, totalWords);
+            // El merge de filas partidas solo aplica a la ruta digital (donde el bucketeo por Y
+            // puede partir una fila en dos). En OCR las filas ya vienen espaciadas. Se preserva
+            // exactamente el comportamiento anterior.
+            var rows = doc.Source == StatementSource.Digital
+                ? MergeSplitAmountRows([.. doc.Lines])
+                : [.. doc.Lines];
 
-            List<PdfRow> rows;
-            string bank;
-
-            if (totalWords >= 30)
-            {
-                // PDF digital: extracción de texto directa
-                bank = DetectBank(pages, fileName);
-                _logger.LogDebug("[PDF] Ruta DIGITAL — banco detectado: {Bank}", bank);
-                rows = MergeSplitAmountRows(ExtractPositionalRows(pages));
-                _logger.LogDebug("[PDF] Filas posicionales extraídas: {RowCount}", rows.Count);
-            }
-            else
-            {
-                // PDF escaneado: pipeline OCR
-                _logger.LogDebug("[PDF] Ruta OCR — {Words} palabras insuficientes para ruta digital", totalWords);
-                try
-                {
-                    var tessPath = GetTessDataPath();
-                    _logger.LogDebug("[PDF] tessdata path: {Path} — existe: {Exists}", tessPath, Directory.Exists(tessPath));
-                    rows = ExtractRowsViaOcr(pdfBytes);
-                    _logger.LogDebug("[PDF] OCR completado — {RowCount} filas extraídas", rows.Count);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[PDF] OCR falló para '{File}': {Msg}", fileName, ex.Message);
-                    throw new InvalidOperationException(
-                        $"OCR no disponible o falló al procesar el PDF escaneado (palabras digitales detectadas: {totalWords}). " +
-                        $"Detalle: {ex.Message}", ex);
-                }
-
-                if (rows.Count == 0)
-                    throw new InvalidOperationException(
-                        "No fue posible extraer texto del PDF con OCR. " +
-                        "Verifique que el archivo sea un extracto bancario válido.");
-
-                bank = DetectBankFromRows(rows, fileName);
-            }
-
-            _logger.LogDebug("[PDF] Banco final: {Bank} — total filas: {Rows}", bank, rows.Count);
+            _logger.LogDebug("[PDF] Banco final: {Bank} — total filas: {Rows}", doc.Bank, rows.Count);
 
             // Detección de moneda a nivel documento (una vez por PDF). Aborta si el extracto
             // mezcla cuentas de distinta moneda (lanza InvalidOperationException, que se propaga).
             var currency = DetectCurrency(rows);
             _logger.LogDebug("[PDF] Moneda detectada: {Currency}", currency);
 
-            var txs = (bank switch
+            var txs = (doc.Bank switch
             {
                 BankMercadoPago => ParseMercadoPago(rows),
                 BankCiudad      => ParseBancoCiudad(rows, _logger),
-                _               => ParseStateful(rows, bank, fileName)
+                _               => ParseStateful(rows, doc.Bank, fileName)
             }).ToList();
 
             // Post-pass: estampar la moneda detectada en todas las transacciones del extracto.
@@ -153,10 +115,12 @@ public class PdfBankParser : IBankParser
         }
         catch (InvalidOperationException)
         {
+            // Mensajes aptos para el usuario (tamaño, OCR no disponible, extracto mixto): se propagan.
             throw;
         }
         catch
         {
+            // PDF corrupto/ilegible u otro fallo inesperado: sin transacciones (igual que antes).
             return Enumerable.Empty<BankTransaction>();
         }
     }
@@ -164,94 +128,6 @@ public class PdfBankParser : IBankParser
     #endregion
 
     #region Detección y Extracción Base
-
-    /// <summary>
-    /// Determina a qué banco pertenece el PDF analizando el nombre del archivo 
-    /// y una muestra del texto de las primeras páginas.
-    /// </summary>
-    private static string DetectBank(IList<PdfPage> pages, string fileName)
-    {
-        var normalizedFileName = (fileName ?? string.Empty).ToUpperInvariant()
-            .Replace("_20", " ")
-            .Replace("%20", " ");
-        
-        if (normalizedFileName.Contains("BBVA"))        return BankBbva;
-        if (normalizedFileName.Contains("GALICIA"))     return BankGalicia;
-        if (normalizedFileName.Contains("CREDICOOP"))   return BankCredicoop;
-        if (normalizedFileName.Contains("CIUDAD"))      return BankCiudad;
-
-        if (normalizedFileName.Contains("MERCADOPAGO") ||
-            normalizedFileName.Contains("_MP_") ||
-            normalizedFileName.Contains(" MP ") ||
-            normalizedFileName.Contains("-MP-"))        return BankMercadoPago;
-
-        // Fallback: Analizar el contenido de las primeras dos páginas
-        var sample = new StringBuilder();
-        foreach (var page in pages.Take(2))
-        {
-            foreach (var word in page.GetWords())
-            {
-                sample.Append(word.Text).Append(' ');
-            }
-        }
-
-        var text = sample.ToString().ToUpperInvariant();
-
-        if (text.Contains("BBVA") || text.Contains("CREANDO OPORTUNIDADES") || text.Contains("CBU 0170"))
-            return BankBbva;
-
-        if (text.Contains("GALICIA"))
-            return BankGalicia;
-
-        if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED"))
-            return BankCredicoop;
-
-        if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO") || text.Contains("00000031") || text.Contains("MERCADO LIBRE"))
-            return BankMercadoPago;
-
-        // Ciudad: account format 3-029- (bank code 029) or explicit REFERENCIA column header
-        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))
-            return BankCiudad;
-
-        return "GENERIC";
-    }
-
-    /// <summary>
-    /// Agrupa las palabras del PDF en filas (PdfRow) basándose en su coordenada Y.
-    /// Utiliza una tolerancia de 3 puntos para unificar palabras que visualmente 
-    /// están en la misma línea pero difieren por pequeños decimales en su renderizado.
-    /// </summary>
-    private static List<PdfRow> ExtractPositionalRows(IEnumerable<PdfPage> pages)
-    {
-        var rows = new List<PdfRow>();
-        
-        foreach (var page in pages)
-        {
-            var words = page.GetWords().ToList();
-            if (words.Count == 0) continue;
-
-            // Agrupa aplicando la tolerancia de 3.0
-            var byY = words
-                .GroupBy(w => Math.Round(w.BoundingBox.Bottom / 3.0) * 3.0)
-                .OrderByDescending(g => g.Key);
-
-            foreach (var group in byY)
-            {
-                var cells = group
-                    .OrderBy(w => w.BoundingBox.Left)
-                    .Select(w => new PdfCell(w.BoundingBox.Left, w.BoundingBox.Right, w.Text.Trim()))
-                    .Where(c => !string.IsNullOrWhiteSpace(c.Text))
-                    .ToList();
-
-                if (cells.Count > 0)
-                {
-                    rows.Add(new PdfRow(page.Number, group.Key, cells));
-                }
-            }
-        }
-        
-        return rows;
-    }
 
     /// <summary>
     /// Re-une filas que el agrupado por buckets fijos de Y partió en dos: los importes de una
@@ -265,9 +141,9 @@ public class PdfBankParser : IBankParser
     /// una fila con importes y solo caracteres sueltos del margen vertical, la otra encabezada
     /// por fecha y sin ningún importe.
     /// </summary>
-    private static List<PdfRow> MergeSplitAmountRows(List<PdfRow> rows)
+    private static List<StatementLine> MergeSplitAmountRows(List<StatementLine> rows)
     {
-        var result = new List<PdfRow>(rows.Count);
+        var result = new List<StatementLine>(rows.Count);
 
         for (int i = 0; i < rows.Count; i++)
         {
@@ -279,7 +155,7 @@ public class PdfBankParser : IBankParser
                 // Caso observado: importes arriba, fecha+concepto abajo
                 if (IsAmountsOnlyRow(row) && StartsWithDate(next) && !HasAmountCell(next))
                 {
-                    result.Add(new PdfRow(next.PageNumber, next.Y,
+                    result.Add(new StatementLine(next.PageNumber, next.Y,
                         next.Cells.Concat(row.Cells).OrderBy(c => c.X).ToList()));
                     i++;
                     continue;
@@ -288,7 +164,7 @@ public class PdfBankParser : IBankParser
                 // Caso inverso por simetría: fecha+concepto arriba, importes abajo
                 if (StartsWithDate(row) && !HasAmountCell(row) && IsAmountsOnlyRow(next))
                 {
-                    result.Add(new PdfRow(row.PageNumber, row.Y,
+                    result.Add(new StatementLine(row.PageNumber, row.Y,
                         row.Cells.Concat(next.Cells).OrderBy(c => c.X).ToList()));
                     i++;
                     continue;
@@ -301,10 +177,10 @@ public class PdfBankParser : IBankParser
         return result;
     }
 
-    private static bool HasAmountCell(PdfRow row) =>
+    private static bool HasAmountCell(StatementLine row) =>
         row.Cells.Any(c => IsArgentineAmount(c.Text));
 
-    private static bool StartsWithDate(PdfRow row) =>
+    private static bool StartsWithDate(StatementLine row) =>
         row.Cells.Count > 0 &&
         RxDate.IsMatch(row.Cells[0].Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty);
 
@@ -312,37 +188,9 @@ public class PdfBankParser : IBankParser
     /// Fila compuesta por importes y, a lo sumo, caracteres sueltos del texto vertical de
     /// margen (BBVA imprime leyendas letra por letra en X≈577-585 que caen en cualquier bucket).
     /// </summary>
-    private static bool IsAmountsOnlyRow(PdfRow row) =>
+    private static bool IsAmountsOnlyRow(StatementLine row) =>
         row.Cells.Any(c => IsArgentineAmount(c.Text)) &&
         row.Cells.All(c => IsArgentineAmount(c.Text) || c.Text.Length <= 1);
-
-    /// <summary>
-    /// Detecta el banco desde el texto ya extraído (usado en el path OCR donde no hay Pages de PdfPig).
-    /// </summary>
-    private static string DetectBankFromRows(List<PdfRow> rows, string fileName)
-    {
-        var normalizedFileName = (fileName ?? string.Empty).ToUpperInvariant()
-            .Replace("_20", " ").Replace("%20", " ");
-
-        if (normalizedFileName.Contains("BBVA"))        return BankBbva;
-        if (normalizedFileName.Contains("GALICIA"))     return BankGalicia;
-        if (normalizedFileName.Contains("CREDICOOP"))   return BankCredicoop;
-        if (normalizedFileName.Contains("CIUDAD"))      return BankCiudad;
-        if (normalizedFileName.Contains("MERCADOPAGO") ||
-            normalizedFileName.Contains("_MP_"))        return BankMercadoPago;
-
-        var text = string.Join(" ",
-            rows.Take(80).SelectMany(r => r.Cells.Select(c => c.Text))
-        ).ToUpperInvariant();
-
-        if (text.Contains("BBVA") || text.Contains("CREANDO OPORTUNIDADES")) return BankBbva;
-        if (text.Contains("GALICIA"))                                          return BankGalicia;
-        if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED")) return BankCredicoop;
-        if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO"))    return BankMercadoPago;
-        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))         return BankCiudad;
-
-        return "GENERIC";
-    }
 
     #endregion
 
@@ -378,7 +226,7 @@ public class PdfBankParser : IBankParser
     /// <see cref="InvalidOperationException"/> (<see cref="MixedCurrencyError"/>): se rechaza el
     /// archivo y se exige subir el extracto de cada cuenta por separado.
     /// </summary>
-    private static string DetectCurrency(List<PdfRow> rows)
+    private static string DetectCurrency(List<StatementLine> rows)
     {
         bool usdHeader = false;
         bool arsHeader = false;
@@ -434,91 +282,6 @@ public class PdfBankParser : IBankParser
 
     #endregion
 
-    #region OCR (PDFs escaneados)
-
-    private const int OcrDpi = 200;
-
-    private static string GetTessDataPath()
-    {
-        var envPath = Environment.GetEnvironmentVariable("TESSDATA_PREFIX");
-        if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath))
-            return envPath;
-
-        // Linux estándar (apt install tesseract-ocr-spa)
-        if (Directory.Exists("/usr/share/tessdata"))
-            return "/usr/share/tessdata";
-
-        // Bundled junto al exe (Windows dev)
-        var appPath = Path.Combine(AppContext.BaseDirectory, "tessdata");
-        if (Directory.Exists(appPath))
-            return appPath;
-
-        return "./tessdata";
-    }
-
-    /// <summary>
-    /// Renderiza cada página del PDF como imagen con PDFtoImage (PDFium),
-    /// aplica Tesseract OCR y reconstruye la grilla posicional de PdfRow/PdfCell
-    /// compatible con el parser existente.
-    /// </summary>
-    private static List<PdfRow> ExtractRowsViaOcr(byte[] pdfBytes)
-    {
-        var tessDataPath = GetTessDataPath();
-        var allRows = new List<PdfRow>();
-
-        // spa+eng: español primero, inglés como fallback para números y siglas
-        using var engine = new TesseractEngine(tessDataPath, "spa+eng", EngineMode.LstmOnly);
-
-        int pageNum = 0;
-#pragma warning disable CA1416 // Se sabe que esto corre en Windows o contenedores permitidos
-        foreach (var bitmap in Conversion.ToImages(pdfBytes, options: new RenderOptions(Dpi: OcrDpi)))
-#pragma warning restore CA1416
-        {
-            pageNum++;
-            try
-            {
-                using (bitmap)
-                {
-                    using var encoded = bitmap.Encode(SKEncodedImageFormat.Png, 100);
-                    using var pix     = Pix.LoadFromMemory(encoded.ToArray());
-                    using var ocrPage = engine.Process(pix);
-
-                    var wordsByY = new Dictionary<int, List<PdfCell>>();
-
-                    using var iter = ocrPage.GetIterator();
-                    iter.Begin();
-                    do
-                    {
-                        if (!iter.TryGetBoundingBox(PageIteratorLevel.Word, out var bounds)) continue;
-                        var text = iter.GetText(PageIteratorLevel.Word)?.Trim();
-                        if (string.IsNullOrWhiteSpace(text)) continue;
-
-                        // Agrupar palabras por fila con tolerancia de 5 px
-                        // En Tesseract Y=0 es la parte superior, usamos Y1 (top del bbox)
-                        int yKey = (int)(Math.Round(bounds.Y1 / 5.0) * 5);
-                        if (!wordsByY.TryGetValue(yKey, out var cells))
-                            wordsByY[yKey] = cells = [];
-
-                        cells.Add(new PdfCell(bounds.X1, bounds.X2, text));
-                    }
-                    while (iter.Next(PageIteratorLevel.Word));
-
-                    // Ordenar filas de arriba hacia abajo (Y ascendente en Tesseract)
-                    foreach (var (yKey, cells) in wordsByY.OrderBy(kvp => kvp.Key))
-                    {
-                        var sorted = cells.OrderBy(c => c.X).ToList();
-                        // Negamos yKey para que el parser (que espera Y descendente de PdfPig) lo procese bien
-                        allRows.Add(new PdfRow(pageNum, -yKey, sorted));
-                    }
-                }
-            }
-            catch { /* página ilegible, continuar con las demás */ }
-        }
-
-        return allRows;
-    }
-
-    #endregion
 
     #region Lógica de Parsing Estatal (Bancos Tradicionales)
 
@@ -527,7 +290,7 @@ public class PdfBankParser : IBankParser
     /// para bancos tradicionales (BBVA, Galicia, Credicoop).
     /// Mantiene un estado (`inTable`) para saber si está leyendo transacciones útiles.
     /// </summary>
-    private static List<BankTransaction> ParseStateful(List<PdfRow> rows, string bankCode, string? fileName = null)
+    private static List<BankTransaction> ParseStateful(List<StatementLine> rows, string bankCode, string? fileName = null)
     {
         var txs = new List<BankTransaction>();
         BankTransaction? currentTx = null;
@@ -769,7 +532,7 @@ public class PdfBankParser : IBankParser
         return sb.ToString().Normalize(NormalizationForm.FormC);
     }
 
-    private static void ProcessNewTransactionRow(PdfRow row, string bankCode, double rightDebit, double rightCredit, double rightSaldo, double leftSaldo, DateOnly date, string lineText, List<BankTransaction> txs, ref BankTransaction? currentTx)
+    private static void ProcessNewTransactionRow(StatementLine row, string bankCode, double rightDebit, double rightCredit, double rightSaldo, double leftSaldo, DateOnly date, string lineText, List<BankTransaction> txs, ref BankTransaction? currentTx)
     {
         var debitAmts  = new List<decimal>(2);
         var creditAmts = new List<decimal>(2);
@@ -900,7 +663,7 @@ public class PdfBankParser : IBankParser
         }
     }
 
-    private static void ProcessContinuationRow(PdfRow row, string bankCode, double colDescStart, double colDescEnd, double rightDebit, double rightCredit, double rightSaldo, List<BankTransaction> txs, ref BankTransaction? currentTx)
+    private static void ProcessContinuationRow(StatementLine row, string bankCode, double colDescStart, double colDescEnd, double rightDebit, double rightCredit, double rightSaldo, List<BankTransaction> txs, ref BankTransaction? currentTx)
     {
         var contDebitAmts  = new List<decimal>();
         var contCreditAmts = new List<decimal>();
@@ -1233,7 +996,7 @@ public class PdfBankParser : IBankParser
         return mBbva.Success ? mBbva.Groups[1].Value : null;
     }
 
-    private static (Dictionary<(DateOnly, decimal), string> debitosAuto, Dictionary<string, BbvaChequeData> cheques, Dictionary<(DateOnly, decimal), string> transfersIn, Dictionary<(DateOnly, decimal), string> transfersOut) ParseBbvaSupplementaryData(List<PdfRow> rows, int? stmtYear, int? primaryMonth = null)
+    private static (Dictionary<(DateOnly, decimal), string> debitosAuto, Dictionary<string, BbvaChequeData> cheques, Dictionary<(DateOnly, decimal), string> transfersIn, Dictionary<(DateOnly, decimal), string> transfersOut) ParseBbvaSupplementaryData(List<StatementLine> rows, int? stmtYear, int? primaryMonth = null)
     {
         var debitosAuto  = new Dictionary<(DateOnly, decimal), string>();
         var cheques      = new Dictionary<string, BbvaChequeData>(StringComparer.Ordinal);
@@ -1347,7 +1110,7 @@ public class PdfBankParser : IBankParser
         return (debitosAuto, cheques, transfersIn, transfersOut);
     }
 
-    private static (decimal amount, string company) ExtractBbvaTransferNameAndAmount(PdfRow row, int startIdx)
+    private static (decimal amount, string company) ExtractBbvaTransferNameAndAmount(StatementLine row, int startIdx)
     {
         decimal amount = 0;
         var parts = new List<string>(5);
@@ -1472,7 +1235,7 @@ public class PdfBankParser : IBankParser
 
     #region Lógica Específica: MercadoPago
 
-    private static List<BankTransaction> ParseMercadoPago(List<PdfRow> rows)
+    private static List<BankTransaction> ParseMercadoPago(List<StatementLine> rows)
     {
         var rxOpId    = new Regex(@"^\d{8,}$", RegexOptions.Compiled);
         var rxPageNum = new Regex(@"^\d{1,3}/\d{1,3}$", RegexOptions.Compiled);
@@ -1674,7 +1437,7 @@ public class PdfBankParser : IBankParser
     /// Fechas:   dd/MM/yyyy (año completo incluido en cada fila)
     /// Importes: formato US (coma=miles, punto=decimal): 1,234.56
     /// </summary>
-    private static List<BankTransaction> ParseBancoCiudad(List<PdfRow> rows, ILogger logger)
+    private static List<BankTransaction> ParseBancoCiudad(List<StatementLine> rows, ILogger logger)
     {
         var txs = new List<BankTransaction>();
         bool inTable = false;
@@ -1856,7 +1619,7 @@ public class PdfBankParser : IBankParser
 
     #region Helpers
 
-    private static string JoinCells(PdfRow row) => string.Join(" ", row.Cells.Select(c => c.Text)).Trim();
+    private static string JoinCells(StatementLine row) => string.Join(" ", row.Cells.Select(c => c.Text)).Trim();
 
     private static bool IsIrrelevantLine(string text)
     {
@@ -1900,7 +1663,7 @@ public class PdfBankParser : IBankParser
         return (desc, extId);
     }
 
-    private static double FindColumnX(PdfRow row, string[] names)
+    private static double FindColumnX(StatementLine row, string[] names)
     {
         foreach (var cell in row.Cells)
         {
@@ -1977,7 +1740,7 @@ public class PdfBankParser : IBankParser
     /// suplementarias y avisos ("a partir del 01/03/2026 se aplicarán comisiones...",
     /// "información al: 02/01/2026") que corromperían el año de todas las transacciones.
     /// </summary>
-    private static (int? stmtYear, int? primaryMonth) DetectStatementInfo(List<PdfRow> rows, string? fileName = null)
+    private static (int? stmtYear, int? primaryMonth) DetectStatementInfo(List<StatementLine> rows, string? fileName = null)
     {
         if (TryParsePeriodFromFileName(fileName, out var fromName))
             return fromName;
