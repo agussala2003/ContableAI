@@ -4,54 +4,47 @@ using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace ContableAI.Infrastructure.BackgroundJobs;
 
-public class ProactiveLearningService : BackgroundService
+/// <summary>
+/// R-5: análisis de aprendizaje proactivo, ejecutado como <b>job recurrente de Hangfire</b>
+/// (una vez al día). Reemplaza al antiguo <c>BackgroundService</c> con <c>Task.Delay(24h)</c>,
+/// que corría en-proceso en <b>cada</b> réplica (trabajo duplicado + race al insertar sugerencias)
+/// y cuyo timer se reiniciaba en cada redeploy (podía no dispararse nunca).
+///
+/// Hangfire garantiza corrida única mediante lock distribuido sobre el storage de PostgreSQL,
+/// scheduling durable y reintentos — apto para múltiples contenedores efímeros.
+///
+/// Hangfire resuelve esta clase desde el contenedor de DI y crea un scope por ejecución,
+/// por lo que el <see cref="ContableAIDbContext"/> (scoped) se inyecta directamente.
+/// </summary>
+public class ProactiveLearningJob
 {
-    private readonly IServiceProvider _services;
-    private readonly ILogger<ProactiveLearningService> _logger;
+    /// <summary>Identificador estable del recurring job (usado por <c>AddOrUpdate</c>).</summary>
+    public const string RecurringJobId = "proactive-learning";
 
-    public ProactiveLearningService(IServiceProvider services, ILogger<ProactiveLearningService> logger)
+    private readonly ContableAIDbContext _db;
+    private readonly ILogger<ProactiveLearningJob> _logger;
+
+    public ProactiveLearningJob(ContableAIDbContext db, ILogger<ProactiveLearningJob> logger)
     {
-        _services = services;
+        _db = db;
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Detecta grupos de transacciones clasificadas manualmente con el mismo keyword+cuenta y
+    /// genera sugerencias de reglas. Idempotente: verifica existencia de regla/sugerencia antes
+    /// de insertar, por lo que reejecutarlo no duplica datos.
+    /// </summary>
+    public async Task AnalyzeTransactionsAsync(CancellationToken ct = default)
     {
-        _logger.LogInformation("ProactiveLearningService is starting.");
-
-        // Pequeño delay inicial para que la app termine de arrancar
-        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await AnalyzeTransactionsAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error ocurrido ejecutando ProactiveLearningService.");
-            }
-
-            await Task.Delay(TimeSpan.FromHours(24), stoppingToken);
-        }
-    }
-
-    private async Task AnalyzeTransactionsAsync(CancellationToken ct)
-    {
-        using var scope = _services.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ContableAIDbContext>();
-
         var cutoffDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-730));
 
         // Fetch into memory so we can apply normalized keyword comparison
-        var raw = await db.BankTransactions
+        var raw = await _db.BankTransactions
             .Where(t => t.ClassificationSource == ClassificationSources.Manual
                      && t.AssignedAccount != null
                      && t.Date >= cutoffDate)
@@ -83,12 +76,12 @@ public class ProactiveLearningService : BackgroundService
         {
             if (group.Account is null) continue;
 
-            bool ruleExists = await db.AccountingRules
+            bool ruleExists = await _db.AccountingRules
                 .AnyAsync(r => r.CompanyId == group.CompanyId && r.Keyword == group.Keyword, ct);
 
             if (ruleExists) continue;
 
-            var existingSuggestion = await db.RuleSuggestions
+            var existingSuggestion = await _db.RuleSuggestions
                 .FirstOrDefaultAsync(s => s.CompanyId == group.CompanyId && s.Keyword == group.Keyword, ct);
 
             if (existingSuggestion != null)
@@ -111,14 +104,14 @@ public class ProactiveLearningService : BackgroundService
                 Status           = SuggestionStatus.Pending
             };
 
-            db.RuleSuggestions.Add(suggestion);
+            _db.RuleSuggestions.Add(suggestion);
             newSuggestions++;
         }
 
         if (newSuggestions > 0)
         {
-            await db.SaveChangesAsync(ct);
-            _logger.LogInformation("ProactiveLearningService generó {Count} nuevas sugerencias de reglas.", newSuggestions);
+            await _db.SaveChangesAsync(ct);
+            _logger.LogInformation("ProactiveLearningJob generó {Count} nuevas sugerencias de reglas.", newSuggestions);
         }
     }
 }

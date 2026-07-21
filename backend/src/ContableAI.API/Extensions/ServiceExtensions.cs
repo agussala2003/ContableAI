@@ -106,7 +106,20 @@ public static class ServiceExtensions
         services.AddSingleton<AuditInterceptor>();
         services.AddDbContext<ContableAIDbContext>((sp, options) =>
         {
-            options.UseNpgsql(configuration.GetConnectionString("DefaultConnection"));
+            options.UseNpgsql(
+                configuration.GetConnectionString("DefaultConnection"),
+                npgsql =>
+                {
+                    // R-1: resiliencia de conexión ante micro-cortes / failovers del PostgreSQL
+                    // gestionado (Render). EF reintenta los fallos transitorios de Npgsql con
+                    // backoff en lugar de propagarlos como excepción al usuario.
+                    npgsql.EnableRetryOnFailure(
+                        maxRetryCount:      5,
+                        maxRetryDelay:      TimeSpan.FromSeconds(10),
+                        errorCodesToAdd:    null);
+                    // Corte por comando: evita que una consulta colgada bloquee el hilo indefinidamente.
+                    npgsql.CommandTimeout(30);
+                });
             options.AddInterceptors(sp.GetRequiredService<AuditInterceptor>());
         });
 
@@ -115,11 +128,15 @@ public static class ServiceExtensions
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
             .UseRecommendedSerializerSettings()
+            // O-1: propaga el Correlation ID del request que encola un job hasta su ejecución.
+            .UseFilter(new HangfireCorrelationIdFilter())
             .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(configuration.GetConnectionString("DefaultConnection"))));
 
         services.AddHangfireServer();
 
-        services.AddHostedService<ProactiveLearningService>();
+        // R-5: el análisis proactivo se resuelve desde DI y corre como recurring job de Hangfire
+        // (ver AddOrUpdate en Program.cs), no como BackgroundService por réplica.
+        services.AddScoped<ProactiveLearningJob>();
 
         return services;
     }
@@ -203,7 +220,20 @@ public static class ServiceExtensions
         });
 
         // ── Health Checks ─────────────────────────────────────────────────────
-        services.AddHealthChecks();
+        // R-2/R-3: liveness vs readiness.
+        //   • Liveness  → ¿el proceso responde? Sin dependencias externas (no tags).
+        //   • Readiness → ¿puede servir tráfico útil? Depende de PostgreSQL (tag "ready").
+        // El proveedor cloud saca la instancia del balanceador si /health/ready falla,
+        // sin reiniciarla (eso lo decide /health/live), evitando reinicios en cascada
+        // ante un micro-corte de la base.
+        services.AddHealthChecks()
+            .AddNpgSql(
+                connectionStringFactory: sp =>
+                    configuration.GetConnectionString("DefaultConnection")
+                    ?? throw new InvalidOperationException(
+                        "La cadena de conexión 'DefaultConnection' es obligatoria para el health check de readiness."),
+                name:  "postgres",
+                tags:  new[] { "ready" });
 
         return services;
     }
