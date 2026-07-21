@@ -145,3 +145,78 @@ Multi-moneda (ARS/USD) completo. **No hay que rehacer nada de esto.**
   retry, y logout en sus dos variantes de fallo) y `reconciliation.service.ts` (estado y
   filtros, pila de deshacer/undo, polling del job de generación de asientos con
   `vi.useFakeTimers`).
+
+---
+
+# 🚀 Auditoría de Rendimiento y Escalabilidad — Estado
+
+> Anotado el 2026-07-21. Fase ejecutada en rama `dev` sobre el informe de auditoría de
+> Rendimiento y Escalabilidad (hallazgos críticos C-1/C-2/C-3 + P-10/P-11). Suite backend:
+> **128 Passed / 65 Skipped / 0 Failed**. Frontend: `tsc --noEmit` y `ng build` sin errores.
+
+## Ya completado (referencia rápida)
+
+- **C-1 y C-2 (Upload asíncrono y memoria).** El OCR y el parseo de extractos ya no corren de
+  forma síncrona en el hilo del request HTTP (riesgo de thread-starvation de toda la API y de
+  OOM bajo subidas concurrentes). El endpoint de subida valida rápido (tamaño/extensión/magic
+  bytes) y encola el procesamiento como job de Hangfire reutilizando el patrón MediatR ya
+  existente en `GenerateJournalEntriesCommandHandler` —
+  `backgroundJobClient.Enqueue<ISender>(sender => sender.Send(command))`
+  ([TransactionEndpoints.cs:82](../backend/src/ContableAI.API/Endpoints/TransactionEndpoints.cs#L82)),
+  sin necesidad de una clase de job dedicada. Se agregaron dos tablas en PostgreSQL:
+  `StagedUploadFiles` (staging bytea del archivo entre el encolado y la ejecución del job) y
+  `UploadJobResults` (resultado durable del job, leído por el endpoint de polling). El handler
+  ya no depende de `ICurrentTenantService` (no hay `HttpContext` dentro de un job): el tenant
+  viaja explícito en el propio command
+  ([UploadBankStatementHandler.cs:179](../backend/src/ContableAI.Infrastructure/Features/Transactions/UploadBankStatementHandler.cs#L179)).
+- **Protección de CPU/RAM.** `OcrStatementExtractor` eliminó la copia redundante a
+  `MemoryStream`/`byte[]` y trabaja directo sobre el `Stream` recibido (PdfPig y PDFtoImage lo
+  soportan nativo), y el OCR concurrente queda acotado con
+  `SemaphoreSlim(2, 2)` ([OcrStatementExtractor.cs:33](../backend/src/ContableAI.Infrastructure/Services/OcrStatementExtractor.cs#L33))
+  para que N jobs de Hangfire no saturen CPU/memoria del proceso como antes lo hacían N
+  requests HTTP concurrentes.
+- **Frontend Polling.** `reconciliation.service.ts` pollea el resultado del job (mismo patrón ya
+  usado para la generación de asientos) y reproduce exactamente la UX anterior: toasts de
+  éxito/error, modal de duplicados, ajuste automático de filtros por período importado, y el
+  confirm-dialog de "¿reaplicar reglas?" — sin que el usuario note el cambio de arquitectura.
+- **C-3 (Optimizaciones de lectura).** `GetTransactions` ya no materializa toda la tabla de
+  transacciones filtrada del estudio solo para poblar los dropdowns de filtro; ahora son 3
+  consultas `.Distinct()` independientes (cuenta / mes / año) resueltas en PostgreSQL
+  ([TransactionEndpoints.cs:251](../backend/src/ContableAI.API/Endpoints/TransactionEndpoints.cs#L251)),
+  apoyadas en el índice `IX_BankTransactions_CompanyId_Date` — escala con la cantidad de valores
+  distintos, no con el volumen histórico de movimientos del estudio.
+- **P-10 (Borrado masivo).** `DeleteAllTransactions` reemplazó `RemoveRange` +
+  `SaveChangesAsync` por `ExecuteDeleteAsync`
+  ([TransactionEndpoints.cs:531](../backend/src/ContableAI.API/Endpoints/TransactionEndpoints.cs#L531)),
+  sin materializar ni trackear las filas a borrar. Como eso elude `AuditInterceptor` (que audita
+  altas/bajas de `BankTransaction` una por una vía `SaveChangesAsync`), se compensa con una
+  única fila manual en `AuditLogs` (`Deleted` / `BankTransaction` / `EntityId="BULK"` + cantidad
+  borrada) en vez de perder el rastro o generar N filas individuales que serían puro ruido para
+  un "clear all".
+- **P-11 (Performance UI).** `TransactionGrid` (grilla de conciliación) pasa a
+  `ChangeDetectionStrategy.OnPush`
+  ([transaction-grid.ts:18](../frontend/src/app/features/reconciliation/components/transaction-grid/transaction-grid.ts#L18));
+  el componente ya era 100% signals (`input`/`output`/`signal`/`computed`), que integran
+  nativamente con OnPush sin cambios de comportamiento.
+
+## ⏳ Pendiente (hallazgos del informe original aún no abordados)
+
+- [ ] **P-1 · `AddDbContextPool`.** Sigue usándose `AddDbContext` — el pooling real requiere
+  antes sacar la captura de `ICurrentTenantService` del constructor de `ContableAIDbContext`
+  (incompatible con pooling tal como está hoy).
+- [ ] **P-2 · Desnormalizar `StudioTenantId` en `BankTransaction`.** El Global Query Filter
+  sigue anclado vía `JOIN` a `Company` en cada query de transacciones.
+- [ ] **P-3 · Índice `pg_trgm`** para la búsqueda `ILike` sobre `Unaccent(Description)` (hoy
+  sequential scan con wildcard inicial).
+- [ ] **P-4 · Índice de respaldo para el sort por defecto** (`SortOrder`/`Date`) y para los
+  demás campos ordenables de la grilla.
+- [ ] **P-6 · Batchear `CheckManualSuggestionAsync`** en el bulk-update (N round-trips por
+  grupo distinto de descripción/cuenta).
+- [ ] **P-7 · Acotar `ProactiveLearningService`** por tenant/página (hoy trae 2 años de
+  movimientos manuales de **todos** los estudios en cada corrida diaria) y moverlo a un cron de
+  Hangfire en vez de `Task.Delay(24h)`.
+- [ ] **P-8 · Backgroundear `AfipCombinationService`** (backtracking de combinaciones VEP) si en
+  producción empieza a notarse en el tiempo de respuesta del endpoint.
+- [ ] **P-9 · Configurar `WorkerCount`/colas de Hangfire** explícitamente, para que el upload
+  asíncrono (ya acotado por su propio `SemaphoreSlim`) no compita sin límite por workers con
+  otros jobs (cruce AFIP, generación de asientos) en el mismo proceso que la API.
