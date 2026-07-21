@@ -4,14 +4,17 @@ using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
+using ContableAI.Infrastructure.Features.Transactions;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using Hangfire;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace ContableAI.API.Endpoints;
 
@@ -24,7 +27,9 @@ public static class TransactionEndpoints
             HttpContext httpCtx,
             [FromForm] string? bankCode,
             [FromForm] string? companyId,
-            ISender sender,
+            ICurrentTenantService  tenant,
+            ContableAIDbContext    dbContext,
+            IBackgroundJobClient   backgroundJobClient,
             [FromForm] bool? withoutDateFilter = null,
             [FromForm] bool? forceReapplyRules = null) =>
         {
@@ -32,25 +37,103 @@ public static class TransactionEndpoints
             if (files is null || files.Count == 0)
                 return Results.BadRequest("No se subió ningún archivo.");
 
-            var fileDataList = new List<FileData>();
+            // Validación rápida y síncrona (tamaño, extensión, magic bytes) — se hace acá, antes de
+            // encolar, para devolver 400 inmediato ante un archivo inválido en vez de que el usuario
+            // tenga que esperar un ciclo de polling para enterarse. El procesamiento pesado (parseo/
+            // OCR/clasificación) se hace en el job de Hangfire (ver UploadBankStatementHandler).
+            var stagedRefs = new List<StagedFileRef>();
             foreach (var f in files)
             {
+                if (f.Length > UploadBankStatementHandler.MaxFileSizeBytes)
+                    return Results.BadRequest($"El archivo '{f.FileName}' supera el máximo permitido de 25 MB.");
+
+                var ext = Path.GetExtension(f.FileName ?? string.Empty);
+                if (!UploadBankStatementHandler.AllowedExtensions.Contains(ext))
+                    return Results.BadRequest($"Formato no soportado para '{f.FileName}'. Solo se permiten CSV, XLSX y PDF.");
+
                 using var ms = new MemoryStream((int)Math.Max(0, f.Length));
                 await f.CopyToAsync(ms);
-                fileDataList.Add(new FileData(ms.ToArray(), f.FileName ?? "", f.Length));
+                var content = ms.ToArray();
+
+                // M-2: validar la firma binaria (magic bytes), no solo la extensión. Los archivos
+                // vacíos se dejan pasar acá y se saltean en el handler (Content.Length == 0).
+                if (content.Length > 0 && !UploadBankStatementHandler.HasValidSignature(ext, content))
+                    return Results.BadRequest($"El archivo '{f.FileName}' no coincide con su extensión (firma binaria inválida).");
+
+                var staged = new StagedUploadFile
+                {
+                    FileName = f.FileName ?? string.Empty,
+                    Content  = content,
+                    Length   = f.Length,
+                };
+                dbContext.StagedUploadFiles.Add(staged);
+                stagedRefs.Add(new StagedFileRef(staged.Id, staged.FileName, staged.Length));
             }
 
+            await dbContext.SaveChangesAsync();
+
             Guid? cId = Guid.TryParse(companyId, out var g) ? g : null;
-            var result = await sender.Send(new UploadBankStatementCommand(fileDataList, cId, bankCode, withoutDateFilter ?? false, forceReapplyRules ?? false));
-            return result.ToHttpResult();
+            var uploadId = Guid.NewGuid();
+            var command = new UploadBankStatementCommand(
+                uploadId, stagedRefs, cId, bankCode,
+                withoutDateFilter ?? false, forceReapplyRules ?? false,
+                tenant.StudioTenantId!);
+
+            backgroundJobClient.Enqueue<ISender>(sender => sender.Send(command, default));
+
+            return Results.Accepted(value: new
+            {
+                UploadId = uploadId,
+                Message  = "Procesando el extracto en segundo plano. Esto puede demorar unos minutos.",
+            });
         })
         .DisableAntiforgery()
         .WithName("UploadBankStatement")
         .WithTags("Transacciones")
-        .WithSummary("Importar y clasificar extractos bancarios (CSV, XLSX, PDF).")
-        .WithDescription("Form-data multipart: files[] (uno o más archivos), bankCode (AUTO | BBVA | GALICIA | ...), companyId (guid). Detecta duplicados en BD y dentro del lote. Auto-detecta banco desde PDF si bankCode = AUTO. Valida cuota mensual del plan.")
-        .Produces(200)
-        .Produces<ProblemDetails>(402);
+        .WithSummary("Importar y clasificar extractos bancarios (CSV, XLSX, PDF) en segundo plano.")
+        .WithDescription("Form-data multipart: files[] (uno o más archivos), bankCode (AUTO | BBVA | GALICIA | ...), companyId (guid). Encola el procesamiento (parseo/OCR/clasificación) como job de Hangfire y responde 202 con un uploadId. El resultado se consulta vía GET /api/transactions/upload/{uploadId}/result.")
+        .Produces(202)
+        .Produces(400);
+
+
+        app.MapGet("/api/transactions/upload/{uploadId:guid}/result", async (
+            Guid uploadId,
+            ICurrentTenantService tenant,
+            ContableAIDbContext   dbContext) =>
+        {
+            var row = await dbContext.UploadJobResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.JobId == uploadId.ToString() && r.StudioTenantId == tenant.StudioTenantId);
+
+            // done:false (200, no 404) mientras el job no terminó — evita que el interceptor
+            // global de errores del frontend muestre un toast de "no encontrado" en cada poll.
+            if (row is null)
+                return Results.Ok(new { done = false });
+
+            using var resultDoc = JsonDocument.Parse(row.ResultJson);
+            var root = resultDoc.RootElement;
+
+            object? value = root.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null
+                ? v.Clone()
+                : null;
+            string? error = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String
+                ? e.GetString()
+                : null;
+
+            return Results.Ok(new
+            {
+                done       = true,
+                isSuccess  = row.IsSuccess,
+                statusCode = row.StatusCode,
+                error,
+                value,
+            });
+        })
+        .WithName("GetUploadResult")
+        .WithTags("Transacciones")
+        .WithSummary("Consultar el resultado de un job de subida de extracto (polling).")
+        .WithDescription("Devuelve { done: false } mientras el job no terminó. Al terminar: { done: true, isSuccess, statusCode, error, value }, donde value tiene la misma forma que la respuesta síncrona de antes.")
+        .Produces(200);
 
 
         app.MapGet("/api/transactions", async (

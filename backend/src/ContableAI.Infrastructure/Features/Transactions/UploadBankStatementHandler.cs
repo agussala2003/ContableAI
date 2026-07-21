@@ -10,16 +10,17 @@ using Hangfire;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 
 namespace ContableAI.Infrastructure.Features.Transactions;
 
 public sealed class UploadBankStatementHandler
     : IRequestHandler<UploadBankStatementCommand, Result<UploadBankStatementResponse>>
 {
-    private static readonly HashSet<string> AllowedExtensions =
+    public static readonly HashSet<string> AllowedExtensions =
         new(StringComparer.OrdinalIgnoreCase) { ".csv", ".xlsx", ".xls", ".pdf" };
 
-    private const long MaxFileSizeBytes = 25 * 1024 * 1024;
+    public const long MaxFileSizeBytes = 25 * 1024 * 1024;
 
     // ── Firmas binarias (magic bytes) esperadas por extensión (M-2) ──────────────
     private static readonly byte[] SigPdf  = "%PDF-"u8.ToArray();
@@ -29,8 +30,9 @@ public sealed class UploadBankStatementHandler
     /// <summary>
     /// Verifica que el contenido empiece con la firma binaria correspondiente a su extensión.
     /// CSV es texto plano sin firma → se acepta. Cualquier otra extensión → inválida.
+    /// Llamada desde el endpoint (validación rápida y síncrona, antes de encolar el job).
     /// </summary>
-    internal static bool HasValidSignature(string ext, byte[] content)
+    public static bool HasValidSignature(string ext, byte[] content)
     {
         var span = content.AsSpan();
         return ext.ToLowerInvariant() switch
@@ -46,7 +48,6 @@ public sealed class UploadBankStatementHandler
     private readonly ContableAIDbContext    _db;
     private readonly IBankParserService     _parser;
     private readonly IClassificationService _classifier;
-    private readonly ICurrentTenantService  _tenant;
     private readonly IQuotaService          _quota;
     private readonly IBackgroundJobClient   _jobs;
     private readonly ILogger<UploadBankStatementHandler> _logger;
@@ -55,7 +56,6 @@ public sealed class UploadBankStatementHandler
         ContableAIDbContext    db,
         IBankParserService     parser,
         IClassificationService classifier,
-        ICurrentTenantService  tenant,
         IQuotaService          quota,
         IBackgroundJobClient   jobs,
         ILogger<UploadBankStatementHandler> logger)
@@ -63,80 +63,112 @@ public sealed class UploadBankStatementHandler
         _db         = db;
         _parser     = parser;
         _classifier = classifier;
-        _tenant     = tenant;
         _quota      = quota;
         _jobs       = jobs;
         _logger     = logger;
     }
 
     /// <summary>
-    /// Orquesta la subida de extractos: valida → resuelve empresa → parsea → chequea cuota →
-    /// carga el presupuesto de duplicados, reglas y candidatos de unión → clasifica y deduplica →
-    /// persiste. Cada paso vive en un método propio para que este flujo se lea de arriba a abajo.
+    /// Punto de entrada del job de Hangfire (encolado como <c>sender.Send(command)</c>, sin clase
+    /// de job dedicada — mismo patrón que <c>GenerateJournalEntriesCommandHandler</c>). Garantiza
+    /// dos cosas para cualquier resultado (éxito, rechazo de negocio, o excepción inesperada):
+    /// 1) queda una fila en <c>UploadJobResults</c> para que el endpoint de polling la lea, y
+    /// 2) el staging de <c>StagedUploadFiles</c> consumido se borra. Nunca relanza: si el trabajo
+    /// tirara una excepción, Hangfire reintentaría el job automáticamente y reprocesaría el mismo
+    /// archivo — indeseable, porque ya habríamos grabado un resultado para el polling.
     /// </summary>
     public async Task<Result<UploadBankStatementResponse>> Handle(
         UploadBankStatementCommand command,
         CancellationToken          ct)
     {
-        var validationError = ValidateFiles(command.Files);
-        if (validationError != null)
-            return Result<UploadBankStatementResponse>.Failure(validationError);
+        Result<UploadBankStatementResponse> result;
+        try
+        {
+            result = await ProcessAsync(command, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Upload job {UploadId} falló inesperadamente", command.UploadId);
+            result = Result<UploadBankStatementResponse>.Failure(
+                "Error inesperado al procesar el extracto.", 500);
+        }
 
-        var (company, forbidden) = await ResolveCompanyAsync(command, ct);
-        if (forbidden)
-            return Result<UploadBankStatementResponse>.Forbidden();
+        await SaveJobResultAsync(command, result, ct);
+        return result;
+    }
 
-        var (allParsed, parseErrors) = ParseFiles(command);
-        if (allParsed.Count == 0 && parseErrors.Count > 0)
-            return Result<UploadBankStatementResponse>.Failure(
-                $"No se pudo procesar ningún archivo. {parseErrors[0]}");
+    /// <summary>
+    /// Orquesta la subida de extractos: carga el contenido en staging → valida → resuelve empresa →
+    /// parsea → chequea cuota → carga el presupuesto de duplicados, reglas y candidatos de unión →
+    /// clasifica y deduplica → persiste. Cada paso vive en un método propio para que este flujo se
+    /// lea de arriba a abajo.
+    /// </summary>
+    private async Task<Result<UploadBankStatementResponse>> ProcessAsync(
+        UploadBankStatementCommand command, CancellationToken ct)
+    {
+        var stagedFiles = await LoadStagedFilesAsync(command.Files, ct);
+        try
+        {
+            var (company, forbidden) = await ResolveCompanyAsync(command, ct);
+            if (forbidden)
+                return Result<UploadBankStatementResponse>.Forbidden();
 
-        if (await QuotaExceededAsync(allParsed, ct))
-            return Result<UploadBankStatementResponse>.PaymentRequired(
-                "QUOTA_EXCEEDED",
-                "Alcanzaste el límite mensual de transacciones de tu plan. Actualizá a Pro para continuar.");
+            var (allParsed, parseErrors) = ParseFiles(command, stagedFiles);
+            if (allParsed.Count == 0 && parseErrors.Count > 0)
+                return Result<UploadBankStatementResponse>.Failure(
+                    $"No se pudo procesar ningún archivo. {parseErrors[0]}");
 
-        var (minDate, maxDate) = DateRange(allParsed);
-        var budget          = await BuildDedupBudgetAsync(company, minDate, maxDate, ct);
-        var rules           = await LoadRulesAsync(company, ct);
-        var unionCandidates = await LoadUnionCandidatesAsync(company, minDate, maxDate, ct);
+            if (await QuotaExceededAsync(command, allParsed, ct))
+                return Result<UploadBankStatementResponse>.PaymentRequired(
+                    "QUOTA_EXCEEDED",
+                    "Alcanzaste el límite mensual de transacciones de tu plan. Actualizá a Pro para continuar.");
 
-        var outcome = await ClassifyFilesAsync(command, company, allParsed, budget, rules, unionCandidates, ct);
+            var (minDate, maxDate) = DateRange(allParsed);
+            var budget          = await BuildDedupBudgetAsync(company, minDate, maxDate, ct);
+            var rules           = await LoadRulesAsync(company, ct);
+            var unionCandidates = await LoadUnionCandidatesAsync(company, minDate, maxDate, ct);
 
-        await PersistAsync(outcome, ct);
-        EnqueueAfipMatchingIfNeeded(company, outcome);
+            var outcome = await ClassifyFilesAsync(command, company, allParsed, budget, rules, unionCandidates, ct);
 
-        _logger.LogInformation(
-            "Upload completed: {FileCount} file(s), {TotalParsed} parsed, {Duplicates} duplicates, {Reapplied} reapplied",
-            command.Files.Count, outcome.Classified.Count + outcome.TotalDuplicates, outcome.TotalDuplicates, outcome.TotalReapplied);
+            await PersistAsync(outcome, ct);
+            EnqueueAfipMatchingIfNeeded(company, outcome);
 
-        return BuildResponse(command, company, outcome, parseErrors);
+            _logger.LogInformation(
+                "Upload completed: {FileCount} file(s), {TotalParsed} parsed, {Duplicates} duplicates, {Reapplied} reapplied",
+                stagedFiles.Count, outcome.Classified.Count + outcome.TotalDuplicates, outcome.TotalDuplicates, outcome.TotalReapplied);
+
+            return BuildResponse(stagedFiles.Count, company, outcome, parseErrors);
+        }
+        finally
+        {
+            // Staging consumido: se borra pase lo que pase (éxito, rechazo o excepción), en la
+            // misma transacción que el resto de los cambios de este job (RemoveRange + SaveChanges,
+            // no ExecuteDeleteAsync — el proveedor InMemory usado en tests no soporta bulk delete).
+            if (stagedFiles.Count > 0)
+                _db.StagedUploadFiles.RemoveRange(stagedFiles.Select(f => f.Entity));
+        }
     }
 
     // ── Pasos del pipeline ──────────────────────────────────────────────────────
 
-    /// <summary>Valida tamaño, extensión y firma binaria de cada archivo. Devuelve el primer error o null.</summary>
-    private static string? ValidateFiles(IEnumerable<FileData> files)
+    /// <summary>Contenido ya leído desde <c>StagedUploadFiles</c>, listo para parsear.</summary>
+    private sealed record LoadedFile(StagedUploadFile Entity, string FileName, byte[] Content);
+
+    private async Task<List<LoadedFile>> LoadStagedFilesAsync(
+        IReadOnlyList<StagedFileRef> files, CancellationToken ct)
     {
-        foreach (var file in files)
-        {
-            if (file.Length > MaxFileSizeBytes)
-                return $"El archivo '{file.FileName}' supera el máximo permitido de 25 MB.";
+        var ids = files.Select(f => f.StagedFileId).ToList();
+        var staged = await _db.StagedUploadFiles
+            .Where(f => ids.Contains(f.Id))
+            .ToDictionaryAsync(f => f.Id, ct);
 
-            var ext = Path.GetExtension(file.FileName ?? string.Empty);
-            if (!AllowedExtensions.Contains(ext))
-                return $"Formato no soportado para '{file.FileName}'. Solo se permiten CSV, XLSX y PDF.";
-
-            // M-2: validar la firma binaria (magic bytes), no solo la extensión. Impide que un
-            // binario arbitrario renombrado a .pdf/.xlsx llegue a los parsers. Los archivos vacíos
-            // se dejan pasar acá y se saltean más abajo (file.Length == 0 → continue).
-            if (file.Length > 0 && !HasValidSignature(ext, file.Content))
-                return $"El archivo '{file.FileName}' no coincide con su extensión (firma binaria inválida).";
-        }
-        return null;
+        return files
+            .Where(f => staged.ContainsKey(f.StagedFileId))
+            .Select(f => new LoadedFile(staged[f.StagedFileId], f.FileName, staged[f.StagedFileId].Content))
+            .ToList();
     }
 
-    /// <summary>Resuelve la empresa del comando y verifica que pertenezca al tenant actual.</summary>
+    /// <summary>Resuelve la empresa del comando y verifica que pertenezca al tenant del job.</summary>
     private async Task<(Company? company, bool forbidden)> ResolveCompanyAsync(
         UploadBankStatementCommand command, CancellationToken ct)
     {
@@ -144,22 +176,22 @@ public sealed class UploadBankStatementHandler
         if (command.CompanyId.HasValue)
             company = await _db.Companies.FindAsync([command.CompanyId.Value], ct);
 
-        if (company != null && company.StudioTenantId != _tenant.StudioTenantId)
+        if (company != null && company.StudioTenantId != command.StudioTenantId)
             return (company, true);
 
         return (company, false);
     }
 
     /// <summary>Parsea todos los archivos. Un archivo roto no aborta el lote: se acumula su error.</summary>
-    private (List<(FileData File, List<BankTransaction> Txs)> parsed, List<string> errors) ParseFiles(
-        UploadBankStatementCommand command)
+    private (List<(LoadedFile File, List<BankTransaction> Txs)> parsed, List<string> errors) ParseFiles(
+        UploadBankStatementCommand command, List<LoadedFile> stagedFiles)
     {
-        var allParsed   = new List<(FileData File, List<BankTransaction> Txs)>();
+        var allParsed   = new List<(LoadedFile File, List<BankTransaction> Txs)>();
         var parseErrors = new List<string>();
 
-        foreach (var file in command.Files)
+        foreach (var file in stagedFiles)
         {
-            if (file.Length == 0) continue;
+            if (file.Content.Length == 0) continue;
             using var stream = new MemoryStream(file.Content);
             var effectiveBankCode = (command.BankCode is null or "AUTO") ? "PDF" : command.BankCode;
             try
@@ -180,9 +212,10 @@ public sealed class UploadBankStatementHandler
 
     /// <summary>Chequea la cuota mensual del plan (solo cuentan los movimientos del mes en curso).</summary>
     private async Task<bool> QuotaExceededAsync(
-        List<(FileData File, List<BankTransaction> Txs)> allParsed, CancellationToken ct)
+        UploadBankStatementCommand command,
+        List<(LoadedFile File, List<BankTransaction> Txs)> allParsed, CancellationToken ct)
     {
-        var tenantId    = _tenant.StudioTenantId;
+        var tenantId    = command.StudioTenantId;
         var totalParsed = allParsed.Sum(x => x.Txs.Count);
         if (string.IsNullOrEmpty(tenantId) || totalParsed == 0)
             return false;
@@ -197,7 +230,7 @@ public sealed class UploadBankStatementHandler
 
     /// <summary>Rango de fechas del lote parseado (null/null si no hubo movimientos).</summary>
     private static (DateOnly? min, DateOnly? max) DateRange(
-        List<(FileData File, List<BankTransaction> Txs)> allParsed)
+        List<(LoadedFile File, List<BankTransaction> Txs)> allParsed)
     {
         var dates = allParsed.SelectMany(x => x.Txs).Select(t => t.Date).ToList();
         return dates.Count == 0 ? (null, null) : (dates.Min(), dates.Max());
@@ -211,9 +244,8 @@ public sealed class UploadBankStatementHandler
     private async Task<DedupBudget> BuildDedupBudgetAsync(
         Company? company, DateOnly? minDate, DateOnly? maxDate, CancellationToken ct)
     {
-        // IgnoreQueryFilters: el handler ya validó la pertenencia de la empresa al tenant y acota
-        // por CompanyId; además la rama sin empresa (TenantId == "ESTUDIO_DEFAULT") tiene CompanyId
-        // null y el filtro global la ocultaría.
+        // IgnoreQueryFilters: sin HttpContext (job de Hangfire) el filtro global ya viene
+        // desactivado, pero se mantiene explícito por claridad — acota por CompanyId igual.
         var query = _db.BankTransactions.IgnoreQueryFilters().AsQueryable();
         query = company != null
             ? query.Where(t => t.CompanyId == company.Id)
@@ -289,7 +321,7 @@ public sealed class UploadBankStatementHandler
     private async Task<ClassificationOutcome> ClassifyFilesAsync(
         UploadBankStatementCommand command,
         Company? company,
-        List<(FileData File, List<BankTransaction> Txs)> allParsed,
+        List<(LoadedFile File, List<BankTransaction> Txs)> allParsed,
         DedupBudget budget,
         List<AccountingRule> allRules,
         List<(DateOnly Date, string Description, decimal Amount, string Currency)> existingUnionCandidates,
@@ -418,10 +450,10 @@ public sealed class UploadBankStatementHandler
     }
 
     private static Result<UploadBankStatementResponse> BuildResponse(
-        UploadBankStatementCommand command, Company? company,
+        int totalFiles, Company? company,
         ClassificationOutcome outcome, List<string> parseErrors)
         => Result<UploadBankStatementResponse>.Success(new UploadBankStatementResponse(
-            TotalFiles:          command.Files.Count,
+            TotalFiles:          totalFiles,
             TotalProcessed:      outcome.Classified.Count,
             DuplicatesSkipped:   outcome.TotalDuplicates,
             ReappliedToExisting: outcome.TotalReapplied,
@@ -430,6 +462,35 @@ public sealed class UploadBankStatementHandler
             SkippedDuplicates:   outcome.SkippedDuplicates,
             ParseErrors:         parseErrors
         ));
+
+    /// <summary>
+    /// Graba el resultado durable del job para que el endpoint de polling
+    /// (<c>GET /api/transactions/upload/{uploadId}/result</c>) lo pueda leer. Se serializa
+    /// { value, error } como JSON crudo — el endpoint lo reenvía tal cual al frontend, sin
+    /// necesidad de un tipo compartido entre el escritor (este handler) y el lector (el endpoint).
+    /// </summary>
+    // JsonSerializerDefaults.Web: mismo naming policy (camelCase) que usa ASP.NET Core al serializar
+    // las respuestas HTTP hoy — el endpoint de polling reenvía este JSON crudo al frontend, que
+    // espera camelCase (ver UploadResponse en transaction.ts).
+    private static readonly JsonSerializerOptions JobResultJsonOptions = new(JsonSerializerDefaults.Web);
+
+    private async Task SaveJobResultAsync(
+        UploadBankStatementCommand command, Result<UploadBankStatementResponse> result, CancellationToken ct)
+    {
+        var resultJson = JsonSerializer.Serialize(
+            new { value = result.Value, error = result.Error }, JobResultJsonOptions);
+
+        _db.UploadJobResults.Add(new UploadJobResult
+        {
+            JobId          = command.UploadId.ToString(),
+            StudioTenantId = command.StudioTenantId,
+            IsSuccess      = result.IsSuccess,
+            StatusCode     = result.StatusCode,
+            ResultJson     = resultJson,
+        });
+
+        await _db.SaveChangesAsync(ct);
+    }
 
     /// <summary>Presupuesto de duplicados contra la BD: copias restantes por firma + primer match de cada firma.</summary>
     private sealed record DedupBudget(

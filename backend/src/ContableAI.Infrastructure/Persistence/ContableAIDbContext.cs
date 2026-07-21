@@ -41,6 +41,8 @@ public class ContableAIDbContext : DbContext
     public DbSet<RuleSuggestion>   RuleSuggestions   { get; set; }
     public DbSet<AfipVoucher>      AfipVouchers      { get; set; }
     public DbSet<RefreshToken>     RefreshTokens     { get; set; }
+    public DbSet<StagedUploadFile> StagedUploadFiles { get; set; }
+    public DbSet<UploadJobResult>  UploadJobResults  { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -220,6 +222,22 @@ public class ContableAIDbContext : DbContext
 
         modelBuilder.Entity<RefreshToken>()
             .HasIndex(t => t.UserId);
+
+        // ==========================================
+        // StagedUploadFile / UploadJobResult
+        // Tablas internas de soporte al pipeline asíncrono de subida de extractos (Hangfire).
+        // Sin Global Query Filter: no son datos de negocio, se acceden siempre por Id/JobId
+        // explícito desde el propio handler/endpoint, nunca listadas por tenant.
+        // ==========================================
+        modelBuilder.Entity<UploadJobResult>()
+            .HasKey(r => r.JobId);
+
+        modelBuilder.Entity<UploadJobResult>()
+            .Property(r => r.ResultJson)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<UploadJobResult>()
+            .HasIndex(r => r.StudioTenantId);
 
         // Función unaccent de PostgreSQL para búsqueda sin distinción de tildes
         modelBuilder.HasDbFunction(

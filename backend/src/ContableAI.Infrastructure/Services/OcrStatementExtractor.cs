@@ -26,19 +26,28 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
     private const long MaxBytes = 150 * 1024 * 1024; // 150 MB hard limit
     private const int  OcrDpi   = 200;
 
+    // Límite de OCR concurrente: Tesseract + render de PDF son CPU-bound y pesados en memoria: sin
+    // este freno, N jobs de Hangfire ejecutando OCR en simultáneo pueden saturar CPU y memoria del
+    // proceso igual que antes lo hacían N requests HTTP concurrentes. Bloquea el hilo del worker de
+    // Hangfire que lo espera (no hay problema: son hilos de background, no de atención de requests).
+    private static readonly SemaphoreSlim OcrGate = new(2, 2);
+
     public StatementDocument Extract(Stream statementStream, string fileName)
     {
-        var ms = new MemoryStream();
-        statementStream.CopyTo(ms);
-        ms.Position = 0;
+        if (!statementStream.CanSeek)
+            throw new InvalidOperationException("El stream del PDF debe ser buscable (seekable).");
 
-        if (ms.Length > MaxBytes)
+        if (statementStream.Length > MaxBytes)
             throw new InvalidOperationException(
-                $"El archivo PDF supera el límite de 150 MB ({ms.Length / 1_048_576} MB).");
+                $"El archivo PDF supera el límite de 150 MB ({statementStream.Length / 1_048_576} MB).");
 
-        var pdfBytes = ms.ToArray();
+        statementStream.Position = 0;
 
-        using var doc = PdfDocument.Open(pdfBytes);
+        // Se trabaja directo sobre el Stream recibido (PdfPig y PDFtoImage soportan Stream de forma
+        // nativa) — antes acá se copiaba a un MemoryStream y se materializaba un byte[] adicional
+        // (dos copias redundantes del PDF completo en memoria managed, sumadas a las que ya existían
+        // río arriba en el endpoint/handler). Eliminarlas reduce el pico de memoria por archivo.
+        using var doc = PdfDocument.Open(statementStream);
         var pages = doc.GetPages().ToList();
 
         var totalWords = pages.Take(3).Sum(p => p.GetWords().Count());
@@ -59,11 +68,13 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         // PDF escaneado: pipeline OCR
         _logger.LogDebug("[PDF] Ruta OCR — {Words} palabras insuficientes para ruta digital", totalWords);
         List<StatementLine> ocrRows;
+        OcrGate.Wait();
         try
         {
             var tessPath = GetTessDataPath();
             _logger.LogDebug("[PDF] tessdata path: {Path} — existe: {Exists}", tessPath, Directory.Exists(tessPath));
-            ocrRows = ExtractRowsViaOcr(pdfBytes);
+            statementStream.Position = 0;
+            ocrRows = ExtractRowsViaOcr(statementStream);
             _logger.LogDebug("[PDF] OCR completado — {RowCount} filas extraídas", ocrRows.Count);
         }
         catch (Exception ex)
@@ -72,6 +83,10 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
             throw new InvalidOperationException(
                 $"OCR no disponible o falló al procesar el PDF escaneado (palabras digitales detectadas: {totalWords}). " +
                 $"Detalle: {ex.Message}", ex);
+        }
+        finally
+        {
+            OcrGate.Release();
         }
 
         if (ocrRows.Count == 0)
@@ -222,7 +237,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
     /// aplica Tesseract OCR y reconstruye la grilla posicional de StatementLine/StatementToken
     /// compatible con el parser existente.
     /// </summary>
-    private static List<StatementLine> ExtractRowsViaOcr(byte[] pdfBytes)
+    private static List<StatementLine> ExtractRowsViaOcr(Stream pdfStream)
     {
         var tessDataPath = GetTessDataPath();
         var allRows = new List<StatementLine>();
@@ -232,7 +247,8 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
 
         int pageNum = 0;
 #pragma warning disable CA1416 // Se sabe que esto corre en Windows o contenedores permitidos
-        foreach (var bitmap in Conversion.ToImages(pdfBytes, options: new RenderOptions(Dpi: OcrDpi)))
+        // leaveOpen: true — el stream lo posee y cierra el caller (Extract), no este método.
+        foreach (var bitmap in Conversion.ToImages(pdfStream, leaveOpen: true, options: new RenderOptions(Dpi: OcrDpi)))
 #pragma warning restore CA1416
         {
             pageNum++;

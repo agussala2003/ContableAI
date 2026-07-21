@@ -21,9 +21,11 @@ namespace ContableAI.Tests.Infrastructure;
 /// con EF Core InMemory. Ejercitan el flujo real: parseo (fake) → validación → cuota → deduplicación
 /// (vía <c>TransactionSignatureBuilder</c>) → clasificación por reglas (motor real) → persistencia.
 ///
-/// El contexto se construye sin tenant (filtro multi-tenant OFF); el handler filtra por su propio
-/// <see cref="ICurrentTenantService"/>. Las dependencias externas (parser, cuota, Hangfire) se
-/// simulan; la clasificación usa el motor real para verificar de punta a punta que se apliquen las reglas.
+/// El handler corre como si fuera un job de Hangfire: no depende de <see cref="ICurrentTenantService"/>
+/// (no hay HttpContext dentro de un job), sino que el tenant viaja explícito en el propio
+/// <see cref="UploadBankStatementCommand"/>. El contenido del archivo se resuelve desde
+/// <c>StagedUploadFiles</c> (staging bytea), igual que en producción — por eso cada test siembra
+/// una fila de staging antes de invocar <c>Handle</c>.
 /// </summary>
 public class UploadBankStatementHandlerTests
 {
@@ -36,13 +38,6 @@ public class UploadBankStatementHandlerTests
         // Ignora el stream y devuelve movimientos frescos (el parseo real no es lo que se testea aquí).
         public IEnumerable<BankTransaction> Parse(Stream fileStream, string bankCode, string fileName) => factory();
         public IEnumerable<BankTransaction> ParseCsv(Stream fileStream, string bankCode) => throw new NotSupportedException();
-    }
-
-    private sealed class FakeTenant(string? tenantId) : ICurrentTenantService
-    {
-        public string? StudioTenantId => tenantId;
-        public bool IsAuthenticated   => tenantId is not null;
-        public bool IsSystemAdmin     => false;
     }
 
     private sealed class FakeQuota(bool canUpload) : IQuotaService
@@ -65,15 +60,14 @@ public class UploadBankStatementHandlerTests
     private static ContableAIDbContext NewDb(string dbName) =>
         new(new DbContextOptionsBuilder<ContableAIDbContext>()
             .UseInMemoryDatabase(dbName)
-            .Options); // tenant = null → filtro multi-tenant OFF
+            .Options); // tenant = null → filtro multi-tenant OFF (irrelevante: el handler ya no lo usa)
 
     private static UploadBankStatementHandler NewHandler(
-        ContableAIDbContext db, Func<IEnumerable<BankTransaction>> parsed, bool canUpload = true, string? tenant = Studio)
+        ContableAIDbContext db, Func<IEnumerable<BankTransaction>> parsed, bool canUpload = true)
         => new(
             db,
             new FakeBankParser(parsed),
             new ClassificationService(new HardRuleStrategy()), // motor de reglas real
-            new FakeTenant(tenant),
             new FakeQuota(canUpload),
             new FakeJobClient(),
             NullLogger<UploadBankStatementHandler>.Instance);
@@ -86,12 +80,22 @@ public class UploadBankStatementHandlerTests
         BankAccountName = "Banco Test",
     };
 
-    private static UploadBankStatementCommand CommandFor(Guid companyId, bool forceReapply = false)
+    /// <summary>Siembra un archivo en staging (bytea) y devuelve la referencia que viaja en el command.</summary>
+    private static async Task<StagedFileRef> StageCsvAsync(string dbName, string fileName = "extracto.csv")
     {
         var content = "fake-csv-content"u8.ToArray();
-        return new UploadBankStatementCommand(
-            [new FileData(content, "extracto.csv", content.Length)], companyId, "AUTO", false, forceReapply);
+        var staged = new StagedUploadFile { FileName = fileName, Content = content, Length = content.Length };
+
+        await using var db = NewDb(dbName);
+        db.StagedUploadFiles.Add(staged);
+        await db.SaveChangesAsync();
+
+        return new StagedFileRef(staged.Id, staged.FileName, staged.Length);
     }
+
+    private static UploadBankStatementCommand CommandFor(
+        StagedFileRef fileRef, Guid companyId, string tenant = Studio, bool forceReapply = false)
+        => new(Guid.NewGuid(), [fileRef], companyId, "AUTO", false, forceReapply, tenant);
 
     /// <summary>Movimiento tal como lo devolvería el parser: sin clasificar (la clasificación la hace el handler).</summary>
     private static BankTransaction ParsedTx(decimal amount, TransactionType type, string desc, DateOnly? date = null) => new()
@@ -115,18 +119,20 @@ public class UploadBankStatementHandlerTests
         // Cada llamada del parser devuelve un movimiento fresco con los mismos campos → misma firma.
         Func<IEnumerable<BankTransaction>> parsed = () => [ParsedTx(1000m, TransactionType.Debit, "PAGO PROVEEDOR")];
 
+        var fileRef1 = await StageCsvAsync(dbName);
         Result<UploadBankStatementResponse> first;
         await using (var db = NewDb(dbName))
-            first = await NewHandler(db, parsed).Handle(CommandFor(company.Id), CancellationToken.None);
+            first = await NewHandler(db, parsed).Handle(CommandFor(fileRef1, company.Id), CancellationToken.None);
 
         first.IsSuccess.Should().BeTrue();
         first.Value!.TotalProcessed.Should().Be(1);
         first.Value.DuplicatesSkipped.Should().Be(0);
 
         // Segunda subida idéntica: la firma coincide con la ya persistida → se descarta como duplicado.
+        var fileRef2 = await StageCsvAsync(dbName);
         Result<UploadBankStatementResponse> second;
         await using (var db = NewDb(dbName))
-            second = await NewHandler(db, parsed).Handle(CommandFor(company.Id), CancellationToken.None);
+            second = await NewHandler(db, parsed).Handle(CommandFor(fileRef2, company.Id), CancellationToken.None);
 
         second.IsSuccess.Should().BeTrue();
         second.Value!.TotalProcessed.Should().Be(0, "el movimiento ya existe en la BD");
@@ -151,8 +157,9 @@ public class UploadBankStatementHandlerTests
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         Func<IEnumerable<BankTransaction>> parsed = () => [ParsedTx(500m, TransactionType.Debit, "MOVIMIENTO DEL MES", today)];
 
+        var fileRef = await StageCsvAsync(dbName);
         await using var db = NewDb(dbName);
-        var result = await NewHandler(db, parsed, canUpload: false).Handle(CommandFor(company.Id), CancellationToken.None);
+        var result = await NewHandler(db, parsed, canUpload: false).Handle(CommandFor(fileRef, company.Id), CancellationToken.None);
 
         result.IsSuccess.Should().BeFalse();
         result.StatusCode.Should().Be(402, "cuota excedida → Payment Required");
@@ -185,9 +192,10 @@ public class UploadBankStatementHandlerTests
 
         Func<IEnumerable<BankTransaction>> parsed = () => [ParsedTx(2500m, TransactionType.Debit, "PAGO EDENOR FACTURA")];
 
+        var fileRef = await StageCsvAsync(dbName);
         await using (var db = NewDb(dbName))
         {
-            var result = await NewHandler(db, parsed).Handle(CommandFor(company.Id), CancellationToken.None);
+            var result = await NewHandler(db, parsed).Handle(CommandFor(fileRef, company.Id), CancellationToken.None);
             result.IsSuccess.Should().BeTrue();
             result.Value!.TotalProcessed.Should().Be(1);
         }
@@ -206,18 +214,46 @@ public class UploadBankStatementHandlerTests
     {
         var dbName = Guid.NewGuid().ToString();
         var company = NewCompany();
-        company.StudioTenantId = "otro-estudio"; // distinto del tenant autenticado
+        company.StudioTenantId = "otro-estudio"; // distinto del tenant que viaja en el command
         await using (var seed = NewDb(dbName)) { seed.Companies.Add(company); await seed.SaveChangesAsync(); }
 
         Func<IEnumerable<BankTransaction>> parsed = () => [ParsedTx(100m, TransactionType.Debit, "X")];
 
+        var fileRef = await StageCsvAsync(dbName);
         await using var db = NewDb(dbName);
-        var result = await NewHandler(db, parsed).Handle(CommandFor(company.Id), CancellationToken.None);
+        var result = await NewHandler(db, parsed).Handle(CommandFor(fileRef, company.Id), CancellationToken.None);
 
         result.IsSuccess.Should().BeFalse();
         result.StatusCode.Should().Be(403, "una empresa de otro estudio no es accesible");
 
         await using var assert = NewDb(dbName);
         (await assert.BankTransactions.CountAsync()).Should().Be(0);
+    }
+
+    // ── 5. Resultado durable del job + limpieza de staging ──────────────────────
+
+    [Fact]
+    public async Task Handle_OnCompletion_WritesJobResultAndCleansUpStagedFile()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var company = NewCompany();
+        await using (var seed = NewDb(dbName)) { seed.Companies.Add(company); await seed.SaveChangesAsync(); }
+
+        Func<IEnumerable<BankTransaction>> parsed = () => [ParsedTx(100m, TransactionType.Debit, "X")];
+        var fileRef = await StageCsvAsync(dbName);
+        var command = CommandFor(fileRef, company.Id);
+
+        await using (var db = NewDb(dbName))
+            await NewHandler(db, parsed).Handle(command, CancellationToken.None);
+
+        await using var assert = NewDb(dbName);
+        var jobResult = await assert.UploadJobResults.SingleAsync(r => r.JobId == command.UploadId.ToString());
+        jobResult.IsSuccess.Should().BeTrue();
+        jobResult.StatusCode.Should().Be(200);
+        jobResult.StudioTenantId.Should().Be(Studio);
+        jobResult.ResultJson.Should().Contain("\"totalProcessed\":1");
+
+        (await assert.StagedUploadFiles.AnyAsync(f => f.Id == fileRef.StagedFileId))
+            .Should().BeFalse("el staging consumido debe borrarse tras procesar, sea cual sea el resultado");
     }
 }
