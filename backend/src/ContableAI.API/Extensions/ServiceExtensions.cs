@@ -60,6 +60,7 @@ public static class ServiceExtensions
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.SectionName));
         services.Configure<FrontendOptions>(configuration.GetSection(FrontendOptions.SectionName));
+        services.Configure<DataRetentionOptions>(configuration.GetSection(DataRetentionOptions.SectionName));
 
         // ── MediatR — scans Application + Infrastructure for commands/handlers ─
         services.AddMediatR(cfg =>

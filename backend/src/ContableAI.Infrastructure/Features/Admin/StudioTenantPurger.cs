@@ -27,6 +27,52 @@ internal static class StudioTenantPurger
         int AfipVouchers, int ChartOfAccounts, int ClosedPeriods, int UploadJobResults,
         int StagedFilesPurged, int AuditLogsAnonymized);
 
+    internal sealed record CompanyPurgeCounts(
+        int Companies, int BankTransactions, int JournalEntries, int JournalEntryLines,
+        int AccountingRules, int RuleSuggestions, int AfipVouchers);
+
+    /// <summary>
+    /// Cascada de borrado de un conjunto de empresas y todos sus datos (hijos → padres).
+    /// La usan el cierre de tenant (<see cref="PurgeAsync"/>) y el <c>DataRetentionJob</c>
+    /// para el hard-delete diferido de empresas soft-deleted (P-2: DeletedAt vencido).
+    /// No toca datos a nivel estudio (reglas de estudio, plan de cuentas, usuarios).
+    /// </summary>
+    internal static async Task<CompanyPurgeCounts> PurgeCompaniesAsync(
+        ContableAIDbContext db, IReadOnlyCollection<Guid> companyIds, CancellationToken ct)
+    {
+        if (companyIds.Count == 0)
+            return new CompanyPurgeCounts(0, 0, 0, 0, 0, 0, 0);
+
+        var jeIds = await db.JournalEntries
+            .Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value))
+            .Select(je => je.Id)
+            .ToListAsync(ct);
+
+        var lines = await DeleteAsync(db,
+            db.JournalEntryLines.Where(l => jeIds.Contains(l.JournalEntryId)), ct);
+
+        var entries = await DeleteAsync(db,
+            db.JournalEntries.Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value)), ct);
+
+        var txs = await DeleteAsync(db,
+            db.BankTransactions.IgnoreQueryFilters()
+                .Where(t => t.CompanyId != null && companyIds.Contains(t.CompanyId.Value)), ct);
+
+        var vouchers = await DeleteAsync(db,
+            db.AfipVouchers.Where(v => companyIds.Contains(v.CompanyId)), ct);
+
+        var rules = await DeleteAsync(db,
+            db.AccountingRules.Where(r => r.CompanyId != null && companyIds.Contains(r.CompanyId.Value)), ct);
+
+        var suggestions = await DeleteAsync(db,
+            db.RuleSuggestions.Where(s => s.CompanyId != null && companyIds.Contains(s.CompanyId.Value)), ct);
+
+        var companies = await DeleteAsync(db,
+            db.Companies.IgnoreQueryFilters().Where(c => companyIds.Contains(c.Id)), ct);
+
+        return new CompanyPurgeCounts(companies, txs, entries, lines, rules, suggestions, vouchers);
+    }
+
     /// <summary>
     /// Elimina todos los datos del tenant y seudonimiza sus <see cref="AuditLog"/>. No abre
     /// transacción ni escribe el AuditLog de cierre: eso es responsabilidad del caller.
@@ -49,35 +95,18 @@ internal static class StudioTenantPurger
         // Las reglas/plan de cuentas a nivel estudio guardan el tenant como Guid.
         Guid? studioGuid = Guid.TryParse(studioTenantId, out var g) ? g : null;
 
-        var jeIds = await db.JournalEntries
-            .Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value))
-            .Select(je => je.Id)
-            .ToListAsync(ct);
+        // ── Datos por empresa (hijos → padres) — cascada compartida ──────────
+        var companyCounts = await PurgeCompaniesAsync(db, companyIds, ct);
 
-        // ── Borrado hijos → padres ────────────────────────────────────────────
-        var lines = await DeleteAsync(db,
-            db.JournalEntryLines.Where(l => jeIds.Contains(l.JournalEntryId)), ct);
-
-        var entries = await DeleteAsync(db,
-            db.JournalEntries.Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value)), ct);
-
-        var txs = await DeleteAsync(db,
-            db.BankTransactions.IgnoreQueryFilters()
-                .Where(t => t.CompanyId != null && companyIds.Contains(t.CompanyId.Value)), ct);
-
-        var vouchers = await DeleteAsync(db,
-            db.AfipVouchers.Where(v => companyIds.Contains(v.CompanyId)), ct);
-
-        // Reglas de empresa Y de estudio (CompanyId null + StudioTenantId del tenant) — P-3.
-        var rules = await DeleteAsync(db,
+        // ── Datos a nivel estudio ─────────────────────────────────────────────
+        // Reglas de estudio (CompanyId null + StudioTenantId del tenant) — P-3.
+        var studioRules = await DeleteAsync(db,
             db.AccountingRules.Where(r =>
-                (r.CompanyId != null && companyIds.Contains(r.CompanyId.Value))
-                || (r.CompanyId == null && studioGuid != null && r.StudioTenantId == studioGuid)), ct);
+                r.CompanyId == null && studioGuid != null && r.StudioTenantId == studioGuid), ct);
 
-        var suggestions = await DeleteAsync(db,
-            db.RuleSuggestions.Where(s =>
-                (s.CompanyId != null && companyIds.Contains(s.CompanyId.Value))
-                || s.TenantId == studioTenantId), ct);
+        // Sugerencias residuales ancladas solo por TenantId (las de empresa ya cayeron arriba).
+        var tenantSuggestions = await DeleteAsync(db,
+            db.RuleSuggestions.Where(s => s.TenantId == studioTenantId), ct);
 
         var accounts = studioGuid is null ? 0 : await DeleteAsync(db,
             db.ChartOfAccounts.Where(a => a.StudioTenantId == studioGuid), ct);
@@ -101,15 +130,15 @@ internal static class StudioTenantPurger
         var users = await DeleteAsync(db,
             db.Users.Where(u => u.StudioTenantId == studioTenantId), ct);
 
-        var companies = await DeleteAsync(db,
-            db.Companies.IgnoreQueryFilters().Where(c => c.StudioTenantId == studioTenantId), ct);
-
         var anonymized = await AnonymizeAuditLogsAsync(db, studioTenantId,
             userIds.Select(id => id.ToString()).ToList(), ct);
 
         return new PurgeCounts(
-            users, tokens, companies, txs, entries, lines, rules, suggestions,
-            vouchers, accounts, periods, jobResults, staged, anonymized);
+            users, tokens, companyCounts.Companies, companyCounts.BankTransactions,
+            companyCounts.JournalEntries, companyCounts.JournalEntryLines,
+            companyCounts.AccountingRules + studioRules,
+            companyCounts.RuleSuggestions + tenantSuggestions,
+            companyCounts.AfipVouchers, accounts, periods, jobResults, staged, anonymized);
     }
 
     /// <summary>

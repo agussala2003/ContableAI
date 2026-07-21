@@ -333,7 +333,7 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
 > hallazgo fue remediado aún: todo el bloque queda pendiente.** Veredicto de licencias: no hay
 > GPL/AGPL en ninguna dependencia directa (backend ni frontend).
 
-## Ya completado — Privacidad de Datos (P-1, P-2 y P-3)
+## Ya completado — Privacidad de Datos (P-1 a P-6)
 
 - [x] **🔴 P-1 · Cierre formal de cuenta implementado (2026-07-21).** Nuevo comando
   `DeleteStudioTenantCommand` + endpoint `DELETE /api/admin/tenants/{studioTenantId}` (solo
@@ -362,23 +362,28 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   (cascada idéntica al cierre formal, sin residuos), y cuando quedan otros usuarios borra los
   `RefreshTokens` del usuario y seudonimiza su email en `AuditLogs`.
 
-## ⏳ Pendiente — Riesgos de Privacidad de Datos (P-4 a P-6)
-
-- [ ] **🟠 P-4 · `UploadJobResults` acumula datos financieros sin retención.** El JSON completo
-  del resultado de cada procesamiento de extracto se persiste (jsonb, por `StudioTenantId`) y
-  **nunca se borra** — solo existe el `Add`.
-  → Job recurrente de purga por antigüedad (p. ej. > 7 días).
-- [ ] **🟡 P-5 · `StagedUploadFiles` sin red de seguridad.** El handler borra la fila al leer
-  los bytes (bien), pero si el job de Hangfire nunca ejecuta (reintentos agotados, deploy a
-  mitad de cola), el archivo completo queda huérfano en la base para siempre.
-  → Incluir purga de huérfanos por `CreatedAt` en el mismo job de retención de P-4.
-  *Avance parcial (P-1):* el cierre de cuenta ya purga defensivamente los staged files con
-  más de 24 h; falta el job recurrente.
-- [ ] **🟡 P-6 · `AuditLogs` sin política de retención documentada.** Retención larga es
-  defendible en una plataforma financiera, pero debe documentarse como política e incluir la
-  seudonimización del email tras el cierre de cuenta.
-  *Avance parcial (P-1):* la seudonimización tras el cierre de cuenta ya está implementada
-  (`StudioTenantPurger.AnonymizeAuditLogsAsync`); falta documentar la política de retención.
+- [x] **🟠 P-4 · Retención de `UploadJobResults` implementada (2026-07-21).** Nuevo
+  [DataRetentionJob](../backend/src/ContableAI.Infrastructure/BackgroundJobs/DataRetentionJob.cs)
+  (recurring job diario de Hangfire, `data-retention`, mismo patrón que R-5: lock distribuido,
+  corrida única entre réplicas) que purga con `ExecuteDeleteAsync` (P-10) los resultados con
+  más de **30 días** (configurable en la sección `DataRetention` de appsettings —
+  [DataRetentionOptions.cs](../backend/src/ContableAI.Infrastructure/Options/DataRetentionOptions.cs)).
+  El mismo job ejecuta la **purga diferida de P-2**: empresas con `DeletedAt` > 90 días se
+  hard-deletean en cascada completa (`StudioTenantPurger.PurgeCompaniesAsync`, compartida con
+  el cierre de cuenta). Tests en
+  [DataRetentionJobTests.cs](../backend/tests/ContableAI.Tests/Infrastructure/DataRetentionJobTests.cs).
+- [x] **🟡 P-5 · Red de seguridad de `StagedUploadFiles` implementada (2026-07-21).** El
+  `DataRetentionJob` purga a diario los archivos de staging con más de **24 h** (configurable),
+  cubriendo jobs de Hangfire que nunca ejecutaron (reintentos agotados, deploy a mitad de
+  cola). Se suma a la purga defensiva que ya hacía el cierre de cuenta (P-1).
+- [x] **🟡 P-6 · Política de retención de `AuditLogs` documentada (2026-07-21).** Formalizada
+  en [RETENCION_DATOS.md](RETENCION_DATOS.md): retención de **5 años** por trazabilidad
+  financiera, seudonimización inmediata e irreversible ante cierre de cuenta o borrado de
+  usuario (implementada en P-1), registro del cierre como evidencia, borrado definitivo como
+  tarea anual con revisión humana, e interacción con la ventana de PITR de Neon (los datos
+  purgados persisten en backups hasta que la ventana expira). El documento incluye además la
+  tabla completa de retención por clase de dato (staging, resultados de jobs, empresas
+  soft-deleted, tokens).
 
 ## Ya completado — Riesgos de Licenciamiento (L-1 y L-4)
 

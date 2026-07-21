@@ -164,6 +164,13 @@ using (var scope = app.Services.CreateScope())
         ProactiveLearningJob.RecurringJobId,
         job => job.AnalyzeTransactionsAsync(CancellationToken.None),
         Cron.Daily);
+
+    // P-4/P-5: retención de datos — purga diaria de UploadJobResults vencidos, staged files
+    // huérfanos y empresas soft-deleted con ventana de 90 días cumplida (P-2).
+    recurringJobs.AddOrUpdate<DataRetentionJob>(
+        DataRetentionJob.RecurringJobId,
+        job => job.RunAsync(CancellationToken.None),
+        Cron.Daily);
 }
 
 app.MapGet("/api/banks", (BankParserFactory factory) =>
