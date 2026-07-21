@@ -5,7 +5,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MediatR" Version="12.4.1" />
+    <!-- L-4: MediatR pasa a licencia comercial desde v13; el rango bloquea cualquier upgrade de major sin revisión de licencia -->
+    <PackageReference Include="MediatR" Version="[12.4.1, 13.0.0)" />
     <PackageReference Include="FluentValidation" Version="11.11.0" />
     <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="11.11.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.2" />

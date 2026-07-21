@@ -364,7 +364,7 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   defendible en una plataforma financiera, pero debe documentarse como política e incluir la
   seudonimización del email tras el cierre de cuenta.
 
-## Ya completado — Riesgos de Licenciamiento (L-1)
+## Ya completado — Riesgos de Licenciamiento (L-1 y L-4)
 
 - [x] **🔴 L-1 · Migrado al paquete oficial `PdfPig 0.1.15` (2026-07-21).** Se eliminó
   `UglyToad.PdfPig 1.7.0-custom-5` de
@@ -385,9 +385,14 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   bloquear el prefijo `UglyToad.*` vía `nuget.config` (`packageSourceMapping`) para evitar
   reintroducciones accidentales.
 
-## ⏳ Pendiente — Riesgos de Licenciamiento (L-4)
-
-- [ ] **🟡 L-4 · Gobernanza de MediatR.** La versión en uso (12.4.1) es Apache 2.0, pero a
-  partir de v13 MediatR pasó a licenciamiento comercial.
-  → Fijar la versión en < 13 y establecer como política no subir de major en dependencias
-  sin revisión de licencia previa.
+- [x] **🟡 L-4 · Gobernanza de MediatR — versión fijada por debajo de v13 (2026-07-21).**
+  MediatR 12.4.1 (Apache 2.0) quedó fijado con rango cerrado `[12.4.1, 13.0.0)` en
+  [ContableAI.Application.csproj](../backend/src/ContableAI.Application/ContableAI.Application.csproj),
+  con comentario explicando el motivo: a partir de v13 MediatR pasó a licenciamiento
+  comercial, y el rango impide que un upgrade automático (Dependabot, `dotnet add package`
+  sin versión, etc.) cruce el major sin revisión de licencia previa. No hace falta pinear
+  `MediatR.Extensions.Microsoft.DependencyInjection`: desde v12 el registro DI viene
+  integrado en el paquete principal y no existe otra referencia MediatR en la solución.
+  Restore verificado (resuelve exactamente 12.4.1) y suite completa en verde (193/193
+  contra el dataset real de PDFs). **Política:** no subir de major en dependencias sin
+  revisión de licencia previa.
