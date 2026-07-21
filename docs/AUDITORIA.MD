@@ -92,6 +92,13 @@ Multi-moneda (ARS/USD) completo. **No hay que rehacer nada de esto.**
   1. Rotar como quemados: nueva password de Neon, nueva `Jwt__Key` (`openssl rand -base64 48`),
      nueva `RESEND_API_KEY`.
   2. Purgar con `git filter-repo --replace-text` o BFG → `git push --force` → re-clone del equipo.
+- [ ] **🔴 Purga de PDFs reales del historial de Git.**
+  El commit `ee19a5e` (rama `dev`) hizo `git rm --cached` de los extractos bancarios y
+  comprobantes AFIP con CUITs, importes y nombres de cuenta reales — ya no están en el árbol
+  de trabajo ni se suben a futuro (`.gitignore` cubre `/tests/`), pero **siguen recuperables
+  del historial de commits anteriores**, igual que los secretos de C-2. Purgar definitivamente
+  con `git filter-repo` (o BFG Repo-Cleaner) → `git push --force` → re-clone del equipo. Puede
+  resolverse en la misma pasada que la purga de secretos, ya que ambas reescriben el historial.
 - [ ] **⚙️ Variables de entorno en Render** (antes del próximo deploy):
   `SEED_ADMIN_PASSWORD` (≥12, sin ella la API no arranca por diseño), `ConnectionStrings__DefaultConnection`,
   `Jwt__Key`, `Smtp__Password`, `Frontend__BaseUrl`, `ASPNETCORE_ENVIRONMENT=Production`.
@@ -99,3 +106,42 @@ Multi-moneda (ARS/USD) completo. **No hay que rehacer nada de esto.**
   front (CORS con credenciales exige origen explícito).
 - [ ] **🗄️ Migraciones**: `CuitUniquePerTenant` y `AddRefreshTokens` se aplican solas al arrancar
   (`MigrateAsync`), o manual con `dotnet ef database update`.
+
+---
+
+# 🏗️ Auditoría de Calidad de Código y Funcionalidad — Estado
+
+> Anotado el 2026-07-21. Fase ejecutada en rama `dev` sobre el informe de auditoría de
+> arquitectura y testing (plan de acción P0 → P2). Suite backend: **127 Passed / 65 Skipped /
+> 0 Failed**. Suite frontend: **20 Passed / 0 Failed**.
+
+## Ya completado (referencia rápida)
+
+- **CI real en GitHub Actions.** El workflow antes solo compilaba (`dotnet build` / `npm run
+  build`) y corría únicamente en `main`, así que los tests nunca se ejecutaban
+  automáticamente. Ahora dispara en push/PR a `main` **y `dev`**, y agrega `dotnet test` +
+  `ng test --no-watch`: la CI falla si algún test rompe o no compila.
+- **Desmembramiento de `PdfBankParser`** (ex God Class de ~2.100 líneas) hacia Strategy +
+  Template Method: `IBankStatementParser`, `TabularStatementParser` (motor tabular compartido
+  con hooks virtuales) y una clase por banco (BBVA, Galicia, Credicoop, MercadoPago, Ciudad,
+  Generic). El orquestador quedó en ~230 líneas. La lectura física se abstrajo detrás de
+  `IStatementTextExtractor` (DIP), lo que permitió reactivar la interpretación de los 4 bancos
+  principales con **fixtures de texto ficticias** (sin PDFs reales ni datos sensibles) en vez
+  de los tests `Skipped` que dependían de archivos no versionados.
+- **Refactor de los orquestadores gigantes** `UploadBankStatementHandler` y
+  `GenerateJournalEntriesCommandHandler`: los métodos `Handle` (~280 y ~240 líneas) se
+  descompusieron en pasos privados con nombre propio (validación de archivos, resolución de
+  tenant, chequeo de cuota, presupuesto de deduplicación, carga de reglas, clasificación,
+  proyección de líneas de asiento), cada uno cubierto por tests EF InMemory de integración.
+- **Unificación de la firma de deduplicación** en el Dominio (`TransactionSignatureBuilder`):
+  antes se interpolaba por separado en dos puntos de `UploadBankStatementHandler`, con riesgo
+  de divergencia silenciosa; ahora hay una única fuente de verdad reutilizada por ambos.
+- **Resiliencia de red con Polly** (`Microsoft.Extensions.Resilience`) en `SmtpEmailService`:
+  timeout absoluto (30s) → retry con backoff exponencial + jitter (3 intentos) → timeout por
+  intento (10s), con la fábrica de pipelines (`ResiliencePipelines`) centralizada y lista para
+  reutilizarse en integraciones HTTP futuras (pasarelas de pago, APIs de terceros).
+- **Cobertura crítica de frontend** con `HttpTestingController` (primer uso del patrón en este
+  proyecto): el interceptor de errores (`error.interceptor.ts` — flujo 401 → silent-refresh →
+  retry, y logout en sus dos variantes de fallo) y `reconciliation.service.ts` (estado y
+  filtros, pila de deshacer/undo, polling del job de generación de asientos con
+  `vi.useFakeTimers`).
