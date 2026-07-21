@@ -1,5 +1,6 @@
 using ContableAI.Application.Common;
 using ContableAI.Application.Features.Transactions.Commands;
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Infrastructure.Features.Afip;
@@ -179,9 +180,7 @@ public sealed class UploadBankStatementHandler
 
         foreach (var s in existingSignaturesList)
         {
-            var sig = s.ExternalId != null
-                ? $"EXT|{s.ExternalId}|{s.Date}|{s.Amount}|{s.Description}|{s.Type}|{s.Currency}"
-                : $"{s.Date}|{s.Description}|{s.Amount}|{s.Type}|{s.Currency}";
+            var sig = TransactionSignatureBuilder.Build(s);
             existingFrequencies[sig] = existingFrequencies.GetValueOrDefault(sig, 0) + 1;
             existingFirstMatch.TryAdd(sig, s);
         }
@@ -243,11 +242,7 @@ public sealed class UploadBankStatementHandler
 
             foreach (var tx in parsedTransactions)
             {
-                // La moneda forma parte de la firma: dos movimientos de igual importe/fecha en
-                // distinta moneda (ej. 639,40 ARS vs 639,40 USD) no son duplicados.
-                var sig = tx.ExternalId != null
-                    ? $"EXT|{tx.ExternalId}|{tx.Date}|{tx.Amount}|{tx.Description}|{tx.Type}|{tx.Currency}"
-                    : $"{tx.Date}|{tx.Description}|{tx.Amount}|{tx.Type}|{tx.Currency}";
+                var sig = TransactionSignatureBuilder.Build(tx);
 
                 // Consume one DB "slot" for this signature if available; only then it's a duplicate.
                 // This allows N identical transactions if the DB has fewer than N copies.
