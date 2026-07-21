@@ -1,6 +1,9 @@
 using ContableAI.Infrastructure.Options;
+using ContableAI.Infrastructure.Resilience;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly;
+using Polly.Registry;
 using System.Net;
 using System.Net.Mail;
 
@@ -15,16 +18,25 @@ public interface IEmailService
 /// Implementación SMTP estándar de .NET.
 /// Se configura a través de appsettings: "Smtp:Host", "Smtp:Port", "Smtp:User", "Smtp:Password", "Smtp:FromAddress".
 /// Para desarrollo, si Host está vacío, imprime el link en consola en lugar de enviar.
+///
+/// El envío real se envuelve en el pipeline de resiliencia <see cref="ResiliencePipelines.Email"/>
+/// (reintentos con backoff exponencial + timeout por intento y absoluto), de modo que un fallo
+/// transitorio del servidor SMTP no tumbe la operación ni bloquee el hilo indefinidamente.
 /// </summary>
 public class SmtpEmailService : IEmailService
 {
     private readonly SmtpOptions _smtpOptions;
     private readonly ILogger<SmtpEmailService> _log;
+    private readonly ResiliencePipeline _sendPipeline;
 
-    public SmtpEmailService(IOptions<SmtpOptions> smtpOptions, ILogger<SmtpEmailService> log)
+    public SmtpEmailService(
+        IOptions<SmtpOptions> smtpOptions,
+        ILogger<SmtpEmailService> log,
+        ResiliencePipelineProvider<string> pipelineProvider)
     {
-        _smtpOptions = smtpOptions.Value;
-        _log         = log;
+        _smtpOptions  = smtpOptions.Value;
+        _log          = log;
+        _sendPipeline = pipelineProvider.GetPipeline(ResiliencePipelines.Email);
     }
 
     public async Task SendPasswordResetEmailAsync(
@@ -65,20 +77,27 @@ public class SmtpEmailService : IEmailService
             </body></html>
             """;
 
-        using var client = new SmtpClient(host, port)
+        // Cada intento crea cliente y mensaje frescos: un MailMessage no puede reenviarse tras un
+        // fallo y el SmtpClient se descarta entre intentos. El pipeline aporta reintentos y timeouts;
+        // el `token` combina el timeout por intento con el CancellationToken externo.
+        await _sendPipeline.ExecuteAsync(async token =>
         {
-            EnableSsl   = true,
-            Credentials = new NetworkCredential(user, pass),
-        };
+            using var client = new SmtpClient(host, port)
+            {
+                EnableSsl   = true,
+                Credentials = new NetworkCredential(user, pass),
+            };
 
-        var message = new MailMessage(new MailAddress(from, fromName), new MailAddress(toEmail, displayName))
-        {
-            Subject    = subject,
-            Body       = body,
-            IsBodyHtml = true,
-        };
+            using var message = new MailMessage(new MailAddress(from, fromName), new MailAddress(toEmail, displayName))
+            {
+                Subject    = subject,
+                Body       = body,
+                IsBodyHtml = true,
+            };
 
-        await client.SendMailAsync(message, ct);
+            await client.SendMailAsync(message, token);
+        }, ct);
+
         _log.LogInformation("Email de reset enviado a {Email}", toEmail);
     }
 }

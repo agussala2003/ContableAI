@@ -7,6 +7,7 @@ using Hangfire.PostgreSql;
 using ContableAI.Infrastructure.Features.Afip;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Options;
+using ContableAI.Infrastructure.Resilience;
 using ContableAI.Infrastructure.Services;
 using ContableAI.Infrastructure.Services.Classification;
 using ContableAI.Infrastructure.BackgroundJobs;
@@ -94,6 +95,9 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentTenantService, CurrentTenantService>();
         services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
         services.AddScoped<IQuotaService, QuotaService>();
+
+        // ── Resiliencia (Polly) — pipelines reutilizables (email hoy, HTTP a futuro) ──
+        services.AddContableResilience();
 
         // ── Email (SMTP) ──────────────────────────────────────────────────────
         services.AddTransient<IEmailService, SmtpEmailService>();
