@@ -105,4 +105,53 @@ public class PdfBankParserFixtureTests
         txs[0].Amount.Should().Be(2500.00m);
         txs[0].Description.Should().Be("PAGO SERVICIOS FICTICIOS");
     }
+
+    // ── Credicoop: tabla estándar, clasificación por columna ───────────────────
+
+    [Fact]
+    public void Credicoop_ClassifiesByColumn_WithExactAmounts()
+    {
+        var txs = ParseFixture("credicoop_mock_statement.txt", "CREDICOOP");
+
+        txs.Should().HaveCount(3);
+        txs.Should().OnlyContain(t => t.SourceBank == "CREDICOOP");
+        txs.Should().OnlyContain(t => t.Currency == Currencies.Ars);
+
+        txs.Should().ContainSingle(t =>
+            t.Date == new DateOnly(2025, 9, 8) && t.Type == TransactionType.Credit &&
+            t.Amount == 50000.00m && t.Description == "DEPOSITO EN EFECTIVO");
+        txs.Should().ContainSingle(t =>
+            t.Date == new DateOnly(2025, 9, 12) && t.Type == TransactionType.Debit &&
+            t.Amount == 12500.00m && t.Description == "PAGO PROVEEDOR SERVICIOS");
+
+        txs.Where(t => t.Type == TransactionType.Debit).Sum(t => t.Amount).Should().Be(13000.00m);
+        txs.Where(t => t.Type == TransactionType.Credit).Sum(t => t.Amount).Should().Be(50000.00m);
+        txs.Should().NotContain(t => t.Amount == 150000.00m, "el saldo nunca es un movimiento");
+    }
+
+    // ── MercadoPago: parser propio (signo del valor + ID de operación) ─────────
+
+    [Fact]
+    public void MercadoPago_UsesSignedValueForType_AndExtractsOperationId()
+    {
+        var txs = ParseFixture("mercadopago_mock_statement.txt", "MERCADOPAGO");
+
+        txs.Should().HaveCount(3);
+        txs.Should().OnlyContain(t => t.SourceBank == "MERCADOPAGO");
+        txs.Should().OnlyContain(t => t.Currency == Currencies.Ars);
+
+        // Valor negativo → Debit; positivo → Credit. El ID de operación va a ExternalId.
+        txs.Should().ContainSingle(t =>
+            t.Date == new DateOnly(2025, 5, 2) && t.Type == TransactionType.Debit &&
+            t.Amount == 1500.00m && t.ExternalId == "12345678" &&
+            t.Description == "Pago de servicio ficticio");
+        txs.Should().ContainSingle(t =>
+            t.Date == new DateOnly(2025, 5, 5) && t.Type == TransactionType.Credit &&
+            t.Amount == 3200.00m && t.ExternalId == "23456789" &&
+            t.Description == "Cobro venta ficticia");
+
+        txs.Where(t => t.Type == TransactionType.Debit).Sum(t => t.Amount).Should().Be(3500.00m);
+        txs.Where(t => t.Type == TransactionType.Credit).Sum(t => t.Amount).Should().Be(3200.00m);
+        txs.Should().NotContain(t => t.Amount == 8500.00m, "la columna SALDO no es un movimiento");
+    }
 }
