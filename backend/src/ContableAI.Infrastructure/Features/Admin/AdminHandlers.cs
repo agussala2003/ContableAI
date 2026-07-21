@@ -305,8 +305,10 @@ public sealed class SendAdminPasswordResetHandler : IRequestHandler<SendAdminPas
         var user = await _db.Users.FindAsync([request.Id], ct);
         if (user is null) return Result<AdminMessageResponse>.NotFound();
 
-        var token = Guid.NewGuid().ToString("N");
-        user.PasswordResetToken = token;
+        // B-1c: mismo esquema que el forgot-password de autoservicio — token CSPRNG de 256
+        // bits, en la BD solo el hash SHA-256 (el claro viaja únicamente en el email).
+        var token = PasswordResetTokens.Generate();
+        user.PasswordResetToken = PasswordResetTokens.Hash(token);
         user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(24);
         await _db.SaveChangesAsync(ct);
 

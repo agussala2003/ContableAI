@@ -55,33 +55,41 @@ en el front). Medias **M-1** (`UseForwardedHeaders`), **M-2** (magic bytes en su
 (CUIT único por tenant), **M-4** (políticas `RequireStudioOwner` en backend + gating de UI).
 Multi-moneda (ARS/USD) completo. **No hay que rehacer nada de esto.**
 
-## ⏳ Pendiente en código — Vulnerabilidades Bajas (B-1)
+## Ya completado — Vulnerabilidades Bajas (B-1) y observaciones de código
 
-- [ ] **B-1a · `AllowedHosts` restringido.**
-  Hoy `"AllowedHosts": "*"` en [appsettings.json](../backend/src/ContableAI.API/appsettings.json#L8).
-  → Fijarlo al host de producción (o sobreescribir con env var en Render).
-
-- [ ] **B-1b · Enumeración de emails en registro.**
-  `register` y `register-studio` responden `409 "Ya existe un usuario con ese email."`
-  ([AuthHandlers.cs:87 y :135](../backend/src/ContableAI.Infrastructure/Features/Auth/AuthHandlers.cs#L87)),
-  a diferencia de `forgot-password` que sí es constante.
-  → Unificar a una respuesta genérica, o aceptar el trade-off UX conscientemente.
-
-- [ ] **B-1c · Token de reset con CSPRNG.**
-  Se genera con `Guid.NewGuid().ToString("N")`
-  ([AuthHandlers.cs:185](../backend/src/ContableAI.Infrastructure/Features/Auth/AuthHandlers.cs#L185)),
-  que no garantiza aleatoriedad criptográfica.
-  → Usar `RandomNumberGenerator` (≥128 bits) y **guardar el hash** del token, no el valor en claro.
-  La expiración de 1 h ya está bien.
+- [x] **B-1a · `AllowedHosts` restringido (2026-07-21).** El base
+  [appsettings.json](../backend/src/ContableAI.API/appsettings.json) quedó fijado a
+  `contableai-api.onrender.com;localhost;127.0.0.1` (el host de producción según COMMANDS.md,
+  más loopback para corridas locales en modo prod); Development lo abre a `*` en su override.
+  Si algún día se agrega un dominio custom, sobreescribir con la env var `AllowedHosts` en
+  Render sin tocar código.
+- [x] **B-1b · Enumeración de emails en registro (2026-07-21).** `register` (invitados, flujo
+  asíncrono sin login) ahora es de **respuesta constante**: con email duplicado devuelve el
+  mismo `202` y el mismo mensaje que el alta real, sin crear nada — indistinguible para un
+  atacante. `register-studio` conserva el `409` como **trade-off aceptado y documentado en el
+  código**: es self-serve con login inmediato (devuelve JWT), y una respuesta genérica exigiría
+  un paso de verificación por email que hoy no existe; el mensaje pasó a ser neutral y orienta
+  al usuario legítimo hacia login/recupero. Mitigan: `forgot-password` y `register` constantes.
+- [x] **B-1c · Token de reset con CSPRNG y hash en BD (2026-07-21).** Nuevo
+  [PasswordResetTokens.cs](../backend/src/ContableAI.Infrastructure/Services/PasswordResetTokens.cs)
+  (mismo esquema que los refresh tokens de A-3): token de **256 bits** de
+  `RandomNumberGenerator`, en `User.PasswordResetToken` se persiste **solo el hash SHA-256**,
+  y la verificación compara hashes en tiempo constante (`FixedTimeEquals`). Corregido en los
+  **dos** generadores: `ForgotPasswordHandler` y también `SendAdminPasswordResetHandler`
+  (AdminHandlers), que la auditoría no listaba pero tenía el mismo `Guid.NewGuid()`. Los
+  tokens legados en claro fallan la verificación y expiran solos (≤ 24 h). Tests en
+  [PasswordResetSecurityTests.cs](../backend/tests/ContableAI.Tests/Infrastructure/PasswordResetSecurityTests.cs).
+- [x] **Inconsistencia del tenant del admin (2026-07-21).** `SeedExtensions` ahora usa
+  `TenantConstants.System` (`"SYSTEM"`), igual que el endpoint de seed-admin. Nota: bases ya
+  sembradas conservan el admin con `"system"` en minúsculas — inocuo (el bypass de filtros es
+  por rol, no por string) y no amerita migración de datos.
 
 ## ⏳ Observaciones menores (no bloqueantes, para el radar)
 
 - [ ] **Cookie de refresh cross-site (A-3).** Es `SameSite=None` (Vercel ↔ Render son cross-site);
   navegadores que bloquean cookies de terceros podrían desloguear al recargar.
-  → Validar en staging: login → reload → sigue logueado.
-- [ ] **Inconsistencia del tenant del admin.** `SeedExtensions` usa `StudioTenantId = "system"` y
-  `TenantConstants.System` usa `"SYSTEM"`. No afecta la seguridad (el bypass de filtros se basa en
-  el **rol**, no en el string), pero conviene unificar.
+  → Validar en staging: login → reload → sigue logueado. (Requiere entorno desplegado; no es
+  resoluble desde código.)
 
 ## 🔧 Acciones operativas manuales (fuera de código — AÚN SIN HACER)
 

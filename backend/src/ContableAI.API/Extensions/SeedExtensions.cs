@@ -1,3 +1,4 @@
+using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
@@ -70,7 +71,7 @@ public static class SeedExtensions
         {
             Email          = adminEmail,
             DisplayName    = "Admin",
-            StudioTenantId = "system",
+            StudioTenantId = TenantConstants.System,
             Role           = UserRole.SystemAdmin,
             AccountStatus  = AccountStatus.Active,
             IsActive       = true,
