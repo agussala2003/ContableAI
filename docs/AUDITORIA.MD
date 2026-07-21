@@ -268,6 +268,14 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
 - [x] **B-2 · Cloud readiness.** Eliminados los endpoints `suggestions-debug` de
   `RulesEndpoints.cs` que leían/escribían `logs/suggestions-debug.jsonl` en disco local
   (código muerto que acoplaba falsamente al file system efímero).
+- [x] **B-1 · Estrategia de backup/retención documentada.** Nuevo
+  [`RUNBOOK_DB.md`](RUNBOOK_DB.md): corrige la asunción original ("Postgres gestionado en
+  Render") — el motor real es **Neon**, hoy en plan Free. Define política de retención
+  (PITR nativo de Neon + `pg_dump` semanal como defensa en profundidad), RPO/RTO objetivo
+  para la fase Beta (≤24h / ≤4h) y el procedimiento paso a paso de restauración ante
+  desastre. *Nota: es la política documentada, no automatización — el simulacro de
+  restauración real y la verificación de la ventana de retención vigente en Neon quedan
+  como acciones pendientes explícitas dentro del propio runbook.*
 
 ### 🔧 Acciones operativas manuales (fuera del código)
 
@@ -275,8 +283,5 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   **`/health/ready`**. Si no se actualiza, Render seguirá pegándole a la ruta vieja (ahora 404)
   y marcará el servicio como no saludable, bloqueando el deploy.
 - [ ] Verificar `/health/live` y `/health/ready` tras el primer deploy con estos cambios.
-
-### ⏳ Pendiente relacionado
-
-- **B-1 · Estrategia de backup/retención** (RETEN-01 en `BACKLOG.md`): sin configuración
-  asertiva ni runbook de restore/RPO/RTO. Documentar antes de onboardear clientes reales.
+- [ ] Ver `RUNBOOK_DB.md` §6 para las acciones pendientes de la política de backups
+  (verificar ventana de retención de Neon, simulacro de restauración).
