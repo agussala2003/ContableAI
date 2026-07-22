@@ -23,6 +23,7 @@ import { AfipService } from '../../afip.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { TourService } from '../../../../core/services/tour.service';
 import { LucideAngularModule } from 'lucide-angular';
+import { ModalA11yDirective } from '../../../../shared/directives/modal-a11y.directive';
 
 const DEMO_CSV = `Fecha,Referencia,Descripcion,Numero,Importe
 01/05/2026,,MERCADO PAGO COBRANZA DIGITAL,,125000.00
@@ -61,6 +62,7 @@ const DEMO_CSV = `Fecha,Referencia,Descripcion,Numero,Importe
     OnboardingModal,
     LucideAngularModule,
     CurrencySymbolPipe,
+    ModalA11yDirective,
   ],
   templateUrl: './reconciliation-page.html',
 })

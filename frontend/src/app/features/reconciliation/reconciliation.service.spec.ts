@@ -297,19 +297,22 @@ describe('ReconciliationService', () => {
         expect(genReq.request.body).toEqual({ transactionIds: [txId] });
         genReq.flush({ jobId: 'job-1', message: 'Generación iniciada' });
 
-        // isGenerating se apaga apenas se encola el job; el polling sigue en background.
-        expect(service.isGenerating()).toBe(false);
+        // UX-2/UX-3: isGenerating sigue en true mientras el job corre (el botón "Asentar"
+        // queda deshabilitado durante todo el polling para evitar el doble asentamiento).
+        expect(service.isGenerating()).toBe(true);
         httpMock.expectNone(r => r.url.includes('/jobs/'));
 
         vi.advanceTimersByTime(3000);
         const status1 = httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/jobs/job-1/status'));
         status1.flush({ jobId: 'job-1', state: 'Processing', createdAt: '2025-06-15T00:00:00Z' });
+        expect(service.isGenerating()).toBe(true);
 
         vi.advanceTimersByTime(3000);
         const status2 = httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/jobs/job-1/status'));
         status2.flush({ jobId: 'job-1', state: 'Succeeded', createdAt: '2025-06-15T00:00:00Z' });
 
-        // El job terminó: se recarga la grilla y el polling se detiene (takeWhile completa).
+        // El job terminó: se libera el botón, se recarga la grilla y el polling se detiene.
+        expect(service.isGenerating()).toBe(false);
         flushList(pagedResult([]));
         vi.advanceTimersByTime(10_000);
         httpMock.expectNone(r => r.url.includes('/jobs/'));
@@ -331,10 +334,42 @@ describe('ReconciliationService', () => {
         httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/jobs/job-2/status'))
           .flush({ jobId: 'job-2', state: 'Failed', createdAt: '2025-06-15T00:00:00Z' });
 
-        // takeWhile corta el polling tras el estado terminal; no hay recarga ni más requests.
+        // takeWhile corta el polling tras el estado terminal; no hay recarga ni más requests,
+        // y el botón se libera también en el caso de fallo.
+        expect(service.isGenerating()).toBe(false);
         vi.advanceTimersByTime(10_000);
         httpMock.expectNone(r => r.url.includes('/jobs/'));
         httpMock.expectNone(r => r.method === 'GET' && r.url.endsWith('/transactions'));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('corta el polling con aviso si el job nunca termina (timeout de 5 minutos)', () => {
+      vi.useFakeTimers();
+      try {
+        const warnSpy = vi.spyOn(toast, 'warning');
+        seedEligibleTransaction();
+        service.generateEntries([txId]);
+
+        httpMock.expectOne(r => r.method === 'POST' && r.url.endsWith('/journal-entries/generate'))
+          .flush({ jobId: 'job-3', message: 'Generación iniciada' });
+
+        // El backend responde "Processing" en cada poll hasta agotar el tope (5 min / 3 s = 100).
+        const maxPolls = Math.ceil((5 * 60_000) / 3000);
+        for (let i = 0; i < maxPolls; i++) {
+          vi.advanceTimersByTime(3000);
+          httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/jobs/job-3/status'))
+            .flush({ jobId: 'job-3', state: 'Processing', createdAt: '2025-06-15T00:00:00Z' });
+        }
+
+        // Tope alcanzado: se libera el botón, se avisa al usuario y no hay más requests.
+        expect(service.isGenerating()).toBe(false);
+        expect(warnSpy).toHaveBeenCalledWith(
+          'El proceso está tardando más de lo normal. Por favor, reintentá en unos minutos o contactá a soporte.'
+        );
+        vi.advanceTimersByTime(10_000);
+        httpMock.expectNone(r => r.url.includes('/jobs/'));
       } finally {
         vi.useRealTimers();
       }

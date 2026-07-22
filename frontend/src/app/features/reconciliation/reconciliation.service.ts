@@ -1,6 +1,6 @@
 import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { timer, switchMap, takeWhile } from 'rxjs';
+import { timer, switchMap, takeWhile, take, tap } from 'rxjs';
 import { BankTransaction, Transaction, UploadResponse, UploadJobResultEnvelope, SkippedDuplicate, CurrencyTotals } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
@@ -338,6 +338,10 @@ export class ReconciliationService {
 
   // ── File upload ────────────────────────────────────────────────────────
   private readonly UPLOAD_POLL_INTERVAL_MS = 2000;
+  /** Tope del polling de jobs: pasado este tiempo sin resultado, se corta y se avisa al usuario. */
+  private readonly JOB_POLL_TIMEOUT_MS = 5 * 60_000;
+  private readonly JOB_POLL_TIMEOUT_MSG =
+    'El proceso está tardando más de lo normal. Por favor, reintentá en unos minutos o contactá a soporte.';
 
   /** Encola la subida (procesamiento en un job de Hangfire) y arranca el polling del resultado. */
   uploadFiles(
@@ -351,7 +355,7 @@ export class ReconciliationService {
       next: ({ uploadId }) => this._pollUploadResult(uploadId, event, onSuccess),
       error: () => {
         this._isLoading.set(false);
-        this.toast.error('Error de conexión con el servidor. Intentá de nuevo.');
+        this.toast.error('No pudimos conectar con el servidor. Revisá tu conexión o intentá de nuevo.');
       },
     });
   }
@@ -362,17 +366,34 @@ export class ReconciliationService {
     event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
     onSuccess?: () => void,
   ): void {
+    const maxPolls = Math.ceil(this.JOB_POLL_TIMEOUT_MS / this.UPLOAD_POLL_INTERVAL_MS);
+    let polls = 0;
+    let finished = false;
+
     timer(this.UPLOAD_POLL_INTERVAL_MS, this.UPLOAD_POLL_INTERVAL_MS).pipe(
+      take(maxPolls),
+      tap(() => polls++),
       switchMap(() => this.txService.getUploadResult(uploadId)),
       takeWhile(envelope => !envelope.done, true),
       takeUntilDestroyed(this.destroyRef),
     ).subscribe({
       next: (envelope) => {
-        if (envelope.done) this._handleUploadResult(envelope, event, onSuccess);
+        if (envelope.done) {
+          finished = true;
+          this._handleUploadResult(envelope, event, onSuccess);
+        }
       },
       error: () => {
         this._isLoading.set(false);
-        this.toast.error('Error de conexión con el servidor. Intentá de nuevo.');
+        this.toast.error('No pudimos conectar con el servidor. Revisá tu conexión o intentá de nuevo.');
+      },
+      complete: () => {
+        // El stream completa sin resultado solo si se agotó el tope de intentos
+        // (en destroy del servicio polls < maxPolls, así que no hay toast espurio).
+        if (!finished && polls >= maxPolls) {
+          this._isLoading.set(false);
+          this.toast.warning(this.JOB_POLL_TIMEOUT_MSG);
+        }
       },
     });
   }
@@ -565,7 +586,14 @@ export class ReconciliationService {
         if (res.jobId) {
           // _isGenerating queda en true durante todo el polling: el botón "Asentar" permanece
           // deshabilitado mientras el job de Hangfire corre, evitando una doble generación.
-          timer(3000, 3000).pipe(
+          const GENERATE_POLL_INTERVAL_MS = 3000;
+          const maxPolls = Math.ceil(this.JOB_POLL_TIMEOUT_MS / GENERATE_POLL_INTERVAL_MS);
+          let polls = 0;
+          let finished = false;
+
+          timer(GENERATE_POLL_INTERVAL_MS, GENERATE_POLL_INTERVAL_MS).pipe(
+            take(maxPolls),
+            tap(() => polls++),
             switchMap(() => this.journalEntryService.getJobStatus(res.jobId!)),
             takeWhile(status => status.state === 'Processing' || status.state === 'Enqueued', true),
             takeUntilDestroyed(this.destroyRef),
@@ -573,17 +601,24 @@ export class ReconciliationService {
             next: (status) => {
               if (status.state === 'Processing' || status.state === 'Enqueued') return;
               // Cualquier estado terminal (Succeeded, Failed, u otro inesperado) libera el botón.
+              finished = true;
               this._isGenerating.set(false);
               if (status.state === 'Succeeded') {
                 this.toast.success('¡Asientos generados correctamente!');
                 this.loadData();
               } else if (status.state === 'Failed') {
-                this.toast.error('La generación de asientos falló. Revisa los logs del servidor.');
+                this.toast.error('No pudimos generar los asientos. Intentá de nuevo en unos minutos; si el problema sigue, contactá a soporte.');
               }
             },
             error: () => {
               this._isGenerating.set(false);
-              this.toast.error('Error al monitorear el estado de la generación de asientos.');
+              this.toast.error('No pudimos verificar el estado de la generación de asientos. Actualizá la página en unos minutos para ver si se completó.');
+            },
+            complete: () => {
+              if (!finished && polls >= maxPolls) {
+                this._isGenerating.set(false);
+                this.toast.warning(this.JOB_POLL_TIMEOUT_MSG);
+              }
             },
           });
         } else {

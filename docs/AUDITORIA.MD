@@ -325,9 +325,10 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
 
 # 🎨 Auditoría de Usabilidad y Accesibilidad (UX/A11y) — Estado
 
-> Anotado el 2026-07-21. Fase ejecutada en rama `dev`. Los fixes críticos de la conciliación
-> quedaron aplicados en el commit `1e8cc4e`; el resto de los hallazgos queda registrado como
-> pendiente.
+> Anotado el 2026-07-21, actualizado el 2026-07-21 (segunda pasada). Fase ejecutada en rama
+> `dev`. Los fixes críticos de la conciliación quedaron aplicados en el commit `1e8cc4e`;
+> el resto de los hallazgos se cerró en la segunda pasada. **No quedan pendientes de UX/A11y.**
+> Verificación: `tsc --noEmit` y `ng build` sin errores; suite frontend **21 Passed / 0 Failed**.
 
 ## Ya completado (commit `1e8cc4e`)
 
@@ -341,24 +342,65 @@ Recomendaciones de Resiliencia). Sin cambios funcionales de negocio; foco en
   el ciclo del job (no solo durante la request inicial), lo que deshabilita el botón de
   generación mientras hay un job en vuelo y evita el **doble asentamiento** por doble clic
   ([reconciliation.service.ts](../frontend/src/app/features/reconciliation/reconciliation.service.ts)).
+  *Nota (2026-07-21):* el spec de polling seguía escrito contra el comportamiento anterior
+  (esperaba `isGenerating() === false` apenas encolado el job) y fallaba en `dev`; se actualizó
+  para reflejar la semántica de UX-2/UX-3.
 - **FL-1 · Dropzone acumulativa.** La zona de subida de extractos acumula los archivos de
   selecciones sucesivas en vez de reemplazar la lista anterior
   ([upload-zone.ts](../frontend/src/app/features/reconciliation/components/upload-zone/upload-zone.ts)).
 
-## ⏳ Pendiente
+## Ya completado — Segunda pasada UX/A11y (2026-07-21)
 
-- [ ] **A11y-1 a A11y-6 · Hallazgos de accesibilidad.** Barrido completo de accesibilidad:
-  roles/labels ARIA en controles interactivos, foco visible y orden de tabulación, contraste
-  de colores, navegación por teclado en la grilla de conciliación y en los modales, textos
-  alternativos, y anuncio de cambios de estado (toasts/polling) a lectores de pantalla.
-- [ ] **Timeout del polling.** El polling de jobs (subida de extractos / generación de
-  asientos) no tiene tope: si el job nunca escribe resultado, el front pollea indefinidamente.
-  → Definir timeout con mensaje claro de "reintentar / contactar soporte".
-- [ ] **Mensajes de error orientados al contador.** Reemplazar errores técnicos genéricos por
-  mensajes accionables en el dominio del usuario (qué pasó, qué hacer, con qué archivo/fila).
-- [ ] **Fricción de la dropzone de AFIP.** La subida de comprobantes AFIP no tiene la misma
-  ergonomía que la de extractos (acumulación de archivos, feedback de progreso por archivo).
-  → Unificar comportamiento con la dropzone principal.
+- [x] **Timeout del polling.** Ambos pollings de jobs (subida de extractos y generación de
+  asientos) tienen ahora un tope de **5 minutos** (`JOB_POLL_TIMEOUT_MS`, implementado con
+  `take(maxPolls)` sobre el `timer` para no interferir con `takeUntilDestroyed`): al agotarse
+  se apaga el spinner/botón y se muestra "El proceso está tardando más de lo normal. Por favor,
+  reintentá en unos minutos o contactá a soporte."
+  ([reconciliation.service.ts](../frontend/src/app/features/reconciliation/reconciliation.service.ts)).
+  Cubierto por test con fake timers (100 polls de "Processing" → aviso y corte).
+- [x] **Fricción de la dropzone de AFIP.** [afip-zone.ts](../frontend/src/app/features/reconciliation/components/afip-zone/afip-zone.ts)
+  ahora **acumula** los archivos de selecciones/arrastres sucesivos (misma ergonomía que FL-1),
+  resetea el `<input>` para permitir re-elegir el mismo archivo, filtra no-PDF con aviso y
+  muestra un toast cuando un nombre ya estaba en la lista (validación de duplicados). La zona
+  además es operable por teclado (`role="button"`, `tabindex="0"`, Enter/Espacio).
+- [x] **Mensajes de error orientados al contador.**
+  [error.interceptor.ts](../frontend/src/app/core/interceptors/error.interceptor.ts): red caída
+  → "No pudimos conectar con el servidor. Revisá tu conexión…"; errores de validación 400
+  traducen los campos PascalCase del backend a etiquetas en castellano (`FIELD_LABELS` +
+  separador de PascalCase como fallback); 404 y 500+ reformulados en voseo accionable, y el
+  `traceId` de O-3 se presenta como "Código para soporte". En `reconciliation.service.ts` los
+  toasts de conexión/generación fallida dejaron de referirse a "logs del servidor".
+- [x] **A11y-1 · Modales accesibles.** Nueva directiva
+  [modal-a11y.directive.ts](../frontend/src/app/shared/directives/modal-a11y.directive.ts)
+  (focus trap con Tab/Shift+Tab, foco inicial al abrir, cierre con **Escape**, restauración
+  del foco al cerrar) aplicada a **todos** los modales: upload, empresas, duplicados, cruce
+  múltiple AFIP, atajos de teclado, confirmación, onboarding y los dos modales de reglas de la
+  página de conciliación. Todos llevan `role="dialog"`, `aria-modal="true"` y `aria-labelledby`
+  hacia su título (se agregaron los que faltaban).
+- [x] **A11y-2 · Grilla operable por teclado.** En
+  [transaction-grid.html](../frontend/src/app/features/reconciliation/components/transaction-grid/transaction-grid.html):
+  la celda de cuenta asignada (antes solo doble clic) es focuseable y se edita con
+  Enter/Espacio (`role="button"`, `tabindex="0"`, `aria-label` con la cuenta actual); el
+  semáforo de confianza expone su tooltip como `aria-label` (`role="img"`, focuseable); el
+  tooltip del ID externo se muestra también con foco (`focus-within`); checkboxes de fila y
+  cabecera con `aria-label`; columnas ordenables con `aria-sort` y botones de orden con
+  `aria-label`.
+- [x] **A11y-3 · Dropzones y botones de ícono.** Ambas dropzones son operables por teclado
+  (Enter/Espacio abren el selector, `focus-visible` con anillo). Todos los botones puramente
+  ícono tienen `aria-label` (tachito de limpiar grilla, chevrons de paginación con
+  `aria-current="page"` en la página activa, quitar archivo, cerrar modales, gestionar
+  empresas, atajos, info con `aria-expanded`, búsqueda estricta con `aria-pressed`).
+- [x] **A11y-4 · Combobox y formularios.** [account-combobox](../frontend/src/app/shared/components/account-combobox/account-combobox.html)
+  con semántica ARIA (`role="combobox"`, `aria-expanded`, `aria-autocomplete="list"`, listbox
+  y opciones con `aria-selected`); login con `<label for>`/`id` en email, contraseña y nombre
+  del estudio; modal de regla rápida con labels vinculados; filtros de la grilla (búsqueda,
+  monto, dirección, moneda, cuenta, mes, año) con `aria-label`.
+- [x] **A11y-5 · Anuncio de cambios de estado.** Ya cubierto: los toasts se renderizan con
+  `role="alert"` + `aria-live="polite"` (todos los resultados de polling/jobs terminan en un
+  toast), y la página de conciliación marca `aria-busy` durante la carga.
+- [x] **A11y-6 · Foco visible.** `focus-visible:ring` en los nuevos controles interactivos
+  (dropzones, celdas de cuenta, semáforo, tooltip de ID); los controles nativos existentes
+  conservan los estilos `focus:` de Tailwind ya presentes.
 
 ---
 

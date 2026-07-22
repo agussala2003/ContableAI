@@ -17,6 +17,42 @@ interface ProblemDetails {
 }
 
 /**
+ * Etiquetas en castellano para los campos que el backend devuelve en los errores
+ * de validación (nombres PascalCase en inglés que el contador no tiene por qué conocer).
+ */
+const FIELD_LABELS: Record<string, string> = {
+  email: 'Email',
+  password: 'Contraseña',
+  displayname: 'Nombre del estudio',
+  name: 'Nombre',
+  cuit: 'CUIT',
+  bankaccountname: 'Cuenta bancaria',
+  keyword: 'Palabra clave',
+  targetaccount: 'Cuenta contable',
+  priority: 'Prioridad',
+  direction: 'Dirección',
+  companyid: 'Empresa',
+  bankcode: 'Banco',
+  file: 'Archivo',
+  files: 'Archivos',
+  amount: 'Importe',
+  date: 'Fecha',
+  description: 'Descripción',
+  month: 'Mes',
+  year: 'Año',
+  currency: 'Moneda',
+  token: 'Enlace de recuperación',
+};
+
+/** Traduce el nombre técnico del campo; si no está mapeado, separa el PascalCase en palabras. */
+function fieldLabel(field: string): string {
+  const known = FIELD_LABELS[field.toLowerCase()];
+  if (known) return known;
+  const spaced = field.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+/**
  * Interceptor global de errores HTTP.
  * - 0 (sin conexión)   → toast "Sin conexión"
  * - 401 (expirado)     → cierra sesión y navega a /login
@@ -31,7 +67,7 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
     catchError((error: HttpErrorResponse) => {
       // Red / CORS / sin servidor → status 0
       if (error.status === 0) {
-        toast.show('Sin conexión con el servidor. Verificá que el backend esté corriendo.', 'error');
+        toast.show('No pudimos conectar con el servidor. Revisá tu conexión a internet e intentá de nuevo.', 'error');
         return throwError(() => error);
       }
 
@@ -76,19 +112,20 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
           const lines = Object.entries(validationErrors)
             .flatMap(([field, messages]) => {
               const list = Array.isArray(messages) ? messages : [messages];
-              return list.filter(Boolean).map(msg => `${field}: ${msg}`);
+              return list.filter(Boolean).map(msg => `${fieldLabel(field)}: ${msg}`);
             })
             .slice(0, 6);
 
           const validationMessage = lines.length > 0
-            ? `Errores de validación: ${lines.join(' | ')}`
-            : (payload.detail ?? payload.title ?? 'Error de validación.');
+            ? `Revisá estos datos antes de continuar — ${lines.join(' | ')}`
+            : (payload.detail ?? payload.title ?? 'Algunos datos no son válidos. Revisalos e intentá de nuevo.');
 
           toast.show(validationMessage, 'warning');
           return throwError(() => error);
         }
 
-        const fallback400 = payload.detail ?? payload.title ?? payload.message ?? 'Solicitud inválida.';
+        const fallback400 = payload.detail ?? payload.title ?? payload.message
+          ?? 'No pudimos procesar la solicitud. Revisá los datos ingresados e intentá de nuevo.';
         toast.show(fallback400, 'warning');
         return throwError(() => error);
       }
@@ -100,7 +137,7 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
       }
 
       if (error.status === 404) {
-        toast.show('Recurso no encontrado.', 'warning');
+        toast.show('No encontramos lo que estabas buscando. Puede que se haya eliminado — actualizá la página e intentá de nuevo.', 'warning');
         return throwError(() => error);
       }
 
@@ -113,11 +150,12 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
       // Errores de servidor (500+)
       if (error.status >= 500) {
         const payload = (error.error ?? {}) as ProblemDetails;
-        const baseMsg = payload.detail ?? payload.title ?? payload.message ?? 'Ocurrió un error inesperado, intentá de nuevo.';
+        const baseMsg = payload.detail ?? payload.title ?? payload.message
+          ?? 'Tuvimos un problema procesando tu pedido. Intentá de nuevo en unos minutos; si el problema sigue, contactá a soporte.';
         // O-3: si el backend adjuntó un traceId, mostrarlo para que el usuario pueda
         // reportarlo a soporte y correlacionarlo con los logs del servidor.
         const traceId = payload.traceId ?? payload.extensions?.traceId;
-        const msg = traceId ? `${baseMsg} (Traza: ${traceId})` : baseMsg;
+        const msg = traceId ? `${baseMsg} (Código para soporte: ${traceId})` : baseMsg;
         toast.show(msg, 'error');
         return throwError(() => error);
       }

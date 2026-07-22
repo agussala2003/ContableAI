@@ -1,11 +1,12 @@
 import { Component, inject, signal, OnDestroy } from '@angular/core';
 import { ConfirmDialogService } from '../../services/confirm-dialog.service';
 import { LucideAngularModule } from 'lucide-angular';
+import { ModalA11yDirective } from '../../../shared/directives/modal-a11y.directive';
 
 @Component({
   selector: 'app-confirm-dialog',
   standalone: true,
-  imports: [LucideAngularModule],
+  imports: [LucideAngularModule, ModalA11yDirective],
   templateUrl: './confirm-dialog.component.html',
 })
 export class ConfirmDialogComponent implements OnDestroy {

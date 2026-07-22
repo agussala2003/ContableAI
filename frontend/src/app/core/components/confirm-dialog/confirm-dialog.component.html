@@ -3,6 +3,8 @@
   <div
     data-backdrop="true"
     (click)="onBackdropClick($event)"
+    appModalA11y
+    (closeRequested)="onCancel()"
     class="fixed inset-0 z-[9000] flex items-center justify-center p-4"
     [class.animate-backdrop-in]="!isLeaving()"
     [class.animate-backdrop-out]="isLeaving()"

@@ -72,8 +72,36 @@ export class AfipZone {
 
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []);
-    if (files.length) this.selectedFiles.set(files);
+    this.addFiles(Array.from(input.files ?? []));
+    // Permite volver a elegir el mismo archivo (p. ej. tras quitarlo de la lista):
+    // sin esto el <input> no dispara "change" si la selección nativa no cambió.
+    input.value = '';
+  }
+
+  /**
+   * Acumula archivos a la selección actual (misma ergonomía que la dropzone
+   * de extractos, FL-1), avisando cuáles se omitieron por nombre duplicado.
+   */
+  private addFiles(files: File[]) {
+    const pdfs = files.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    if (files.length && !pdfs.length) {
+      this.toast.warning('Solo se aceptan archivos PDF de AFIP.');
+      return;
+    }
+
+    const merged = [...this.selectedFiles()];
+    const skipped: string[] = [];
+    for (const file of pdfs) {
+      if (merged.some(f => f.name === file.name)) skipped.push(file.name);
+      else merged.push(file);
+    }
+    this.selectedFiles.set(merged);
+
+    if (skipped.length === 1) {
+      this.toast.warning(`"${skipped[0]}" ya estaba en la lista y no se volvió a agregar.`);
+    } else if (skipped.length > 1) {
+      this.toast.warning(`${skipped.length} archivos ya estaban en la lista y no se volvieron a agregar.`);
+    }
   }
 
   removeFile(index: number) {
@@ -85,8 +113,7 @@ export class AfipZone {
   onDrop(e: DragEvent) {
     e.preventDefault();
     this.isDragging.set(false);
-    const files = Array.from(e.dataTransfer?.files ?? []).filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
-    if (files.length) this.selectedFiles.set(files);
+    this.addFiles(Array.from(e.dataTransfer?.files ?? []));
   }
 
   triggerRematch() {

@@ -1,6 +1,7 @@
 ﻿import { Component, output, input } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
+import { ModalA11yDirective } from '../../../shared/directives/modal-a11y.directive';
 
 export interface OnboardingStep {
   n: string;
@@ -13,7 +14,7 @@ export interface OnboardingStep {
 @Component({
   selector: 'app-onboarding-modal',
   standalone: true,
-  imports: [NgClass, LucideAngularModule],
+  imports: [NgClass, LucideAngularModule, ModalA11yDirective],
   templateUrl: './onboarding-modal.html',
 })
 export class OnboardingModal {
