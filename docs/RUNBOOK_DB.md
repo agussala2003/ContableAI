@@ -2,7 +2,8 @@
 
 > **Alcance:** PostgreSQL de producción de ContableAI.
 > **Estado:** Vivo — revisar cada vez que cambie el plan de Neon o el volumen de clientes.
-> **Última actualización:** 2026-07-21 (cierre de la fase de hardening SRE — hallazgo B-1).
+> **Última actualización:** 2026-07-21 (revisión editorial al cierre de la auditoría; creado
+> en la fase de hardening SRE — hallazgo B-1).
 
 ---
 
@@ -81,8 +82,9 @@ Complementa al PITR de Neon con una copia fuera de la plataforma, relevante mien
 Free tenga ventana de retención corta.
 
 ```bash
-# Ejecutar contra el endpoint SIN pooler (operaciones administrativas, no la app)
-pg_dump "Host=<host-sin-pooler>.neon.tech;Database=neondb;Username=neondb_owner;Password=<pwd>;SSL Mode=VerifyFull;" \
+# Ejecutar contra el endpoint SIN pooler (operaciones administrativas, no la app).
+# Nota: pg_dump usa el formato URI de libpq, NO la connection string estilo .NET de la app.
+pg_dump "postgresql://neondb_owner:<pwd>@<host-sin-pooler>.neon.tech/neondb?sslmode=verify-full" \
   --format=custom \
   --file="contableai-prod-$(date +%Y%m%d).dump"
 
@@ -134,7 +136,7 @@ pg_dump "Host=<host-sin-pooler>.neon.tech;Database=neondb;Username=neondb_owner;
 
 ---
 
-## 6. Acciones pendientes (no completadas por este documento)
+## 6. Acciones pendientes (tareas operativas en el entorno productivo de Neon)
 
 - [ ] **Verificar en el dashboard de Neon la ventana de retención exacta vigente** para el
   proyecto Prod (plan Free) y ajustar el RPO de §2 si es distinto a 24h.
