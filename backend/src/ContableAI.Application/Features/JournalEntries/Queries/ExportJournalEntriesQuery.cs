@@ -8,9 +8,10 @@ namespace ContableAI.Application.Features.JournalEntries.Queries;
 /// accounting CSV file (Fecha, Asiento Nro, Concepto, Cuenta, Debe, Haber).
 /// </summary>
 public sealed record ExportJournalEntriesQuery(
-    Guid  CompanyId,
-    int?  Month = null,
-    int?  Year  = null
+    Guid    CompanyId,
+    int?    Month    = null,
+    int?    Year     = null,
+    string? Currency = null
 ) : IRequest<Result<CsvFileResult>>;
 
 /// <summary>In-memory file ready to be streamed as an HTTP response.</summary>

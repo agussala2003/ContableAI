@@ -380,6 +380,7 @@ export class JournalPage {
       this.searchDescription().trim() || undefined,
       this.searchAccount() || undefined,
       entryIds,
+      this.selectedCurrency() ?? undefined,
     );
     setTimeout(() => this.isExporting.set(false), this.configService.config().exportCooldownMs);
   }
@@ -387,21 +388,21 @@ export class JournalPage {
   exportHolistor(): void {
     this.isExportingHolistor.set(true);
     const company = this.companyService.activeCompany();
-    this.journalService.downloadHolistor(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined);
+    this.journalService.downloadHolistor(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined, this.selectedCurrency() ?? undefined);
     setTimeout(() => this.isExportingHolistor.set(false), this.configService.config().exportCooldownMs);
   }
 
   exportBejerman(): void {
     this.isExportingBejerman.set(true);
     const company = this.companyService.activeCompany();
-    this.journalService.downloadBejerman(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined);
+    this.journalService.downloadBejerman(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined, this.selectedCurrency() ?? undefined);
     setTimeout(() => this.isExportingBejerman.set(false), this.configService.config().exportCooldownMs);
   }
 
   exportCsv(): void {
     this.isExportingCsv.set(true);
     const company = this.companyService.activeCompany();
-    this.journalService.downloadCsv(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined);
+    this.journalService.downloadCsv(company?.id, this.selectedMonth() ?? undefined, this.selectedYear() ?? undefined, this.selectedCurrency() ?? undefined);
     setTimeout(() => this.isExportingCsv.set(false), this.configService.config().exportCooldownMs);
   }
 

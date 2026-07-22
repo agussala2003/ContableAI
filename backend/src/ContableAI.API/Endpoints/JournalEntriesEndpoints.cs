@@ -239,6 +239,9 @@ public static class JournalEntriesEndpoints
             [FromServices] IExportService exportService,
             ExportJournalEntriesRequest req) =>
         {
+            if (!string.IsNullOrWhiteSpace(req.Currency) && !Currencies.IsSupported(req.Currency))
+                return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(req.CompanyId) && Guid.TryParse(req.CompanyId, out var cGuid))
             {
@@ -282,6 +285,9 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(req.Account))
                 query = query.Where(j => j.Lines.Any(l => l.Account == req.Account));
+
+            if (!string.IsNullOrWhiteSpace(req.Currency))
+                query = query.Where(j => j.Currency == req.Currency);
 
             if (req.EntryIds is { Count: > 0 })
             {
@@ -341,8 +347,12 @@ public static class JournalEntriesEndpoints
             [FromQuery] int?    year,
             [FromQuery] string? search,
             [FromQuery] string? account,
+            [FromQuery] string? currency,
             [FromQuery] string? entryIds) =>
         {
+            if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
+                return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
             {
@@ -386,6 +396,9 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(account))
                 query = query.Where(j => j.Lines.Any(l => l.Account == account));
+
+            if (!string.IsNullOrWhiteSpace(currency))
+                query = query.Where(j => j.Currency == currency);
 
             if (!string.IsNullOrWhiteSpace(entryIds))
             {
@@ -431,8 +444,9 @@ public static class JournalEntriesEndpoints
         .WithName("ExportJournalEntries")
         .WithTags("Libro Diario")
         .WithSummary("Exportar asientos del período a Excel (.xlsx).")
-        .WithDescription("Genera el libro diario formateado en Excel. Query params: companyId (guid), month (int), year (int). Devuelve el archivo con Content-Disposition: attachment.")
+        .WithDescription("Genera el libro diario formateado en Excel. Query params: companyId (guid), month (int), year (int), currency (ARS|USD). Devuelve el archivo con Content-Disposition: attachment.")
         .Produces(200)
+        .Produces(400)
         .Produces(404);
 
 
@@ -442,8 +456,12 @@ public static class JournalEntriesEndpoints
             [FromServices] IExportService exportService,
             [FromQuery] string? companyId,
             [FromQuery] int?    month,
-            [FromQuery] int?    year) =>
+            [FromQuery] int?    year,
+            [FromQuery] string? currency) =>
         {
+            if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
+                return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
             {
@@ -475,6 +493,9 @@ public static class JournalEntriesEndpoints
                 var end   = new DateOnly(year.Value, 12, 31);
                 query = query.Where(j => j.Date >= start && j.Date <= end);
             }
+
+            if (!string.IsNullOrWhiteSpace(currency))
+                query = query.Where(j => j.Currency == currency);
 
             var entries = await query.OrderBy(j => j.Date).ToListAsync();
             if (!entries.Any())
@@ -497,8 +518,9 @@ public static class JournalEntriesEndpoints
         .WithName("ExportJournalEntriesHolistor")
         .WithTags("Libro Diario")
         .WithSummary("Exportar asientos en formato Holistor (.txt).")
-        .WithDescription("Genera texto plano compatible con el formato de importación de Holistor. Query params: companyId (guid), month (int), year (int).")
+        .WithDescription("Genera texto plano compatible con el formato de importación de Holistor. Query params: companyId (guid), month (int), year (int), currency (ARS|USD).")
         .Produces(200)
+        .Produces(400)
         .Produces(404);
 
 
@@ -508,8 +530,12 @@ public static class JournalEntriesEndpoints
             [FromServices] IExportService exportService,
             [FromQuery] string? companyId,
             [FromQuery] int?    month,
-            [FromQuery] int?    year) =>
+            [FromQuery] int?    year,
+            [FromQuery] string? currency) =>
         {
+            if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
+                return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
             {
@@ -542,6 +568,9 @@ public static class JournalEntriesEndpoints
                 query = query.Where(j => j.Date >= start && j.Date <= end);
             }
 
+            if (!string.IsNullOrWhiteSpace(currency))
+                query = query.Where(j => j.Currency == currency);
+
             var entries = await query.OrderBy(j => j.Date).ToListAsync();
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
@@ -563,8 +592,9 @@ public static class JournalEntriesEndpoints
         .WithName("ExportJournalEntriesBejerman")
         .WithTags("Libro Diario")
         .WithSummary("Exportar asientos en formato Bejerman (.csv).")
-        .WithDescription("Genera un CSV compatible con el formato de importación de Bejerman. Query params: companyId (guid), month (int), year (int).")
+        .WithDescription("Genera un CSV compatible con el formato de importación de Bejerman. Query params: companyId (guid), month (int), year (int), currency (ARS|USD).")
         .Produces(200)
+        .Produces(400)
         .Produces(404);
 
 
@@ -572,9 +602,13 @@ public static class JournalEntriesEndpoints
             ISender sender,
             [FromQuery] Guid    companyId,
             [FromQuery] int?    month,
-            [FromQuery] int?    year) =>
+            [FromQuery] int?    year,
+            [FromQuery] string? currency) =>
         {
-            var result = await sender.Send(new ExportJournalEntriesQuery(companyId, month, year));
+            if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
+                return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
+            var result = await sender.Send(new ExportJournalEntriesQuery(companyId, month, year, currency));
             if (!result.IsSuccess)
                 return result.StatusCode == 404
                     ? Results.NotFound(result.Error)
@@ -587,8 +621,9 @@ public static class JournalEntriesEndpoints
         .WithName("ExportJournalEntriesCsv")
         .WithTags("Libro Diario")
         .WithSummary("Exportar asientos a CSV estándar (Fecha, Asiento Nro, Concepto, Cuenta, Debe, Haber).")
-        .WithDescription("Query params: companyId (guid, requerido), month (int), year (int). Genera un CSV con una fila por línea contable, listo para importar en cualquier software contable.")
+        .WithDescription("Query params: companyId (guid, requerido), month (int), year (int), currency (ARS|USD). Genera un CSV con una fila por línea contable, listo para importar en cualquier software contable.")
         .Produces(200, contentType: "text/csv")
+        .Produces(400)
         .Produces(404);
     }
 
@@ -627,5 +662,6 @@ public sealed class ExportJournalEntriesRequest
     public int? Year { get; set; }
     public string? Search { get; set; }
     public string? Account { get; set; }
+    public string? Currency { get; set; }
     public List<string>? EntryIds { get; set; }
 }

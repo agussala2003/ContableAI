@@ -45,6 +45,9 @@ public sealed class ExportJournalEntriesHandler
             dbQuery = dbQuery.Where(j => j.Date.Month == query.Month.Value);
         }
 
+        if (!string.IsNullOrWhiteSpace(query.Currency))
+            dbQuery = dbQuery.Where(j => j.Currency == query.Currency);
+
         var entries = await dbQuery.OrderBy(j => j.Date).ThenBy(j => j.GeneratedAt).ToListAsync(ct);
 
         if (entries.Count == 0)
