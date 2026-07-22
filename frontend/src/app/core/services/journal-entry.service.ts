@@ -18,6 +18,8 @@ export interface JournalEntry {
   companyId: string | null;
   bankTransactionId: string;
   generatedAt: string;
+  /** Moneda del asiento (ISO 4217: "ARS" | "USD"). */
+  currency: string;
   lines: JournalEntryLine[];
 }
 
@@ -59,11 +61,12 @@ export class JournalEntryService {
     );
   }
 
-  getEntries(params?: { companyId?: string; month?: number; year?: number }): Observable<JournalEntry[]> {
+  getEntries(params?: { companyId?: string; month?: number; year?: number; currency?: string }): Observable<JournalEntry[]> {
     let p = new HttpParams();
     if (params?.companyId) p = p.set('companyId', params.companyId);
     if (params?.month)     p = p.set('month',     params.month);
     if (params?.year)      p = p.set('year',       params.year);
+    if (params?.currency)  p = p.set('currency',   params.currency);
     return this.http.get<JournalEntry[]>(this.baseUrl, { params: p });
   }
 

@@ -19,16 +19,56 @@ public static class JournalEntriesEndpoints
     public static void MapJournalEntriesEndpoints(this WebApplication app)
     {
 
-        app.MapPost("/api/journal-entries/generate", (
+        app.MapPost("/api/journal-entries/generate", async (
             GenerateJournalEntriesRequest req,
             ICurrentTenantService          currentTenant,
+            ContableAIDbContext            dbContext,
             IBackgroundJobClient           backgroundJobClient) =>
         {
             if (req.TransactionIds == null || req.TransactionIds.Count == 0)
                 return Results.BadRequest("Se requiere al menos una transacción.");
 
+            // Fix fallo silencioso USD: el job de Hangfire omite (con solo un warning en el log)
+            // todo movimiento cuya empresa no tenga configurada la cuenta bancaria de su moneda,
+            // así que el usuario veía "éxito" y el asiento nunca aparecía. Se valida acá, ANTES
+            // de encolar, para devolver un 422 accionable en lugar de un job que "triunfa" vacío.
+            var affected = await dbContext.BankTransactions
+                .AsNoTracking()
+                .Where(t => req.TransactionIds.Contains(t.Id)
+                         && t.CompanyId.HasValue
+                         && t.JournalEntryId == null)
+                .Select(t => new { CompanyId = t.CompanyId!.Value, t.Currency })
+                .Distinct()
+                .ToListAsync();
+
+            var companyIds = affected.Select(a => a.CompanyId).Distinct().ToList();
+            var companies = await dbContext.Companies
+                .AsNoTracking()
+                .Where(c => companyIds.Contains(c.Id) && c.StudioTenantId == currentTenant.StudioTenantId)
+                .Select(c => new { c.Id, c.Name, c.BankAccountName, c.UsdBankAccountName })
+                .ToDictionaryAsync(c => c.Id, c => c);
+
+            var missingAccounts = affected
+                .Where(a => companies.TryGetValue(a.CompanyId, out var co)
+                         && string.IsNullOrWhiteSpace(a.Currency == Currencies.Usd ? co.UsdBankAccountName : co.BankAccountName))
+                .Select(a => new { companies[a.CompanyId].Name, a.Currency })
+                .Distinct()
+                .ToList();
+
+            if (missingAccounts.Count > 0)
+            {
+                var detail = string.Join(" ", missingAccounts.Select(m => m.Currency == Currencies.Usd
+                    ? $"La empresa \"{m.Name}\" no tiene configurada la cuenta bancaria en dólares (USD)."
+                    : $"La empresa \"{m.Name}\" no tiene configurada la cuenta bancaria en pesos."));
+
+                return Results.Problem(
+                    title:      "Cuenta bancaria no configurada",
+                    detail:     $"{detail} Completala en la ficha de la empresa (Editar empresa) y reintentá.",
+                    statusCode: 422);
+            }
+
             var command = new GenerateJournalEntriesCommand(req.TransactionIds, currentTenant.StudioTenantId!);
-            
+
             var jobId = backgroundJobClient.Enqueue<ISender>(sender => sender.Send(command, default));
 
             return Results.Accepted(value: new
@@ -40,9 +80,10 @@ public static class JournalEntriesEndpoints
         .WithName("GenerateJournalEntries")
         .WithTags("Libro Diario")
         .WithSummary("Generar asientos contables desde transacciones clasificadas.")
-        .WithDescription("Body: { transactionIds: [guid] }. Encola el trabajo en Hangfire y devuelve 202 Accepted.")
+        .WithDescription("Body: { transactionIds: [guid] }. Valida que cada empresa tenga configurada la cuenta bancaria de la moneda de sus movimientos (422 si falta), encola el trabajo en Hangfire y devuelve 202 Accepted.")
         .Produces(202)
-        .Produces(400);
+        .Produces(400)
+        .Produces(422);
 
 
         app.MapGet("/api/journal-entries", async (
@@ -50,8 +91,12 @@ public static class JournalEntriesEndpoints
             ContableAIDbContext   dbContext,
             [FromQuery] string?   companyId,
             [FromQuery] int?      month,
-            [FromQuery] int?      year) =>
+            [FromQuery] int?      year,
+            [FromQuery] string?   currency) =>
         {
+            if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
+                return Results.BadRequest(new { message = "currency inválida. Valores soportados: ARS, USD." });
+
             var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
                 .Select(c => c.Id)
@@ -62,6 +107,9 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
                 query = query.Where(j => j.CompanyId == cGuid);
+
+            if (!string.IsNullOrWhiteSpace(currency))
+                query = query.Where(j => j.Currency == currency);
 
             if (month.HasValue && year.HasValue)
             {
@@ -86,6 +134,7 @@ public static class JournalEntriesEndpoints
                     j.CompanyId,
                     j.BankTransactionId,
                     j.GeneratedAt,
+                    j.Currency,
                     Lines = j.Lines.OrderByDescending(l => l.IsDebit).ThenBy(l => l.Account).Select(l => new { l.Account, l.Amount, l.IsDebit }),
                 })
                 .ToListAsync();
@@ -94,9 +143,10 @@ public static class JournalEntriesEndpoints
         })
         .WithName("GetJournalEntries")
         .WithTags("Libro Diario")
-        .WithSummary("Listar asientos del estudio, filtrable por empresa y período.")
-        .WithDescription("Query params: companyId (guid), month (int), year (int). Devuelve asientos con sus líneas (account, amount, isDebit). Sin filtros devuelve todos los asientos del estudio.")
-        .Produces(200);
+        .WithSummary("Listar asientos del estudio, filtrable por empresa, período y moneda.")
+        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD). Devuelve asientos con su moneda y sus líneas (account, amount, isDebit). Sin filtros devuelve todos los asientos del estudio.")
+        .Produces(200)
+        .Produces(400);
 
         app.MapDelete("/api/journal-entries/{id:guid}", async (
             Guid                  id,

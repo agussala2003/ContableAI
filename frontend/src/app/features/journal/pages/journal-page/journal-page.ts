@@ -68,6 +68,8 @@ export class JournalPage {
   selectedYear      = signal<number | null>(null);
   searchDescription = signal('');
   searchAccount     = signal('');
+  /** Filtro por moneda (ARS/USD, null = todas). Se filtra server-side (query param `currency`). */
+  selectedCurrency  = signal<string | null>(null);
 
   readonly months = [
     { value: 1,  label: 'Enero' },     { value: 2,  label: 'Febrero' },
@@ -208,12 +210,15 @@ export class JournalPage {
     this.searchDescription().trim() !== '' ||
     this.searchAccount()              !== '' ||
     this.selectedMonth()              !== null ||
-    this.selectedYear()               !== null
+    this.selectedYear()               !== null ||
+    this.selectedCurrency()           !== null
   );
 
   constructor() {
+    // Recarga cuando cambia la empresa activa o el filtro de moneda (ambos son server-side).
     effect(() => {
       const company = this.companyService.activeCompany();
+      this.selectedCurrency();
       if (!company?.id) {
         this.entries.set([]);
         this.isLoading.set(false);
@@ -235,6 +240,7 @@ export class JournalPage {
     this.searchAccount.set('');
     this.selectedMonth.set(null);
     this.selectedYear.set(null);
+    this.selectedCurrency.set(null);
   }
 
   setViewMode(mode: 'journal' | 'ledger'): void {
@@ -273,7 +279,10 @@ export class JournalPage {
 
     const requestSeq = ++this.loadSeq;
     this.isLoading.set(true);
-    this.journalService.getEntries({ companyId }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.journalService.getEntries({
+      companyId,
+      currency: this.selectedCurrency() ?? undefined,
+    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: list => {
         if (requestSeq !== this.loadSeq) return;
         this.entries.set(list.map(e => ({
