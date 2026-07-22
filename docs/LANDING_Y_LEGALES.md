@@ -1,12 +1,27 @@
 # Landing Page y Páginas Legales — Vistas Públicas
 
+Paso a Paso para Salir a la Venta
+Una vez superada la auditoría, el Go-to-Market debería seguir este orden:
+
+Paso 1: Entorno de Producción. Migrar la base de datos PostgreSQL, el backend y el build optimizado del frontend a los servidores productivos definitivos.
+
+Paso 2: Smoke Testing Final. Realizar pruebas reales en producción creando usuarios de prueba, subiendo extractos y generando los asientos contables para confirmar que no hay caídas en el servidor.
+
+Paso 3: Definición del Modelo de Negocio. Integrar la pasarela de pagos (por ejemplo, Mercado Pago o Stripe) y conectar el flujo de suscripciones que charlaron.
+
+Paso 4: Legales y Landing Page. Redactar los Términos y Condiciones, Políticas de Privacidad y pulir la página de aterrizaje comercial para que los usuarios sin el sistema puedan conocer la herramienta.
+
+Paso 5: Onboarding "Family & Friends". Darle acceso a ese familiar tuyo que trabaja en estudios contables y a los contactos interesados de la facultad para que sean los primeros beta testers reales. Su feedback inicial vale oro.
+
+Paso 6: Marketing y Ventas. Empezar a darle movimiento a la cuenta de Instagram, contactar estudios contables por LinkedIn y hacer demostraciones reales del ahorro de tiempo que genera la plataforma.
+
 > Documento de referencia para el lanzamiento comercial. Última revisión: 2026-07-21.
 
 ## 1. Resumen ejecutivo
 
 Las vistas públicas de ContableAI (accesibles sin login) son cuatro: la **Landing Page**, las dos **páginas legales** (Términos y Condiciones, Política de Privacidad) y las pantallas de **autenticación** (login / recupero de contraseña). Todas son componentes Angular standalone con `ChangeDetectionStrategy.OnPush`, lazy-loaded, estilados con Tailwind (mobile-first, con modo oscuro vía clase `dark`).
 
-**Estado:** la landing está lista a nivel técnico. Las páginas legales son *scaffolding* con texto **lorem ipsum**: deben completarse con los textos legales definitivos **antes del lanzamiento**.
+**Estado:** la landing está lista a nivel técnico. Las páginas legales tienen cargado el **borrador de producción** (redactado el 2026-07-21 conforme a la Ley 25.326 y al modelo B2B): se recomienda una revisión final por abogado antes del lanzamiento.
 
 ## 2. Mapa de rutas públicas
 
@@ -63,14 +78,14 @@ Editar en el TypeScript (son arrays tipados, campos `title` / `desc` / `text`):
 - `steps` — los 3 pasos de "Cómo funciona".
 - `proFeatures` / `enterpriseFeatures` — los bullets de cada plan.
 
-### 4.3 Páginas legales (⚠️ pendiente de contenido real)
+### 4.3 Páginas legales (borrador de producción cargado)
 
-Reemplazar el lorem ipsum sección por sección (las secciones ya tienen títulos orientativos y hay un comentario `⚠️ TEXTO PLACEHOLDER` en cada archivo):
+Los textos definitivos (borrador) ya están inyectados; cualquier ajuste se edita sección por sección en:
 
-- Términos: `frontend/src/app/features/legal/pages/terms-page/terms-page.html`
-- Privacidad: `frontend/src/app/features/legal/pages/privacy-page/privacy-page.html`
+- Términos: `frontend/src/app/features/legal/pages/terms-page/terms-page.html` — 12 secciones: aceptación B2B, descripción del servicio (sugerencias/borradores), obligaciones, autorización de terceros, suscripciones y suspensión por falta de pago (402), limitación de responsabilidad, disponibilidad, propiedad intelectual, terminación, modificaciones, ley aplicable (CABA) y contacto.
+- Privacidad: `frontend/src/app/features/legal/pages/privacy-page/privacy-page.html` — 11 secciones conforme Ley 25.326 / AAIP: roles Responsable/Encargado, datos recopilados, finalidad, OCR en memoria (staging 24 h), retención (jobs 30 días, auditoría 5 años con seudonimización), cesión, seguridad, derechos del titular (con leyenda AAIP), modificaciones y contacto.
 
-En ambos, completar además la línea **"Última actualización: [FECHA A COMPLETAR]"** y verificar el email de contacto.
+Al editar, recordar actualizar la línea **"Última actualización: …"** de cada página. Email de contacto legal: `contacto@contableai.com`.
 
 ### 4.4 SEO / metadatos del sitio
 
@@ -86,7 +101,7 @@ En ambos, completar además la línea **"Última actualización: [FECHA A COMPLE
 
 ## 6. Pendientes para el lanzamiento
 
-- [ ] Reemplazar lorem ipsum de `/terminos` y `/privacidad` por textos legales reales (revisión de abogado recomendada).
+- [x] Reemplazar lorem ipsum de `/terminos` y `/privacidad` por textos legales reales (borrador de producción cargado el 2026-07-21; **revisión final de abogado recomendada antes de publicar**).
 - [ ] Confirmar precio y features de los planes en la sección Pricing.
-- [ ] Reemplazar el email personal por un email corporativo de contacto (aparece en landing y en ambas páginas legales).
+- [ ] Reemplazar el email personal por un email corporativo en la **landing** (botón Enterprise, `mailto:agussala2003@gmail.com`); las páginas legales ya usan `contacto@contableai.com`. Verificar que esa casilla exista y reciba correo.
 - [ ] Verificar que `og-image.png` y favicons estén actualizados con el branding final.
