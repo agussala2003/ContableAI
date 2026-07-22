@@ -98,6 +98,12 @@ internal static class StudioTenantPurger
         // ── Datos por empresa (hijos → padres) — cascada compartida ──────────
         var companyCounts = await PurgeCompaniesAsync(db, companyIds, ct);
 
+        // P-2: residuos con el estudio estampado pero sin empresa (CompanyId quedó null por el
+        // FK SetNull de bajas anteriores). Antes eran inalcanzables; la columna desnormalizada
+        // permite barrerlos en el cierre de cuenta.
+        var orphanTxs = await DeleteAsync(db,
+            db.BankTransactions.IgnoreQueryFilters().Where(t => t.StudioTenantId == studioTenantId), ct);
+
         // ── Datos a nivel estudio ─────────────────────────────────────────────
         // Reglas de estudio (CompanyId null + StudioTenantId del tenant) — P-3.
         var studioRules = await DeleteAsync(db,
@@ -134,7 +140,7 @@ internal static class StudioTenantPurger
             userIds.Select(id => id.ToString()).ToList(), ct);
 
         return new PurgeCounts(
-            users, tokens, companyCounts.Companies, companyCounts.BankTransactions,
+            users, tokens, companyCounts.Companies, companyCounts.BankTransactions + orphanTxs,
             companyCounts.JournalEntries, companyCounts.JournalEntryLines,
             companyCounts.AccountingRules + studioRules,
             companyCounts.RuleSuggestions + tenantSuggestions,

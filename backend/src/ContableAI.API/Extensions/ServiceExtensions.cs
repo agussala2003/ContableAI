@@ -105,7 +105,14 @@ public static class ServiceExtensions
 
         // ── Base de datos con interceptor de auditoría ────────────────────────
         services.AddSingleton<AuditInterceptor>();
-        services.AddDbContext<ContableAIDbContext>((sp, options) =>
+
+        // P-1: pooling real de DbContext. AddPooledDbContextFactory exige un contexto sin
+        // estado de constructor (el tenant ya no se captura en el ctor); la registración
+        // scoped de abajo toma una instancia del pool por request/scope y le estampa el
+        // tenant con SetTenant() — SIEMPRE, así una instancia reciclada nunca conserva el
+        // tenant del request anterior. Al cerrarse el scope, Dispose() devuelve la instancia
+        // al pool en lugar de destruirla (evita re-crear el grafo interno de EF por request).
+        services.AddPooledDbContextFactory<ContableAIDbContext>((sp, options) =>
         {
             options.UseNpgsql(
                 configuration.GetConnectionString("DefaultConnection"),
@@ -124,6 +131,15 @@ public static class ServiceExtensions
             options.AddInterceptors(sp.GetRequiredService<AuditInterceptor>());
         });
 
+        services.AddScoped(sp =>
+        {
+            var context = sp.GetRequiredService<IDbContextFactory<ContableAIDbContext>>().CreateDbContext();
+            // Sin HttpContext (jobs de Hangfire, seed) el tenant resuelve null → filtro OFF,
+            // exactamente el comportamiento previo al pooling.
+            context.SetTenant(sp.GetService<ICurrentTenantService>());
+            return context;
+        });
+
         // ── Tareas en segundo plano (Background Services y Hangfire) ──────────
         services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -131,9 +147,29 @@ public static class ServiceExtensions
             .UseRecommendedSerializerSettings()
             // O-1: propaga el Correlation ID del request que encola un job hasta su ejecución.
             .UseFilter(new HangfireCorrelationIdFilter())
+            // P-9: enruta el procesamiento de extractos (OCR, CPU-bound) a la cola "uploads".
+            .UseFilter(new HangfireQueueRoutingFilter())
             .UsePostgreSqlStorage(opts => opts.UseNpgsqlConnection(configuration.GetConnectionString("DefaultConnection"))));
 
-        services.AddHangfireServer();
+        // P-9: dos servers en el mismo proceso con colas y workers EXPLÍCITOS (el default de
+        // Hangfire son hasta 20 workers compitiendo con la API por el thread pool):
+        //   · "uploads" — 2 workers, alineados con el SemaphoreSlim(2,2) del OCR: nunca hay
+        //     un worker bloqueado esperando el gate, y N subidas simultáneas encolan en vez
+        //     de acaparar workers.
+        //   · "default" — 3 workers para el resto (asientos, cruce AFIP, retención,
+        //     aprendizaje proactivo): las subidas pesadas no pueden starvear estos jobs.
+        services.AddHangfireServer(options =>
+        {
+            options.ServerName  = $"{Environment.MachineName}:uploads";
+            options.Queues      = [HangfireQueues.Uploads];
+            options.WorkerCount = 2;
+        });
+        services.AddHangfireServer(options =>
+        {
+            options.ServerName  = $"{Environment.MachineName}:default";
+            options.Queues      = [HangfireQueues.Default];
+            options.WorkerCount = 3;
+        });
 
         // R-5: el análisis proactivo se resuelve desde DI y corre como recurring job de Hangfire
         // (ver AddOrUpdate en Program.cs), no como BackgroundService por réplica.

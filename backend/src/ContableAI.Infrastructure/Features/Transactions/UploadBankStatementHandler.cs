@@ -379,9 +379,11 @@ public sealed class UploadBankStatementHandler
                     continue;
                 }
 
-                tx.TenantId  = tenantFilter;
-                tx.CompanyId = company?.Id;
-                tx.SortOrder = globalSortOrder++;
+                tx.TenantId       = tenantFilter;
+                tx.CompanyId      = company?.Id;
+                // P-2: estampa el estudio desnormalizado que usa el Global Query Filter.
+                tx.StudioTenantId = company?.StudioTenantId ?? command.StudioTenantId;
+                tx.SortOrder      = globalSortOrder++;
 
                 var result = await _classifier.ClassifyAsync(tx, allRules, company?.SplitChequeTax ?? false, ct);
                 classified.Add(result);

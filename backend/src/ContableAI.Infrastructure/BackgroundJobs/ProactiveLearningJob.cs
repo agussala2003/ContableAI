@@ -38,80 +38,115 @@ public class ProactiveLearningJob
     /// Detecta grupos de transacciones clasificadas manualmente con el mismo keyword+cuenta y
     /// genera sugerencias de reglas. Idempotente: verifica existencia de regla/sugerencia antes
     /// de insertar, por lo que reejecutarlo no duplica datos.
+    ///
+    /// P-7: procesa EMPRESA POR EMPRESA — antes materializaba 2 años de movimientos manuales de
+    /// TODOS los estudios en una sola query (memoria proporcional a la plataforma entera). Ahora
+    /// el pico de memoria queda acotado al volumen de una empresa, y los chequeos de reglas/
+    /// sugerencias van batcheados por empresa (2 queries por empresa, no 2 por grupo).
     /// </summary>
     public async Task AnalyzeTransactionsAsync(CancellationToken ct = default)
     {
         var cutoffDate = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-730));
 
-        // Fetch into memory so we can apply normalized keyword comparison
-        var raw = await _db.BankTransactions
+        // Solo los IDs de empresas con actividad manual en la ventana: es el conjunto de
+        // trabajo real, resuelto como DISTINCT en Postgres.
+        var companyIds = await _db.BankTransactions
             .Where(t => t.ClassificationSource == ClassificationSources.Manual
                      && t.AssignedAccount != null
+                     && t.CompanyId != null
                      && t.Date >= cutoffDate)
-            .Select(t => new { t.CompanyId, t.TenantId, t.Description, Account = t.AssignedAccount })
+            .Select(t => t.CompanyId!.Value)
+            .Distinct()
             .ToListAsync(ct);
 
+        int newSuggestions = 0;
+        foreach (var companyId in companyIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            newSuggestions += await AnalyzeCompanyAsync(companyId, cutoffDate, ct);
+        }
+
+        if (newSuggestions > 0)
+            _logger.LogInformation("ProactiveLearningJob generó {Count} nuevas sugerencias de reglas.", newSuggestions);
+    }
+
+    /// <summary>Analiza una sola empresa; devuelve la cantidad de sugerencias nuevas creadas.</summary>
+    private async Task<int> AnalyzeCompanyAsync(Guid companyId, DateOnly cutoffDate, CancellationToken ct)
+    {
+        var raw = await _db.BankTransactions
+            .Where(t => t.CompanyId == companyId
+                     && t.ClassificationSource == ClassificationSources.Manual
+                     && t.AssignedAccount != null
+                     && t.Date >= cutoffDate)
+            .Select(t => new { t.TenantId, t.Description, Account = t.AssignedAccount })
+            .ToListAsync(ct);
+
+        // La normalización de keywords no es traducible a SQL: se agrupa en memoria, pero
+        // ahora sobre los movimientos de UNA empresa, no de toda la plataforma.
         var candidateGroups = raw
-            .GroupBy(t => new
-            {
-                t.CompanyId,
-                t.TenantId,
-                Keyword = KeywordNormalizer.Normalize(t.Description),
-                Account = t.Account,
-            })
-            .Where(g => !string.IsNullOrWhiteSpace(g.Key.Keyword) && g.Count() >= 3)
+            .GroupBy(t => new { Keyword = KeywordNormalizer.Normalize(t.Description), t.Account })
+            .Where(g => !string.IsNullOrWhiteSpace(g.Key.Keyword) && g.Key.Account != null && g.Count() >= 3)
             .Select(g => new
             {
-                g.Key.CompanyId,
-                g.Key.TenantId,
                 g.Key.Keyword,
-                g.Key.Account,
-                Count = g.Count(),
+                Account  = g.Key.Account!,
+                Count    = g.Count(),
+                TenantId = g.First().TenantId,
             })
             .ToList();
 
+        if (candidateGroups.Count == 0) return 0;
+
+        var keywords = candidateGroups.Select(g => g.Keyword).Distinct().ToList();
+
+        // Batch por empresa: 1 query de reglas + 1 de sugerencias para todos los keywords.
+        var existingRules = (await _db.AccountingRules
+                .Where(r => r.CompanyId == companyId && keywords.Contains(r.Keyword))
+                .Select(r => r.Keyword)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var existingSuggestions = (await _db.RuleSuggestions
+                .Where(s => s.CompanyId == companyId && keywords.Contains(s.Keyword))
+                .ToListAsync(ct))
+            .ToDictionary(s => s.Keyword, StringComparer.Ordinal);
+
         int newSuggestions = 0;
+        bool dirty = false;
 
         foreach (var group in candidateGroups)
         {
-            if (group.Account is null) continue;
+            if (existingRules.Contains(group.Keyword)) continue;
 
-            bool ruleExists = await _db.AccountingRules
-                .AnyAsync(r => r.CompanyId == group.CompanyId && r.Keyword == group.Keyword, ct);
-
-            if (ruleExists) continue;
-
-            var existingSuggestion = await _db.RuleSuggestions
-                .FirstOrDefaultAsync(s => s.CompanyId == group.CompanyId && s.Keyword == group.Keyword, ct);
-
-            if (existingSuggestion != null)
+            if (existingSuggestions.TryGetValue(group.Keyword, out var existing))
             {
-                // Si la frecuencia aumentó y sigue pendiente, actualizar la frecuencia
-                if (existingSuggestion.Status == SuggestionStatus.Pending && existingSuggestion.Frequency < group.Count)
+                // Si la frecuencia aumentó y sigue pendiente, actualizarla. Las Rejected no se
+                // reactivan desde el job (se respeta la decisión del usuario; solo una nueva
+                // asignación manual las reactiva, ver bulk-update).
+                if (existing.Status == SuggestionStatus.Pending && existing.Frequency < group.Count)
                 {
-                    existingSuggestion.Frequency = group.Count;
+                    existing.Frequency = group.Count;
+                    dirty = true;
                 }
                 continue;
             }
 
-            var suggestion = new RuleSuggestion
+            _db.RuleSuggestions.Add(new RuleSuggestion
             {
                 TenantId         = group.TenantId,
-                CompanyId        = group.CompanyId,
+                CompanyId        = companyId,
                 Keyword          = group.Keyword,
                 SuggestedAccount = group.Account,
                 Frequency        = group.Count,
                 Status           = SuggestionStatus.Pending
-            };
-
-            _db.RuleSuggestions.Add(suggestion);
+            });
             newSuggestions++;
+            dirty = true;
         }
 
-        if (newSuggestions > 0)
-        {
+        if (dirty)
             await _db.SaveChangesAsync(ct);
-            _logger.LogInformation("ProactiveLearningJob generó {Count} nuevas sugerencias de reglas.", newSuggestions);
-        }
+
+        return newSuggestions;
     }
 }

@@ -33,8 +33,14 @@ public class TenantIsolationTests
             .UseInMemoryDatabase(dbName)
             .Options;
 
-    private static ContableAIDbContext CtxFor(string dbName, string? tenantId, bool isSystemAdmin = false) =>
-        new(OptionsFor(dbName), new FakeTenant(tenantId, isSystemAdmin));
+    private static ContableAIDbContext CtxFor(string dbName, string? tenantId, bool isSystemAdmin = false)
+    {
+        // P-1 (pooling): el tenant ya no viaja por el constructor sino por SetTenant(),
+        // igual que hace la registración scoped de producción al tomar la instancia del pool.
+        var ctx = new ContableAIDbContext(OptionsFor(dbName));
+        ctx.SetTenant(new FakeTenant(tenantId, isSystemAdmin));
+        return ctx;
+    }
 
     /// <summary>
     /// Siembra una empresa + una transacción por estudio usando un contexto SIN tenant
@@ -48,12 +54,37 @@ public class TenantIsolationTests
         var companyB = new Company { Name = "Empresa B", Cuit = "20-2-8", StudioTenantId = StudioB };
         seedCtx.Companies.AddRange(companyA, companyB);
 
-        var txA = new BankTransaction { Description = "Mov A", CompanyId = companyA.Id, TenantId = companyA.Id.ToString() };
-        var txB = new BankTransaction { Description = "Mov B", CompanyId = companyB.Id, TenantId = companyB.Id.ToString() };
+        // P-2: el filtro global ancla por la columna desnormalizada StudioTenantId (sin JOIN),
+        // igual que la estampa el UploadBankStatementHandler al adoptar la transacción.
+        var txA = new BankTransaction { Description = "Mov A", CompanyId = companyA.Id, TenantId = companyA.Id.ToString(), StudioTenantId = StudioA };
+        var txB = new BankTransaction { Description = "Mov B", CompanyId = companyB.Id, TenantId = companyB.Id.ToString(), StudioTenantId = StudioB };
         seedCtx.BankTransactions.AddRange(txA, txB);
 
         seedCtx.SaveChanges();
         return (companyB.Id, txB.Id, companyA.Id, txA.Id);
+    }
+
+    [Fact]
+    public void PooledContextReuse_SetTenantAlwaysOverwritesPreviousTenant()
+    {
+        // P-1: con pooling, la MISMA instancia de contexto sirve requests sucesivos de
+        // distintos estudios. SetTenant se llama en cada lease y debe pisar el estado anterior:
+        // si no lo hiciera, un request vería datos del tenant previo (fuga cross-tenant).
+        var db = nameof(PooledContextReuse_SetTenantAlwaysOverwritesPreviousTenant);
+        Seed(db);
+
+        using var ctx = new ContableAIDbContext(OptionsFor(db));
+
+        ctx.SetTenant(new FakeTenant(StudioA));
+        ctx.Companies.AsNoTracking().Should().OnlyContain(c => c.StudioTenantId == StudioA);
+
+        // "Devolución al pool" y re-lease por un request del estudio B.
+        ctx.SetTenant(new FakeTenant(StudioB));
+        ctx.Companies.AsNoTracking().Should().OnlyContain(c => c.StudioTenantId == StudioB);
+
+        // Re-lease por un job sin tenant (Hangfire): filtro desactivado, ve todo.
+        ctx.SetTenant(null);
+        ctx.Companies.AsNoTracking().Should().HaveCount(2);
     }
 
     [Fact]

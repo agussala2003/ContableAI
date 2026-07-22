@@ -25,11 +25,14 @@ public class CompanySoftDeleteTests
         public bool IsSystemAdmin     => false;
     }
 
-    private static ContableAIDbContext CtxFor(string dbName, string? tenantId = Studio) =>
-        new(new DbContextOptionsBuilder<ContableAIDbContext>()
-                .UseInMemoryDatabase(dbName)
-                .Options,
-            new FakeTenant(tenantId));
+    private static ContableAIDbContext CtxFor(string dbName, string? tenantId = Studio)
+    {
+        var ctx = new ContableAIDbContext(new DbContextOptionsBuilder<ContableAIDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .Options);
+        ctx.SetTenant(new FakeTenant(tenantId));
+        return ctx;
+    }
 
     private static Guid SeedCompany(string dbName)
     {

@@ -3,6 +3,8 @@ using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ContableAI.Infrastructure.Features.Afip;
 
@@ -32,6 +34,7 @@ public sealed record AfipComboSuggestion(
 public class AfipCombinationService
 {
     private readonly ContableAIDbContext _db;
+    private readonly ILogger<AfipCombinationService> _logger;
 
     /// <summary>Máximo de VEPs por combinación (el caso típico son 2; se admite margen).</summary>
     public const int MaxVouchersPerCombination = 5;
@@ -42,10 +45,25 @@ public class AfipCombinationService
     /// <summary>Ventana de días entre la fecha del movimiento y la de los VEPs (igual al cruce 1:1).</summary>
     public const int MatchWindowDays = 2;
 
-    public AfipCombinationService(ContableAIDbContext db) => _db = db;
+    /// <summary>
+    /// P-8: presupuesto duro de cómputo por request. El backtracking está podado y acotado
+    /// (≤ 5 VEPs por combo, ≤ 5 alternativas, ventana ±2 días), así que en datos reales termina
+    /// en milisegundos; el presupuesto es la red de seguridad para un caso patológico (cientos
+    /// de movimientos pendientes × muchos VEPs) — el endpoint devuelve las sugerencias parciales
+    /// calculadas hasta ahí en lugar de colgarse. Si el log de agotamiento aparece seguido en
+    /// producción, es la señal para migrar este cálculo a un job en segundo plano.
+    /// </summary>
+    public static readonly TimeSpan ComputeBudget = TimeSpan.FromSeconds(2);
+
+    public AfipCombinationService(ContableAIDbContext db, ILogger<AfipCombinationService>? logger = null)
+    {
+        _db     = db;
+        _logger = logger ?? NullLogger<AfipCombinationService>.Instance;
+    }
 
     public async Task<List<AfipComboSuggestion>> ComputeSuggestionsAsync(Guid companyId, CancellationToken ct = default)
     {
+        var budget = System.Diagnostics.Stopwatch.StartNew();
         var pendingVouchers = await _db.AfipVouchers
             .AsNoTracking()
             .Where(v => v.CompanyId == companyId && !v.IsMatched)
@@ -71,6 +89,19 @@ public class AfipCombinationService
 
         foreach (var tx in pendingTxs)
         {
+            ct.ThrowIfCancellationRequested();
+
+            // P-8: presupuesto agotado → responder lo calculado hasta acá (parcial) en vez de
+            // seguir consumiendo el hilo del request.
+            if (budget.Elapsed > ComputeBudget)
+            {
+                _logger.LogWarning(
+                    "[AFIP] Presupuesto de cómputo de combinaciones agotado ({Budget}s) — Company={CompanyId}, " +
+                    "procesados {Done}/{Total} movimientos. Si esto se repite, backgroundear el cálculo (P-8).",
+                    ComputeBudget.TotalSeconds, companyId, suggestions.Count, pendingTxs.Count);
+                break;
+            }
+
             var candidates = pendingVouchers
                 .Where(v => Math.Abs(tx.Date.DayNumber - v.Date.DayNumber) <= MatchWindowDays)
                 .ToList();

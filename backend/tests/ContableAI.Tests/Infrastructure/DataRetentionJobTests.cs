@@ -23,11 +23,14 @@ public class DataRetentionJobTests
         public bool IsSystemAdmin     => false;
     }
 
-    private static ContableAIDbContext CtxFor(string dbName) =>
-        new(new DbContextOptionsBuilder<ContableAIDbContext>()
-                .UseInMemoryDatabase(dbName)
-                .Options,
-            new NoTenant());
+    private static ContableAIDbContext CtxFor(string dbName)
+    {
+        var ctx = new ContableAIDbContext(new DbContextOptionsBuilder<ContableAIDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .Options);
+        ctx.SetTenant(new NoTenant());
+        return ctx;
+    }
 
     private static DataRetentionJob JobFor(ContableAIDbContext ctx, DataRetentionOptions? options = null) =>
         new(ctx, Microsoft.Extensions.Options.Options.Create(options ?? new DataRetentionOptions()),

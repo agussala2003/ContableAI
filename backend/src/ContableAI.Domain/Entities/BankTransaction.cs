@@ -54,6 +54,14 @@ public class BankTransaction : ITenantEntity
     // Legacy string tenant — se mantiene por compatibilidad con datos existentes
     public string TenantId { get; set; } = "ESTUDIO_DEFAULT";
 
+    /// <summary>
+    /// P-2: estudio propietario, DESNORMALIZADO desde <see cref="Company.StudioTenantId"/>.
+    /// Lo usa el Global Query Filter para aislar por tenant sin joinear a Companies en cada
+    /// query. Se estampa al adoptar la transacción en el upload (junto con CompanyId);
+    /// <c>null</c> = legacy sin empresa, invisible para usuarios con tenant.
+    /// </summary>
+    public string? StudioTenantId { get; set; }
+
     // FK real a Company (reemplaza a TenantId a largo plazo)
     public Guid? CompanyId { get; set; }
     public Company? Company { get; set; }

@@ -24,11 +24,14 @@ public class DeleteStudioTenantHandlerTests
         public bool IsSystemAdmin     => isSystemAdmin;
     }
 
-    private static ContableAIDbContext CtxFor(string dbName, string? tenantId = null) =>
-        new(new DbContextOptionsBuilder<ContableAIDbContext>()
-                .UseInMemoryDatabase(dbName)
-                .Options,
-            new FakeTenant(tenantId));
+    private static ContableAIDbContext CtxFor(string dbName, string? tenantId = null)
+    {
+        var ctx = new ContableAIDbContext(new DbContextOptionsBuilder<ContableAIDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .Options);
+        ctx.SetTenant(new FakeTenant(tenantId));
+        return ctx;
+    }
 
     private static DeleteStudioTenantHandler HandlerFor(ContableAIDbContext ctx) =>
         new(ctx, NullLogger<DeleteStudioTenantHandler>.Instance);
@@ -62,7 +65,7 @@ public class DeleteStudioTenantHandlerTests
         var company = new Company { Name = $"Empresa {emailPrefix}", Cuit = cuit, StudioTenantId = tenantId };
         ctx.Companies.Add(company);
 
-        var tx = new BankTransaction { Description = "PAGO PROVEEDOR", CompanyId = company.Id, TenantId = tenantId };
+        var tx = new BankTransaction { Description = "PAGO PROVEEDOR", CompanyId = company.Id, TenantId = tenantId, StudioTenantId = tenantId };
         ctx.BankTransactions.Add(tx);
 
         var je = new JournalEntry { CompanyId = company.Id, BankTransactionId = tx.Id, Description = "Asiento" };

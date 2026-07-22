@@ -207,27 +207,54 @@ Multi-moneda (ARS/USD) completo. **No hay que rehacer nada de esto.**
   el componente ya era 100% signals (`input`/`output`/`signal`/`computed`), que integran
   nativamente con OnPush sin cambios de comportamiento.
 
-## ⏳ Pendiente (hallazgos del informe original aún no abordados)
+## Ya completado — Rendimiento P-1 a P-9 (2026-07-21)
 
-- [ ] **P-1 · `AddDbContextPool`.** Sigue usándose `AddDbContext` — el pooling real requiere
-  antes sacar la captura de `ICurrentTenantService` del constructor de `ContableAIDbContext`
-  (incompatible con pooling tal como está hoy).
-- [ ] **P-2 · Desnormalizar `StudioTenantId` en `BankTransaction`.** El Global Query Filter
-  sigue anclado vía `JOIN` a `Company` en cada query de transacciones.
-- [ ] **P-3 · Índice `pg_trgm`** para la búsqueda `ILike` sobre `Unaccent(Description)` (hoy
-  sequential scan con wildcard inicial).
-- [ ] **P-4 · Índice de respaldo para el sort por defecto** (`SortOrder`/`Date`) y para los
-  demás campos ordenables de la grilla.
-- [ ] **P-6 · Batchear `CheckManualSuggestionAsync`** en el bulk-update (N round-trips por
-  grupo distinto de descripción/cuenta).
-- [ ] **P-7 · Acotar `ProactiveLearningService`** por tenant/página (hoy trae 2 años de
-  movimientos manuales de **todos** los estudios en cada corrida diaria) y moverlo a un cron de
-  Hangfire en vez de `Task.Delay(24h)`.
-- [ ] **P-8 · Backgroundear `AfipCombinationService`** (backtracking de combinaciones VEP) si en
-  producción empieza a notarse en el tiempo de respuesta del endpoint.
-- [ ] **P-9 · Configurar `WorkerCount`/colas de Hangfire** explícitamente, para que el upload
-  asíncrono (ya acotado por su propio `SemaphoreSlim`) no compita sin límite por workers con
-  otros jobs (cruce AFIP, generación de asientos) en el mismo proceso que la API.
+- [x] **P-1 · Pooling real de DbContext.** `AddPooledDbContextFactory` + registración scoped
+  que toma la instancia del pool y le estampa el tenant con el nuevo
+  `ContableAIDbContext.SetTenant()` (la captura de `ICurrentTenantService` salió del
+  constructor, que era lo incompatible con pooling). `SetTenant` se llama en **cada** lease,
+  por lo que una instancia reciclada nunca conserva el tenant del request anterior — cubierto
+  por test explícito de reuso en
+  [TenantIsolationTests.cs](../backend/tests/ContableAI.Tests/Infrastructure/TenantIsolationTests.cs).
+- [x] **P-2 · `StudioTenantId` desnormalizado en `BankTransaction`.** Columna nueva estampada
+  al adoptar la transacción en el upload; migración `PerfTenantDenormAndIndexes` con backfill
+  set-based desde `Companies` e índice propio. El Global Query Filter ancla ahora por la
+  columna directa — se eliminó el `JOIN` a `Company` que cargaba CADA query de transacciones.
+  Bonus: el cierre de cuenta (P-1 de privacidad) ahora barre también las transacciones
+  huérfanas (`CompanyId` null por FK SetNull) que antes eran inalcanzables.
+- [x] **P-3 · Índice trigram para la búsqueda.** Migración habilita `unaccent` + `pg_trgm`,
+  crea el wrapper IMMUTABLE `f_unaccent()` (requisito de Postgres para indexar por expresión)
+  y el índice `GIN (f_unaccent("Description") gin_trgm_ops)`. El DbFunction `Unaccent` del
+  DbContext pasó a mapear a `f_unaccent` para que la expresión de la query coincida exactamente
+  con la del índice — el `ILIKE '%término%'` con wildcard inicial deja de ser sequential scan.
+- [x] **P-4 · Índices de respaldo para el sort de la grilla.** `(CompanyId, SortOrder, Date)`
+  para el orden por defecto, más `(CompanyId, Amount)` y `(CompanyId, AssignedAccount)` para
+  los sorts por columna. `Date`, `Currency` y `ClassificationSource` ya tenían compuesto propio.
+- [x] **P-6 · `CheckManualSuggestionAsync` batcheado.** El bulk-update resolvía ~3 round-trips
+  por cada grupo distinto de descripción/cuenta; ahora `CheckManualSuggestionsBatchAsync`
+  resuelve N grupos con 3 consultas fijas (reglas + manuales + sugerencias, por lote) y un
+  único `SaveChanges`, con la misma semántica (umbral ≥ 3, reactivación de Rejected, keywords
+  devueltos solo en creación/reactivación). El update individual usa el mismo camino con lote
+  de 1.
+- [x] **P-7 · `ProactiveLearningJob` acotado por empresa.** Ya corría como recurring job de
+  Hangfire (R-5); ahora además procesa EMPRESA POR EMPRESA: primero un `DISTINCT` de empresas
+  con actividad manual en la ventana, luego una pasada por empresa con chequeos batcheados
+  (2 queries por empresa, no 2 por grupo). El pico de memoria queda acotado al volumen de una
+  empresa en vez de los 2 años de movimientos de toda la plataforma. Tests en
+  [ProactiveLearningJobTests.cs](../backend/tests/ContableAI.Tests/Infrastructure/ProactiveLearningJobTests.cs).
+- [x] **P-8 · `AfipCombinationService` evaluado — se mantiene síncrono con presupuesto duro.**
+  El backtracking ya está podado y acotado (≤ 5 VEPs por combo, ≤ 5 alternativas, ventana
+  ±2 días): en datos reales termina en milisegundos y backgroundearlo agregaría job + polling
+  sin necesidad demostrada. Se agregó un presupuesto de cómputo de 2 s por request: si un caso
+  patológico lo agota, el endpoint devuelve las sugerencias parciales y loguea un warning —
+  ese log recurrente es el trigger explícito para backgroundearlo.
+- [x] **P-9 · Workers y colas de Hangfire explícitos.** Dos servers en el mismo proceso:
+  cola `uploads` (2 workers, alineados con el `SemaphoreSlim(2,2)` del OCR — nunca hay un
+  worker bloqueado esperando el gate) y cola `default` (3 workers para asientos, cruce AFIP,
+  retención y aprendizaje). El `HangfireQueueRoutingFilter` enruta el
+  `UploadBankStatementCommand` a `uploads` (todos los jobs comparten el patrón
+  `Enqueue<ISender>`, así que la cola se decide por el tipo del command, también en
+  reintentos). Antes: default de hasta 20 workers sin control compitiendo con la API.
 
 ---
 
