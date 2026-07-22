@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -17,6 +17,7 @@ interface PlanFeature {
   standalone: true,
   imports: [RouterLink, LucideAngularModule],
   templateUrl: './landing-page.html',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LandingPage {
   readonly year = new Date().getFullYear();

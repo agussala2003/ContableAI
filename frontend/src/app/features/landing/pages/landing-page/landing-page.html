@@ -22,6 +22,8 @@
     </nav>
   </header>
 
+  <main>
+
   <!-- ── Hero ────────────────────────────────────────────────────────────── -->
   <section class="relative overflow-hidden">
     <div class="absolute inset-0 -z-10 bg-gradient-to-b from-indigo-50/80 to-transparent dark:from-indigo-950/30"></div>
@@ -183,6 +185,8 @@
     </div>
   </section>
 
+  </main>
+
   <!-- ── Footer ──────────────────────────────────────────────────────────── -->
   <footer class="border-t border-slate-100 dark:border-slate-800">
     <div class="max-w-6xl mx-auto px-5 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -193,7 +197,11 @@
         Contable<span class="text-indigo-600 dark:text-indigo-400">AI</span>
       </div>
       <p class="text-xs text-slate-500 dark:text-slate-500">© {{ year }} ContableAI. Todos los derechos reservados.</p>
-      <a routerLink="/login" class="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline">Ingresá</a>
+      <div class="flex items-center gap-4">
+        <a routerLink="/terminos" class="text-xs text-slate-500 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline">Términos y Condiciones</a>
+        <a routerLink="/privacidad" class="text-xs text-slate-500 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline">Privacidad</a>
+        <a routerLink="/login" class="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline">Ingresá</a>
+      </div>
     </div>
   </footer>
 
