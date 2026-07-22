@@ -4,14 +4,17 @@ using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
+using ContableAI.Infrastructure.Features.Transactions;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using Hangfire;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace ContableAI.API.Endpoints;
 
@@ -24,7 +27,9 @@ public static class TransactionEndpoints
             HttpContext httpCtx,
             [FromForm] string? bankCode,
             [FromForm] string? companyId,
-            ISender sender,
+            ICurrentTenantService  tenant,
+            ContableAIDbContext    dbContext,
+            IBackgroundJobClient   backgroundJobClient,
             [FromForm] bool? withoutDateFilter = null,
             [FromForm] bool? forceReapplyRules = null) =>
         {
@@ -32,25 +37,103 @@ public static class TransactionEndpoints
             if (files is null || files.Count == 0)
                 return Results.BadRequest("No se subió ningún archivo.");
 
-            var fileDataList = new List<FileData>();
+            // Validación rápida y síncrona (tamaño, extensión, magic bytes) — se hace acá, antes de
+            // encolar, para devolver 400 inmediato ante un archivo inválido en vez de que el usuario
+            // tenga que esperar un ciclo de polling para enterarse. El procesamiento pesado (parseo/
+            // OCR/clasificación) se hace en el job de Hangfire (ver UploadBankStatementHandler).
+            var stagedRefs = new List<StagedFileRef>();
             foreach (var f in files)
             {
+                if (f.Length > UploadBankStatementHandler.MaxFileSizeBytes)
+                    return Results.BadRequest($"El archivo '{f.FileName}' supera el máximo permitido de 25 MB.");
+
+                var ext = Path.GetExtension(f.FileName ?? string.Empty);
+                if (!UploadBankStatementHandler.AllowedExtensions.Contains(ext))
+                    return Results.BadRequest($"Formato no soportado para '{f.FileName}'. Solo se permiten CSV, XLSX y PDF.");
+
                 using var ms = new MemoryStream((int)Math.Max(0, f.Length));
                 await f.CopyToAsync(ms);
-                fileDataList.Add(new FileData(ms.ToArray(), f.FileName ?? "", f.Length));
+                var content = ms.ToArray();
+
+                // M-2: validar la firma binaria (magic bytes), no solo la extensión. Los archivos
+                // vacíos se dejan pasar acá y se saltean en el handler (Content.Length == 0).
+                if (content.Length > 0 && !UploadBankStatementHandler.HasValidSignature(ext, content))
+                    return Results.BadRequest($"El archivo '{f.FileName}' no coincide con su extensión (firma binaria inválida).");
+
+                var staged = new StagedUploadFile
+                {
+                    FileName = f.FileName ?? string.Empty,
+                    Content  = content,
+                    Length   = f.Length,
+                };
+                dbContext.StagedUploadFiles.Add(staged);
+                stagedRefs.Add(new StagedFileRef(staged.Id, staged.FileName, staged.Length));
             }
 
+            await dbContext.SaveChangesAsync();
+
             Guid? cId = Guid.TryParse(companyId, out var g) ? g : null;
-            var result = await sender.Send(new UploadBankStatementCommand(fileDataList, cId, bankCode, withoutDateFilter ?? false, forceReapplyRules ?? false));
-            return result.ToHttpResult();
+            var uploadId = Guid.NewGuid();
+            var command = new UploadBankStatementCommand(
+                uploadId, stagedRefs, cId, bankCode,
+                withoutDateFilter ?? false, forceReapplyRules ?? false,
+                tenant.StudioTenantId!);
+
+            backgroundJobClient.Enqueue<ISender>(sender => sender.Send(command, default));
+
+            return Results.Accepted(value: new
+            {
+                UploadId = uploadId,
+                Message  = "Procesando el extracto en segundo plano. Esto puede demorar unos minutos.",
+            });
         })
         .DisableAntiforgery()
         .WithName("UploadBankStatement")
         .WithTags("Transacciones")
-        .WithSummary("Importar y clasificar extractos bancarios (CSV, XLSX, PDF).")
-        .WithDescription("Form-data multipart: files[] (uno o más archivos), bankCode (AUTO | BBVA | GALICIA | ...), companyId (guid). Detecta duplicados en BD y dentro del lote. Auto-detecta banco desde PDF si bankCode = AUTO. Valida cuota mensual del plan.")
-        .Produces(200)
-        .Produces<ProblemDetails>(402);
+        .WithSummary("Importar y clasificar extractos bancarios (CSV, XLSX, PDF) en segundo plano.")
+        .WithDescription("Form-data multipart: files[] (uno o más archivos), bankCode (AUTO | BBVA | GALICIA | ...), companyId (guid). Encola el procesamiento (parseo/OCR/clasificación) como job de Hangfire y responde 202 con un uploadId. El resultado se consulta vía GET /api/transactions/upload/{uploadId}/result.")
+        .Produces(202)
+        .Produces(400);
+
+
+        app.MapGet("/api/transactions/upload/{uploadId:guid}/result", async (
+            Guid uploadId,
+            ICurrentTenantService tenant,
+            ContableAIDbContext   dbContext) =>
+        {
+            var row = await dbContext.UploadJobResults
+                .AsNoTracking()
+                .FirstOrDefaultAsync(r => r.JobId == uploadId.ToString() && r.StudioTenantId == tenant.StudioTenantId);
+
+            // done:false (200, no 404) mientras el job no terminó — evita que el interceptor
+            // global de errores del frontend muestre un toast de "no encontrado" en cada poll.
+            if (row is null)
+                return Results.Ok(new { done = false });
+
+            using var resultDoc = JsonDocument.Parse(row.ResultJson);
+            var root = resultDoc.RootElement;
+
+            object? value = root.TryGetProperty("value", out var v) && v.ValueKind != JsonValueKind.Null
+                ? v.Clone()
+                : null;
+            string? error = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String
+                ? e.GetString()
+                : null;
+
+            return Results.Ok(new
+            {
+                done       = true,
+                isSuccess  = row.IsSuccess,
+                statusCode = row.StatusCode,
+                error,
+                value,
+            });
+        })
+        .WithName("GetUploadResult")
+        .WithTags("Transacciones")
+        .WithSummary("Consultar el resultado de un job de subida de extracto (polling).")
+        .WithDescription("Devuelve { done: false } mientras el job no terminó. Al terminar: { done: true, isSuccess, statusCode, error, value }, donde value tiene la misma forma que la respuesta síncrona de antes.")
+        .Produces(200);
 
 
         app.MapGet("/api/transactions", async (
@@ -159,21 +242,35 @@ public static class TransactionEndpoints
             if (!string.IsNullOrWhiteSpace(search))
                 filterBaseQuery = filterBaseQuery.Where(t => t.Description.Contains(search));
 
-            // ── Consolidación 1: 3 queries → 1 (accounts + months + years) ──
-            // Una sola query proyecta las 3 columnas livianas; los Distinct/Sort se hacen en memoria.
-            var filterMeta = await filterBaseQuery
-                .Select(t => new { t.AssignedAccount, Month = t.Date.Month, Year = t.Date.Year })
+            // C-3: antes una sola query traía TODAS las filas filtradas (AssignedAccount/mes/año de
+            // cada transacción) solo para poblar los dropdowns de filtro — con un estudio grande eso
+            // materializaba la tabla entera en cada carga de la grilla. Ahora son 3 queries de
+            // valores DISTINCT resueltas en Postgres (el índice IX_BankTransactions_CompanyId_Date
+            // cubre el filtro por empresa+fecha); solo el normalizado "Pending"/orden de cuentas se
+            // hace en memoria, y sobre un set chico (cuentas distintas), no sobre todas las filas.
+            var distinctAccounts = await filterBaseQuery
+                .Select(t => t.AssignedAccount)
+                .Distinct()
                 .ToListAsync();
 
-            var normalizedAccounts = filterMeta
-                .Select(x => string.IsNullOrWhiteSpace(x.AssignedAccount) ? "Pending" : x.AssignedAccount.Trim())
+            var normalizedAccounts = distinctAccounts
+                .Select(a => string.IsNullOrWhiteSpace(a) ? "Pending" : a.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(a => a == "Pending" ? 0 : 1)
                 .ThenBy(a => a, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var availableMonths = filterMeta.Select(x => x.Month).Distinct().OrderBy(m => m).ToList();
-            var availableYears  = filterMeta.Select(x => x.Year).Distinct().OrderByDescending(y => y).ToList();
+            var availableMonths = await filterBaseQuery
+                .Select(t => t.Date.Month)
+                .Distinct()
+                .OrderBy(m => m)
+                .ToListAsync();
+
+            var availableYears = await filterBaseQuery
+                .Select(t => t.Date.Year)
+                .Distinct()
+                .OrderByDescending(y => y)
+                .ToListAsync();
 
             pageSize = Math.Clamp(pageSize, 1, 500);
             page     = Math.Max(1, page);
@@ -267,7 +364,9 @@ public static class TransactionEndpoints
             ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger(nameof(TransactionEndpoints));
-            var tx = await dbContext.BankTransactions.FindAsync(id);
+            // FirstOrDefaultAsync aplica el Global Query Filter: una transacción de otro
+            // estudio devuelve null → NotFound. Cierra el IDOR de reasignación cross-tenant.
+            var tx = await dbContext.BankTransactions.FirstOrDefaultAsync(t => t.Id == id);
             if (tx == null) return Results.NotFound();
 
             if (await PeriodEndpoints.IsPeriodClosedAsync(dbContext, currentTenant.StudioTenantId!, tx.Date.Year, tx.Date.Month))
@@ -280,8 +379,10 @@ public static class TransactionEndpoints
             var canonicalAccount = await accountResolver.ResolveAsync(request.AssignedAccount, studioGuid);
             tx.Assign(canonicalAccount, null, false, ClassificationSources.Manual);
             await dbContext.SaveChangesAsync();
-            var newSuggestionKeyword = await CheckManualSuggestionAsync(dbContext, tx.CompanyId, currentTenant.StudioTenantId!, tx.Description, tx.AssignedAccount, logger);
-            return Results.Ok(new { Transaction = tx, NewSuggestionKeyword = newSuggestionKeyword });
+            var newKeywords = await CheckManualSuggestionsBatchAsync(
+                dbContext, currentTenant.StudioTenantId!,
+                [(tx.CompanyId, tx.Description, tx.AssignedAccount)], logger);
+            return Results.Ok(new { Transaction = tx, NewSuggestionKeyword = newKeywords.FirstOrDefault() });
         })
         .WithName("UpdateTransaction")
         .WithTags("Transacciones")
@@ -305,6 +406,8 @@ public static class TransactionEndpoints
             if (string.IsNullOrWhiteSpace(request.AssignedAccount))
                 return Results.BadRequest("La cuenta contable es obligatoria.");
 
+            // El Global Query Filter de tenant se aplica acá: los IDs que pertenezcan a otro
+            // estudio quedan fuera del resultado, por lo que nunca se modifican (fix IDOR bulk).
             var transactions = await dbContext.BankTransactions
                 .Where(t => request.Ids.Contains(t.Id))
                 .ToListAsync();
@@ -379,14 +482,16 @@ public static class TransactionEndpoints
             var newSuggestionKeywords = new List<string>();
             if (appliedRule is null)
             {
-                var groups = transactions
+                // P-6: un solo lote para todos los grupos distintos (antes: ~3 round-trips a
+                // la BD por cada grupo de descripción/cuenta).
+                var reps = transactions
                     .GroupBy(t => new { t.Description, t.AssignedAccount, t.CompanyId, t.TenantId })
-                    .Select(g => g.First());
-                foreach (var rep in groups)
-                {
-                    var kw = await CheckManualSuggestionAsync(dbContext, rep.CompanyId, currentTenant.StudioTenantId!, rep.Description, rep.AssignedAccount, logger);
-                    if (kw is not null) newSuggestionKeywords.Add(kw);
-                }
+                    .Select(g => g.First())
+                    .Select(t => (t.CompanyId, t.Description, t.AssignedAccount))
+                    .ToList();
+
+                newSuggestionKeywords = await CheckManualSuggestionsBatchAsync(
+                    dbContext, currentTenant.StudioTenantId!, reps, logger);
             }
 
             return Results.Ok(new
@@ -409,7 +514,8 @@ public static class TransactionEndpoints
 
         app.MapDelete("/api/transactions", async (
             ICurrentTenantService tenant,
-            ContableAIDbContext dbContext) =>
+            ContableAIDbContext   dbContext,
+            HttpContext           httpContext) =>
         {
             var studioId = tenant.StudioTenantId;
 
@@ -419,16 +525,34 @@ public static class TransactionEndpoints
                 .Select(c => c.Id)
                 .ToListAsync();
 
-            var allTransactions = await dbContext.BankTransactions
+            // P-10: ExecuteDeleteAsync borra directo en SQL sin materializar ni trackear las filas.
+            // Al no pasar por SaveChangesAsync tampoco dispara AuditInterceptor (que audita altas/
+            // bajas de BankTransaction una por una) — para no perder el rastro de "se borró todo" se
+            // agrega abajo UNA fila de auditoría consolidada con la cantidad borrada, en vez de las N
+            // filas individuales que generaba el interceptor (que además serían puro ruido acá).
+            var deletedCount = await dbContext.BankTransactions
                 .Where(t => t.CompanyId.HasValue && studioCompanyIds.Contains(t.CompanyId.Value))
-                .ToListAsync();
+                .ExecuteDeleteAsync();
 
-            if (allTransactions.Count == 0)
+            if (deletedCount == 0)
                 return Results.Ok(new { message = "No había movimientos para limpiar." });
 
-            dbContext.BankTransactions.RemoveRange(allTransactions);
+            var userId = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "system";
+            var userEmail = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "system";
+
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                TenantId   = studioId ?? string.Empty,
+                UserId     = userId,
+                UserEmail  = userEmail,
+                Action     = AuditAction.Deleted.ToString(),
+                EntityName = nameof(BankTransaction),
+                EntityId   = "BULK",
+                Changes    = JsonSerializer.Serialize(new { DeletedCount = deletedCount }),
+            });
             await dbContext.SaveChangesAsync();
-            return Results.Ok(new { message = $"Se eliminaron {allTransactions.Count} movimientos." });
+
+            return Results.Ok(new { message = $"Se eliminaron {deletedCount} movimientos." });
         })
         .WithName("DeleteAllTransactions")
         .WithTags("Transacciones")
@@ -575,87 +699,126 @@ public static class TransactionEndpoints
         .Produces<ProblemDetails>(404);
     }
 
-    private static async Task<string?> CheckManualSuggestionAsync(
+    /// <summary>
+    /// P-6: chequeo de sugerencias de reglas en LOTE. La versión anterior corría por cada grupo
+    /// distinto de descripción/cuenta del bulk-update (~3 round-trips a la BD por grupo: regla
+    /// existente + conteo de manuales + sugerencia existente). Esta versión resuelve N grupos
+    /// con 3 consultas fijas y un único SaveChanges, manteniendo la misma semántica:
+    /// crea (o reactiva una Rejected) cuando hay ≥ 3 asignaciones manuales del mismo keyword
+    /// normalizado a la misma cuenta, y solo devuelve los keywords creados/reactivados.
+    /// </summary>
+    private static async Task<List<string>> CheckManualSuggestionsBatchAsync(
         ContableAIDbContext db,
-        Guid? companyId,
         string tenantId,
-        string description,
-        string? assignedAccount,
+        IReadOnlyCollection<(Guid? CompanyId, string Description, string? AssignedAccount)> representatives,
         ILogger logger,
         CancellationToken ct = default)
     {
-        if (companyId is null || string.IsNullOrWhiteSpace(assignedAccount)) return null;
-
-        var keyword = KeywordNormalizer.Normalize(description);
-
-        logger.LogDebug("Suggestion check: Start — Company={CompanyId}, Keyword={Keyword}, Account={Account}", companyId, keyword, assignedAccount);
-
-        if (string.IsNullOrWhiteSpace(keyword)) return null;
-
-        bool ruleExists = await db.AccountingRules.AnyAsync(
-            r => r.CompanyId == companyId && r.Keyword == keyword, ct);
-
-        if (ruleExists)
-        {
-            logger.LogDebug("Suggestion check: Skip — Keyword={Keyword}, Reason=RuleAlreadyExists", keyword);
-            return null;
-        }
-
-        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-730));
-
-        var descriptions = await db.BankTransactions
-            .Where(t => t.CompanyId == companyId
-                     && t.AssignedAccount == assignedAccount
-                     && t.ClassificationSource == ClassificationSources.Manual
-                     && t.Date >= cutoff)
-            .Select(t => t.Description)
-            .ToListAsync(ct);
-
-        var matchedDescriptions = descriptions
-            .Select(d => new { Original = d, Normalized = KeywordNormalizer.Normalize(d) })
-            .Where(x => x.Normalized == keyword)
+        var candidates = representatives
+            .Where(r => r.CompanyId is not null && !string.IsNullOrWhiteSpace(r.AssignedAccount))
+            .Select(r => (
+                CompanyId: r.CompanyId!.Value,
+                Keyword:   KeywordNormalizer.Normalize(r.Description),
+                Account:   r.AssignedAccount!))
+            .Where(c => !string.IsNullOrWhiteSpace(c.Keyword))
+            .DistinctBy(c => (c.CompanyId, c.Keyword))
             .ToList();
 
-        var count = matchedDescriptions.Count;
+        if (candidates.Count == 0) return [];
 
-        logger.LogDebug("Suggestion check: Count — Keyword={Keyword}, MatchCount={MatchCount}, ThresholdMet={ThresholdMet}", keyword, count, count >= 3);
+        var companyIds = candidates.Select(c => c.CompanyId).Distinct().ToList();
+        var keywords   = candidates.Select(c => c.Keyword).Distinct().ToList();
+        var accounts   = candidates.Select(c => c.Account).Distinct().ToList();
 
-        if (count < 3) return null;
+        // Query 1/3 — reglas ya existentes para cualquiera de los pares (empresa, keyword).
+        var existingRules = (await db.AccountingRules
+                .Where(r => r.CompanyId != null
+                         && companyIds.Contains(r.CompanyId.Value)
+                         && keywords.Contains(r.Keyword))
+                .Select(r => new { r.CompanyId, r.Keyword })
+                .ToListAsync(ct))
+            .Select(x => (x.CompanyId!.Value, x.Keyword))
+            .ToHashSet();
 
-        var existing = await db.RuleSuggestions
-            .FirstOrDefaultAsync(s => s.CompanyId == companyId && s.Keyword == keyword, ct);
+        // Query 2/3 — asignaciones manuales de la ventana para TODAS las empresas/cuentas del
+        // lote de una vez; el conteo por keyword normalizado se resuelve en memoria (la
+        // normalización no es traducible a SQL, igual que antes).
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-730));
+        var manualRows = await db.BankTransactions
+            .Where(t => t.CompanyId != null
+                     && companyIds.Contains(t.CompanyId.Value)
+                     && t.AssignedAccount != null
+                     && accounts.Contains(t.AssignedAccount)
+                     && t.ClassificationSource == ClassificationSources.Manual
+                     && t.Date >= cutoff)
+            .Select(t => new { t.CompanyId, t.AssignedAccount, t.Description })
+            .ToListAsync(ct);
 
-        if (existing != null)
+        var manualCounts = manualRows
+            .GroupBy(r => (CompanyId: r.CompanyId!.Value,
+                           Account:   r.AssignedAccount!,
+                           Keyword:   KeywordNormalizer.Normalize(r.Description)))
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // Query 3/3 — sugerencias ya registradas para esos pares (empresa, keyword).
+        var existingSuggestions = (await db.RuleSuggestions
+                .Where(s => s.CompanyId != null
+                         && companyIds.Contains(s.CompanyId.Value)
+                         && keywords.Contains(s.Keyword))
+                .ToListAsync(ct))
+            .ToDictionary(s => (s.CompanyId!.Value, s.Keyword));
+
+        var newKeywords = new List<string>();
+        var dirty       = false;
+
+        foreach (var c in candidates)
         {
-            if (existing.Status == SuggestionStatus.Rejected)
+            if (existingRules.Contains((c.CompanyId, c.Keyword)))
             {
-                existing.Status           = SuggestionStatus.Pending;
-                existing.SuggestedAccount = assignedAccount;
-                existing.Frequency        = count;
-                await db.SaveChangesAsync(ct);
-                logger.LogDebug("Suggestion check: Reactivated — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", keyword, assignedAccount, count);
-                return keyword;
+                logger.LogDebug("Suggestion check: Skip — Keyword={Keyword}, Reason=RuleAlreadyExists", c.Keyword);
+                continue;
             }
-            else if (existing.Status == SuggestionStatus.Pending && existing.Frequency < count)
+
+            manualCounts.TryGetValue((c.CompanyId, c.Account, c.Keyword), out var count);
+            if (count < 3) continue;
+
+            if (existingSuggestions.TryGetValue((c.CompanyId, c.Keyword), out var existing))
             {
-                existing.Frequency = count;
-                await db.SaveChangesAsync(ct);
-                logger.LogDebug("Suggestion check: Updated — Keyword={Keyword}, NewFrequency={NewFrequency}", keyword, count);
+                if (existing.Status == SuggestionStatus.Rejected)
+                {
+                    existing.Status           = SuggestionStatus.Pending;
+                    existing.SuggestedAccount = c.Account;
+                    existing.Frequency        = count;
+                    newKeywords.Add(c.Keyword);
+                    dirty = true;
+                    logger.LogDebug("Suggestion check: Reactivated — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", c.Keyword, c.Account, count);
+                }
+                else if (existing.Status == SuggestionStatus.Pending && existing.Frequency < count)
+                {
+                    existing.Frequency = count;
+                    dirty = true;
+                    logger.LogDebug("Suggestion check: Updated — Keyword={Keyword}, NewFrequency={NewFrequency}", c.Keyword, count);
+                }
+                continue;
             }
-            return null;
+
+            db.RuleSuggestions.Add(new RuleSuggestion
+            {
+                TenantId         = tenantId,
+                CompanyId        = c.CompanyId,
+                Keyword          = c.Keyword,
+                SuggestedAccount = c.Account,
+                Frequency        = count,
+                Status           = SuggestionStatus.Pending
+            });
+            newKeywords.Add(c.Keyword);
+            dirty = true;
+            logger.LogDebug("Suggestion check: Created — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", c.Keyword, c.Account, count);
         }
 
-        db.RuleSuggestions.Add(new RuleSuggestion
-        {
-            TenantId         = tenantId,
-            CompanyId        = companyId,
-            Keyword          = keyword,
-            SuggestedAccount = assignedAccount,
-            Frequency        = count,
-            Status           = SuggestionStatus.Pending
-        });
-        await db.SaveChangesAsync(ct);
-        logger.LogDebug("Suggestion check: Created — Keyword={Keyword}, Account={Account}, Frequency={Frequency}", keyword, assignedAccount, count);
-        return keyword;
+        if (dirty)
+            await db.SaveChangesAsync(ct);
+
+        return newKeywords;
     }
 }

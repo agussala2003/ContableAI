@@ -1,14 +1,22 @@
+using ContableAI.API.Common;
 using ContableAI.API.Endpoints;
 using ContableAI.API.Extensions;
 using ContableAI.API.Middleware;
+using ContableAI.Infrastructure.BackgroundJobs;
 using ContableAI.Infrastructure.Services;
 using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Events;
 
 // ── Configurar Serilog antes de que el host arranque ──────────────────────────
+// O-2: solo sink de Console (stdout estructurado). En contenedores efímeros (Render)
+// el sink de archivo se perdía en cada redeploy y no se agregaba entre réplicas; la
+// plataforma ya captura stdout. Para agregación centralizada, sumar un sink de red
+// (Seq/Elastic/Datadog) — nunca de archivo local.
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
     .MinimumLevel.Override("System",    LogEventLevel.Warning)
@@ -17,11 +25,6 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.WithMachineName()
     .Enrich.WithThreadId()
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
-    .WriteTo.File(
-        path:            "logs/contableai-.log",
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 14,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
     .CreateBootstrapLogger();
 
 try
@@ -46,17 +49,26 @@ builder.Host.UseSerilog((ctx, services, config) => config
     .Enrich.FromLogContext()
     .Enrich.WithMachineName()
     .Enrich.WithThreadId()
-    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
-    .WriteTo.File(
-        path:            "logs/contableai-.log",
-        rollingInterval: Serilog.RollingInterval.Day,
-        retainedFileCountLimit: 14,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"));
+    // O-2: solo Console (stdout). Ver nota en el bootstrap logger de arriba.
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"));
 
 builder.Services.AddOpenApi();
 builder.Services.AddContableCors(builder.Configuration);
 builder.Services.AddContableInfrastructure(builder.Configuration);
 builder.Services.AddContableAuth(builder.Configuration);
+
+// ── Forwarded Headers (M-1) ───────────────────────────────────────────────────
+// La API corre detrás del reverse proxy de Render, que termina TLS y agrega
+// X-Forwarded-For / X-Forwarded-Proto. Sin esto, Connection.RemoteIpAddress sería
+// la IP del proxy: el rate-limiter anti-fuerza-bruta particionaría a TODOS los
+// clientes en un único bucket y los logs registrarían la IP equivocada.
+// KnownIPNetworks/KnownProxies se limpian porque la IP del proxy de Render es dinámica.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 // ── Global exception handler (RFC 7807) ──────────────────────────────────────
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
@@ -72,6 +84,15 @@ if (app.Environment.IsDevelopment())
         options.Theme = ScalarTheme.DeepSpace;
     }).AllowAnonymous();
 }
+
+// M-1: debe ir PRIMERO en el pipeline para que la IP/esquema reales estén disponibles
+// para el rate-limiter, el request logging de Serilog y el resto de middlewares.
+app.UseForwardedHeaders();
+
+// O-1: Correlation ID lo antes posible (tras conocer la IP/esquema reales) para que el
+// ID esté disponible en el manejo global de excepciones y en el request logging de Serilog.
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 app.UseCors("AllowAngular");
 app.UseExceptionHandler();
 app.UseSerilogRequestLogging(opts =>
@@ -84,20 +105,34 @@ app.UseRateLimiter();
 if (!app.Environment.IsDevelopment())
     app.UseHttpsRedirection();
 
-// ── Health check (para Docker / monitoreo) — sin auth ───────────────────────
-app.MapHealthChecks("/healthz", new HealthCheckOptions
+// ── Health checks (para el proveedor cloud / Docker) — sin auth ─────────────
+// R-2/R-3: dos endpoints con semántica distinta.
+static async Task WriteHealthResponse(HttpContext ctx, HealthReport report)
 {
-    ResponseWriter = async (ctx, report) =>
+    ctx.Response.ContentType = "application/json";
+    var result = System.Text.Json.JsonSerializer.Serialize(new
     {
-        ctx.Response.ContentType = "application/json";
-        var result = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            status  = report.Status.ToString(),
-            checks  = report.Entries.Select(e => new { name = e.Key, status = e.Value.Status.ToString() }),
-            elapsed = report.TotalDuration.TotalMilliseconds,
-        });
-        await ctx.Response.WriteAsync(result);
-    }
+        status  = report.Status.ToString(),
+        checks  = report.Entries.Select(e => new { name = e.Key, status = e.Value.Status.ToString() }),
+        elapsed = report.TotalDuration.TotalMilliseconds,
+    });
+    await ctx.Response.WriteAsync(result);
+}
+
+// Liveness: ¿el proceso está vivo? No corre ningún check con dependencias externas
+// (Predicate = _ => false), así un micro-corte de la base NUNCA reinicia el contenedor.
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate      = _ => false,
+    ResponseWriter = WriteHealthResponse,
+}).AllowAnonymous();
+
+// Readiness: ¿puede servir tráfico útil? Corre solo los checks etiquetados "ready"
+// (PostgreSQL). Si falla, el balanceador deja de rutear a esta instancia.
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate      = check => check.Tags.Contains("ready"),
+    ResponseWriter = WriteHealthResponse,
 }).AllowAnonymous();
 
 app.MapAuthEndpoints();
@@ -113,7 +148,30 @@ app.MapPeriodEndpoints();
 app.MapDashboardEndpoints();
 app.MapJobsEndpoints();
 
-app.UseHangfireDashboard("/hangfire");
+// A-2: dashboard de Hangfire protegido — requiere JWT válido con rol SystemAdmin.
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireDashboardAuthorizationFilter() }
+});
+
+// R-5: registra/actualiza el análisis proactivo como recurring job diario. Idempotente por
+// RecurringJobId, así que reejecutar el arranque en cualquier réplica solo reconcilia la
+// definición; Hangfire garantiza corrida única vía lock distribuido sobre PostgreSQL.
+using (var scope = app.Services.CreateScope())
+{
+    var recurringJobs = scope.ServiceProvider.GetRequiredService<IRecurringJobManager>();
+    recurringJobs.AddOrUpdate<ProactiveLearningJob>(
+        ProactiveLearningJob.RecurringJobId,
+        job => job.AnalyzeTransactionsAsync(CancellationToken.None),
+        Cron.Daily);
+
+    // P-4/P-5: retención de datos — purga diaria de UploadJobResults vencidos, staged files
+    // huérfanos y empresas soft-deleted con ventana de 90 días cumplida (P-2).
+    recurringJobs.AddOrUpdate<DataRetentionJob>(
+        DataRetentionJob.RecurringJobId,
+        job => job.RunAsync(CancellationToken.None),
+        Cron.Daily);
+}
 
 app.MapGet("/api/banks", (BankParserFactory factory) =>
     Results.Ok(factory.AvailableBanks.Select(b => new { code = b.Code, displayName = b.DisplayName })))

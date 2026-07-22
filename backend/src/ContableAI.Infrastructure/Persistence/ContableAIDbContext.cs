@@ -1,5 +1,6 @@
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
+using ContableAI.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 
@@ -7,7 +8,34 @@ namespace ContableAI.Infrastructure.Persistence;
 
 public class ContableAIDbContext : DbContext
 {
-    public ContableAIDbContext(DbContextOptions<ContableAIDbContext> options) : base(options) { }
+    // ── Aislamiento multi-tenant (Global Query Filters) ──────────────────────────
+    // P-1: el contexto es POOLED — el constructor solo puede recibir las options (una
+    // instancia se reutiliza entre requests), así que el tenant ya no se captura en el
+    // ctor sino que se inyecta post-lease vía SetTenant() (registración scoped en
+    // ServiceExtensions). El filtro referencia estos campos y EF los re-evalúa en cada
+    // query, por lo que el modelo cacheado sirve a todas las instancias con su propio tenant.
+    private string? _currentTenantId;
+
+    // El filtro se DESACTIVA cuando no hay tenant (seed, background jobs, login) o
+    // cuando el usuario es SystemAdmin (operador de plataforma, acceso cross-tenant).
+    // Default true = sin tenant: cubre el uso directo (tests, design-time, jobs) donde
+    // nadie llama a SetTenant.
+    private bool _tenantFilterDisabled = true;
+
+    public ContableAIDbContext(DbContextOptions<ContableAIDbContext> options) : base(options)
+    {
+    }
+
+    /// <summary>
+    /// Estampa el tenant del usuario autenticado en esta instancia (pooling-safe: se llama en
+    /// CADA lease del pool, por lo que siempre pisa el estado del request anterior — nunca hay
+    /// tenant residual). <c>null</c> o SystemAdmin desactivan el filtro.
+    /// </summary>
+    public void SetTenant(ICurrentTenantService? tenant)
+    {
+        _currentTenantId      = tenant?.StudioTenantId;
+        _tenantFilterDisabled = _currentTenantId is null || (tenant?.IsSystemAdmin ?? false);
+    }
 
     /// <summary>Mapeado a la función unaccent() de PostgreSQL (extensión unaccent).</summary>
     public static string Unaccent(string text) => throw new InvalidOperationException("Solo se puede usar en consultas LINQ-to-SQL.");
@@ -23,6 +51,9 @@ public class ContableAIDbContext : DbContext
     public DbSet<ClosedPeriod>     ClosedPeriods     { get; set; }
     public DbSet<RuleSuggestion>   RuleSuggestions   { get; set; }
     public DbSet<AfipVoucher>      AfipVouchers      { get; set; }
+    public DbSet<RefreshToken>     RefreshTokens     { get; set; }
+    public DbSet<StagedUploadFile> StagedUploadFiles { get; set; }
+    public DbSet<UploadJobResult>  UploadJobResults  { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -50,6 +81,29 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<BankTransaction>()
             .HasIndex(b => new { b.CompanyId, b.Currency })
             .HasDatabaseName("IX_BankTransactions_CompanyId_Currency");
+
+        // P-2: columna desnormalizada del estudio — la usa el Global Query Filter para no
+        // joinear a Companies en CADA query de transacciones. Se estampa al adoptar la
+        // transacción en el upload; el backfill de datos históricos vive en la migración
+        // DenormalizeStudioTenantIdOnBankTransactions.
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => b.StudioTenantId)
+            .HasDatabaseName("IX_BankTransactions_StudioTenantId");
+
+        // P-4: índices de respaldo para los ordenamientos de la grilla. El sort por defecto
+        // es (SortOrder, Date); el resto de los campos ordenables llevan índice compuesto con
+        // CompanyId (la grilla siempre acota por empresa/estudio antes de ordenar).
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.CompanyId, b.SortOrder, b.Date })
+            .HasDatabaseName("IX_BankTransactions_CompanyId_SortOrder_Date");
+
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.CompanyId, b.Amount })
+            .HasDatabaseName("IX_BankTransactions_CompanyId_Amount");
+
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.CompanyId, b.AssignedAccount })
+            .HasDatabaseName("IX_BankTransactions_CompanyId_AssignedAccount");
 
         // Índice en TenantId (legacy) y en CompanyId (FK real)
         modelBuilder.Entity<BankTransaction>()
@@ -96,8 +150,10 @@ public class ContableAIDbContext : DbContext
         modelBuilder.Entity<Company>()
             .HasIndex(c => c.StudioTenantId);
 
+        // M-3: unicidad de CUIT POR ESTUDIO (no global): dos estudios pueden gestionar el
+        // mismo contribuyente. El índice compuesto respalda a nivel de BD el chequeo del handler.
         modelBuilder.Entity<Company>()
-            .HasIndex(c => c.Cuit)
+            .HasIndex(c => new { c.StudioTenantId, c.Cuit })
             .IsUnique();
 
         // ==========================================
@@ -191,10 +247,39 @@ public class ContableAIDbContext : DbContext
             .HasForeignKey(v => v.CompanyId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // Función unaccent de PostgreSQL para búsqueda sin distinción de tildes
+        // ==========================================
+        // RefreshToken (A-3)
+        // ==========================================
+        modelBuilder.Entity<RefreshToken>()
+            .HasIndex(t => t.TokenHash)
+            .IsUnique();
+
+        modelBuilder.Entity<RefreshToken>()
+            .HasIndex(t => t.UserId);
+
+        // ==========================================
+        // StagedUploadFile / UploadJobResult
+        // Tablas internas de soporte al pipeline asíncrono de subida de extractos (Hangfire).
+        // Sin Global Query Filter: no son datos de negocio, se acceden siempre por Id/JobId
+        // explícito desde el propio handler/endpoint, nunca listadas por tenant.
+        // ==========================================
+        modelBuilder.Entity<UploadJobResult>()
+            .HasKey(r => r.JobId);
+
+        modelBuilder.Entity<UploadJobResult>()
+            .Property(r => r.ResultJson)
+            .HasColumnType("jsonb");
+
+        modelBuilder.Entity<UploadJobResult>()
+            .HasIndex(r => r.StudioTenantId);
+
+        // Búsqueda sin distinción de tildes — P-3: mapea a f_unaccent(), el wrapper IMMUTABLE
+        // de unaccent() creado en la migración AddTrigramSearchIndex. Tiene que ser la MISMA
+        // expresión que la del índice trigram (GIN sobre f_unaccent("Description")): si la
+        // query usara unaccent() y el índice f_unaccent(), el planner no lo aprovecharía.
         modelBuilder.HasDbFunction(
             typeof(ContableAIDbContext).GetMethod(nameof(Unaccent), BindingFlags.Public | BindingFlags.Static, [typeof(string)])!,
-            b => b.HasName("unaccent"));
+            b => b.HasName("f_unaccent"));
 
         // ==========================================
         // Optimistic Concurrency via xmin (PostgreSQL nativo)
@@ -213,5 +298,29 @@ public class ContableAIDbContext : DbContext
             .HasColumnType("xid")
             .ValueGeneratedOnAddOrUpdate()
             .IsConcurrencyToken();
+
+        // ==========================================
+        // Global Query Filters — Aislamiento multi-tenant (fix IDOR/BOLA C-1)
+        // ==========================================
+        // Por defecto, TODA consulta LINQ sobre estas entidades queda acotada al estudio
+        // (StudioTenantId) del usuario autenticado, cerrando la clase entera de accesos
+        // cross-tenant por ID. El filtro se desactiva (_tenantFilterDisabled) cuando no hay
+        // tenant (seed / background jobs / login) o el usuario es SystemAdmin.
+        //
+        // Contextos que necesitan saltear el filtro deliberadamente usan .IgnoreQueryFilters():
+        //   · chequeo de unicidad GLOBAL de CUIT (coherente con el índice único de BD)
+        //   · lecturas de deduplicación del UploadBankStatementHandler (ya auto-scoped por CompanyId)
+
+        // Company: ancla directa por StudioTenantId (string).
+        modelBuilder.Entity<Company>()
+            .HasQueryFilter(c => _tenantFilterDisabled || c.StudioTenantId == _currentTenantId);
+
+        // BankTransaction — P-2: el filtro ancla por la columna DESNORMALIZADA StudioTenantId
+        // (antes joineaba a Companies vía la navegación en cada query de transacciones). Las
+        // transacciones sin estudio estampado (legacy sin backfill posible, bucket
+        // ESTUDIO_DEFAULT) quedan ocultas a los usuarios con tenant, igual que antes quedaban
+        // las de CompanyId null.
+        modelBuilder.Entity<BankTransaction>()
+            .HasQueryFilter(b => _tenantFilterDisabled || b.StudioTenantId == _currentTenantId);
     }
 }

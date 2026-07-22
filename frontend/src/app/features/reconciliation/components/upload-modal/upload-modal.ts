@@ -3,11 +3,12 @@ import { UploadZone } from '../upload-zone/upload-zone';
 import { AfipZone } from '../afip-zone/afip-zone';
 import { LucideAngularModule } from 'lucide-angular';
 import { SkippedDuplicate } from '../../../../core/services/transaction';
+import { ModalA11yDirective } from '../../../../shared/directives/modal-a11y.directive';
 
 @Component({
   selector: 'app-upload-modal',
   standalone: true,
-  imports: [UploadZone, AfipZone, LucideAngularModule],
+  imports: [UploadZone, AfipZone, LucideAngularModule, ModalA11yDirective],
   templateUrl: './upload-modal.html',
 })
 export class UploadModal {

@@ -136,6 +136,7 @@
     <div class="flex items-center gap-2">
       <div class="relative">
         <select [ngModel]="companyService.activeCompany()?.id ?? ''" (ngModelChange)="onCompanySelectChange($event)"
+          aria-label="Empresa activa"
           class="appearance-none pl-3 pr-8 py-1.5 rounded-lg text-sm font-medium
                  text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/50
                  border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800
@@ -150,21 +151,21 @@
 
       <button (click)="showCompanyModal.set(true)"
         class="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition-colors"
-        title="Gestionar empresas">
-        <lucide-icon name="building-2" class="w-4 h-4"></lucide-icon>
+        title="Gestionar empresas" aria-label="Gestionar empresas">
+        <lucide-icon name="building-2" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
     </div>
 
     <div class="flex items-center gap-1.5">
       <button (click)="keyboardService.toggleShortcutsModal()" class="p-1.5 rounded-lg transition-colors text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-        title="Atajos de teclado (?)">
-        <lucide-icon name="keyboard" class="w-4 h-4"></lucide-icon>
+        title="Atajos de teclado (?)" aria-label="Ver atajos de teclado">
+        <lucide-icon name="keyboard" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
 
       <button (click)="howItWorksOpen.set(!howItWorksOpen())" class="p-1.5 rounded-lg transition-colors"
         [class]="howItWorksOpen() ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-500/10 dark:text-indigo-400' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
-        title="Cómo funciona">
-        <lucide-icon name="info" class="w-4 h-4"></lucide-icon>
+        title="Cómo funciona" aria-label="Cómo funciona" [attr.aria-expanded]="howItWorksOpen()">
+        <lucide-icon name="info" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
 
       @if (svc.pendingAfipCount() > 0) {
@@ -194,8 +195,8 @@
 
       <button (click)="svc.clearAll()"
         class="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-        title="Limpiar todo">
-        <lucide-icon name="trash-2" class="w-4 h-4"></lucide-icon>
+        title="Limpiar todo" aria-label="Borrar todos los movimientos">
+        <lucide-icon name="trash-2" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
 
       <div class="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
@@ -332,12 +333,14 @@
       <lucide-icon name="search"
         class="absolute left-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none"></lucide-icon>
       <input type="text" [ngModel]="svc.filters().search" (ngModelChange)="onSearchChange($event)"
-        (keyup.enter)="svc.applyFilters()" placeholder="Buscar descripción…" class="w-full pl-8 pr-8 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
+        (keyup.enter)="svc.applyFilters()" placeholder="Buscar descripción…"
+        aria-label="Buscar movimientos por descripción" class="w-full pl-8 pr-8 py-1.5 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
                     text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500
                     focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors" />
       <button
         (click)="svc.setFilter({ strictSearch: !svc.filters().strictSearch }); svc.applyFilters()"
         [title]="svc.filters().strictSearch ? 'Búsqueda exacta (con tildes y mayúsculas) — click para desactivar' : 'Búsqueda flexible (sin tildes ni mayúsculas) — click para activar búsqueda exacta'"
+        aria-label="Alternar búsqueda exacta" [attr.aria-pressed]="svc.filters().strictSearch"
         class="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded transition-colors"
         [class]="svc.filters().strictSearch
           ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/20'
@@ -358,21 +361,21 @@
       <div class="w-px h-4 bg-slate-200 dark:bg-slate-700"></div>
 
       @if (svc.filters().amountMode === 'exact') {
-        <input type="number" placeholder="$ Monto…"
+        <input type="number" placeholder="$ Monto…" aria-label="Filtrar por monto exacto"
           [ngModel]="svc.filters().exactAmount"
           (ngModelChange)="svc.setFilter({ exactAmount: $event || null })"
           (keyup.enter)="svc.applyFilters()"
           (blur)="svc.applyFilters()"
           class="w-20 h-6 px-1.5 text-xs text-right bg-transparent text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none" />
       } @else {
-        <input type="number" placeholder="Min"
+        <input type="number" placeholder="Min" aria-label="Monto mínimo"
           [ngModel]="svc.filters().minAmount"
           (ngModelChange)="svc.setFilter({ minAmount: $event || null })"
           (keyup.enter)="svc.applyFilters()"
           (blur)="svc.applyFilters()"
           class="w-16 h-6 px-1.5 text-xs text-right bg-transparent text-slate-700 dark:text-slate-200 placeholder-slate-400 focus:outline-none" />
         <span class="text-slate-300 dark:text-slate-600">-</span>
-        <input type="number" placeholder="Max"
+        <input type="number" placeholder="Max" aria-label="Monto máximo"
           [ngModel]="svc.filters().maxAmount"
           (ngModelChange)="svc.setFilter({ maxAmount: $event || null })"
           (keyup.enter)="svc.applyFilters()"
@@ -383,6 +386,7 @@
 
     <select [ngModel]="svc.filters().direction ?? ''"
       (ngModelChange)="svc.setFilter({ direction: $event === '' ? null : $event }); svc.applyFilters()"
+      aria-label="Filtrar por Debe o Haber"
       class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
              text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
       <option value="">Debe y Haber</option>
@@ -401,7 +405,8 @@
     </select>
 
     <select [ngModel]="svc.filters().account" (ngModelChange)="svc.setFilter({ account: $event }); svc.applyFilters()"
-      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 
+      aria-label="Filtrar por cuenta contable"
+      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
              text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
       <option value="">Todas las cuentas</option>
       @for (acc of svc.availableAccounts(); track acc) {
@@ -411,7 +416,8 @@
 
     <select [ngModel]="svc.filters().month ?? ''"
       (ngModelChange)="svc.setFilter({ month: $event === '' ? null : +$event }); svc.applyFilters()"
-      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 
+      aria-label="Filtrar por mes"
+      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
              text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
       <option value="">Mes</option>
       @for (m of months; track m.value) {
@@ -423,7 +429,8 @@
 
     <select [ngModel]="svc.filters().year ?? ''"
       (ngModelChange)="svc.setFilter({ year: $event === '' ? null : +$event }); svc.applyFilters()"
-      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 
+      aria-label="Filtrar por año"
+      class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
              text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
       <option value="">Año</option>
             @for (y of svc.availableYears(); track y) { <option [value]="y">{{ y }}</option> }
@@ -483,13 +490,16 @@
     </div>
     <div class="flex items-center gap-1">
       <button (click)="svc.changePage(svc.pagination().page - 1)" [disabled]="svc.pagination().page === 1"
+        aria-label="Página anterior"
         class="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors">
-        <lucide-icon name="chevron-left" class="w-4 h-4"></lucide-icon>
+        <lucide-icon name="chevron-left" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
 
       @if (svc.pagination().totalPages > 1) {
         @for (p of svc.getPagesArray(); track p) {
         <button (click)="svc.changePage(p)" class="min-w-[28px] h-[28px] rounded-md text-xs font-medium transition-colors"
+          [attr.aria-label]="'Ir a la página ' + p"
+          [attr.aria-current]="p === svc.pagination().page ? 'page' : null"
           [class]="p === svc.pagination().page ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'">
           {{ p }}
         </button>
@@ -498,8 +508,9 @@
 
       <button (click)="svc.changePage(svc.pagination().page + 1)"
         [disabled]="svc.pagination().page === svc.pagination().totalPages"
+        aria-label="Página siguiente"
         class="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 transition-colors">
-        <lucide-icon name="chevron-right" class="w-4 h-4"></lucide-icon>
+        <lucide-icon name="chevron-right" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
     </div>
   </div>
@@ -532,12 +543,14 @@
 }
 
 @if (showQuickRuleModal()) {
-<div class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" (click)="closeQuickRuleModal()">
+<div class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+  role="dialog" aria-modal="true" aria-labelledby="quick-rule-modal-title"
+  appModalA11y (closeRequested)="closeQuickRuleModal()" (click)="closeQuickRuleModal()">
   <div class="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl p-5" (click)="$event.stopPropagation()">
     <div class="flex items-center justify-between mb-4">
-      <h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Nueva regla</h3>
-      <button (click)="closeQuickRuleModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-        <lucide-icon name="x" class="w-4 h-4"></lucide-icon>
+      <h3 id="quick-rule-modal-title" class="text-sm font-semibold text-slate-900 dark:text-slate-100">Nueva regla</h3>
+      <button (click)="closeQuickRuleModal()" aria-label="Cerrar" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+        <lucide-icon name="x" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
     </div>
 
@@ -550,17 +563,17 @@
       </div>
 
       <div>
-        <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Keyword *</label>
+        <label for="quick-rule-keyword" class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Keyword *</label>
         <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">Ejemplo: TRANSFERENCIA, MERCADOPAGO, HONORARIOS</p>
-        <input [ngModel]="quickRuleKeyword()" (ngModelChange)="quickRuleKeyword.set($event)" type="text"
+        <input id="quick-rule-keyword" [ngModel]="quickRuleKeyword()" (ngModelChange)="quickRuleKeyword.set($event)" type="text"
           placeholder="Texto que aparece en la descripcion"
           class="w-full h-9 px-3 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors" />
       </div>
 
       <div>
-        <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Cuenta contable *</label>
+        <label for="quick-rule-account" class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Cuenta contable *</label>
         <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">Elegi una cuenta existente. Las cuentas nuevas se crean desde la tabla de movimientos.</p>
-        <input type="text" list="quick-rule-accounts" [ngModel]="quickRuleTargetAccount()" (ngModelChange)="quickRuleTargetAccount.set($event)"
+        <input id="quick-rule-account" type="text" list="quick-rule-accounts" [ngModel]="quickRuleTargetAccount()" (ngModelChange)="quickRuleTargetAccount.set($event)"
           placeholder="Seleccionar cuenta…"
           class="w-full h-9 px-3 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer" />
         <datalist id="quick-rule-accounts">
@@ -572,9 +585,9 @@
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Dirección</label>
+          <label for="quick-rule-direction" class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Dirección</label>
           <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">Debito para egresos, Credito para ingresos, o Ambas.</p>
-          <select [ngModel]="quickRuleDirection() ?? ''" (ngModelChange)="quickRuleDirection.set($event || null)"
+          <select id="quick-rule-direction" [ngModel]="quickRuleDirection() ?? ''" (ngModelChange)="quickRuleDirection.set($event || null)"
             class="w-full h-9 px-3 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
             <option value="">Ambas</option>
             <option value="DEBIT">Débito</option>
@@ -583,9 +596,9 @@
         </div>
 
         <div>
-          <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Prioridad</label>
+          <label for="quick-rule-priority" class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Prioridad</label>
           <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-1.5">Menor numero = mayor prioridad. Ejemplo: 10 gana sobre 100.</p>
-          <input [ngModel]="quickRulePriority()" (ngModelChange)="quickRulePriority.set(+$event || 100)" type="number" min="1" max="999"
+          <input id="quick-rule-priority" [ngModel]="quickRulePriority()" (ngModelChange)="quickRulePriority.set(+$event || 100)" type="number" min="1" max="999"
             class="w-full h-9 px-3 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors" />
         </div>
 
@@ -619,17 +632,19 @@
 }
 
 @if (showBulkRuleModal()) {
-<div class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" (click)="closeBulkRuleModal()">
+<div class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+  role="dialog" aria-modal="true" aria-labelledby="bulk-rule-modal-title"
+  appModalA11y (closeRequested)="closeBulkRuleModal()" (click)="closeBulkRuleModal()">
   <div class="w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl p-5" (click)="$event.stopPropagation()">
     <div class="flex items-center justify-between mb-4">
       <div>
-        <h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Aplicar regla existente</h3>
+        <h3 id="bulk-rule-modal-title" class="text-sm font-semibold text-slate-900 dark:text-slate-100">Aplicar regla existente</h3>
         <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
           {{ bulkRuleIds().length }} movimiento{{ bulkRuleIds().length !== 1 ? 's' : '' }} seleccionado{{ bulkRuleIds().length !== 1 ? 's' : '' }}
         </p>
       </div>
-      <button (click)="closeBulkRuleModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-        <lucide-icon name="x" class="w-4 h-4"></lucide-icon>
+      <button (click)="closeBulkRuleModal()" aria-label="Cerrar" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+        <lucide-icon name="x" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
     </div>
 
@@ -639,6 +654,7 @@
         <input
           [ngModel]="bulkRuleSearch()"
           (ngModelChange)="bulkRuleSearch.set($event)"
+          aria-label="Buscar regla por keyword o cuenta"
           placeholder="Buscar por keyword o cuenta…"
           class="w-full h-9 pl-8 pr-3 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
         />

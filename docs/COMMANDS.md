@@ -139,7 +139,8 @@ Al iniciar, la API aplica las migraciones pendientes y ejecuta el seed automáti
 URLs disponibles:
 - API: `http://localhost:5284`
 - Documentación (Scalar): `http://localhost:5284/scalar/v1`
-- Health check: `http://localhost:5284/healthz`
+- Health check (liveness): `http://localhost:5284/health/live`
+- Health check (readiness, incluye PostgreSQL): `http://localhost:5284/health/ready`
 - Hangfire: `http://localhost:5284/hangfire`
 
 ### Frontend Angular
@@ -440,7 +441,8 @@ El archivo `frontend/vercel.json` redirige todas las rutas a `index.html` para e
 
 ```bash
 # Health check de la API
-curl https://contableai-api.onrender.com/healthz
+curl https://contableai-api.onrender.com/health/live    # liveness (proceso vivo)
+curl https://contableai-api.onrender.com/health/ready   # readiness (PostgreSQL alcanzable)
 
 # Respuesta esperada
 {"status":"Healthy"}
@@ -524,7 +526,7 @@ git push origin main
 - [ ] Build frontend OK: `cd frontend && npx ng build --configuration production`
 - [ ] Si hay migraciones nuevas: revisar el SQL generado (`--idempotent`)
 - [ ] `git push origin main` → Render y Vercel deployarán solos
-- [ ] Verificar `/healthz` después del deploy
+- [ ] Verificar `/health/ready` después del deploy (debe dar 200 con PostgreSQL alcanzable)
 - [ ] Revisar logs en Render si algo falla
 
 ### Configurar Render por primera vez (env vars)
@@ -536,4 +538,5 @@ git push origin main
 - [ ] `Jwt__Audience` = `ContableAI`
 - [ ] `Smtp__Password` = *(API key de Resend — ver .env local)*
 - [ ] `Frontend__BaseUrl` = `https://contable-ai-sandy.vercel.app`
-- [ ] Hacer un redeploy manual y verificar `/healthz`
+- [ ] En Render → Settings → Health Check Path: fijar `/health/ready` (antes `/healthz`)
+- [ ] Hacer un redeploy manual y verificar `/health/live` y `/health/ready`

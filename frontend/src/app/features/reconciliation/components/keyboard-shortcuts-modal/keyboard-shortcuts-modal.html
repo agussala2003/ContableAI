@@ -1,15 +1,18 @@
-<div class="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 sm:p-0">
-  <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-200 dark:border-slate-800 animate-slide-up">
+<div class="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 sm:p-0"
+     role="dialog" aria-modal="true" aria-labelledby="shortcuts-modal-title"
+     appModalA11y (closeRequested)="onClose()" (click)="onClose()">
+  <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-200 dark:border-slate-800 animate-slide-up"
+       (click)="$event.stopPropagation()">
 
     <div class="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
       <div class="flex items-center gap-2">
         <div class="p-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg">
           <lucide-icon name="keyboard" class="w-4 h-4"></lucide-icon>
         </div>
-        <h3 class="font-semibold text-slate-800 dark:text-slate-200">Atajos de teclado</h3>
+        <h3 id="shortcuts-modal-title" class="font-semibold text-slate-800 dark:text-slate-200">Atajos de teclado</h3>
       </div>
-      <button (click)="onClose()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md">
-        <lucide-icon name="x" class="w-4 h-4"></lucide-icon>
+      <button (click)="onClose()" aria-label="Cerrar atajos de teclado" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md">
+        <lucide-icon name="x" class="w-4 h-4" aria-hidden="true"></lucide-icon>
       </button>
     </div>
 

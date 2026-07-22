@@ -7,6 +7,7 @@ import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.service';
 import { ConfigService } from '../../../../core/config/config.service';
+import { AuthService } from '../../../../core/services/auth.service';
 import { CompanyModal } from '../../../reconciliation/components/company-modal/company-modal';
 import { TransactionSkeleton } from '../../../../shared/components/transaction-skeleton';
 import { LucideAngularModule } from 'lucide-angular';
@@ -35,7 +36,13 @@ export class JournalPage {
   private configService  = inject(ConfigService);
   private toast          = inject(ToastService);
   private confirmDialog  = inject(ConfirmDialogService);
+  private auth           = inject(AuthService);
   private readonly destroyRef = inject(DestroyRef);
+
+  /** M-4: revertir asientos (individual o masivo) es una acción del titular del estudio. */
+  get isStudioOwner(): boolean {
+    return this.auth.isStudioOwnerOrAdmin();
+  }
 
   // ── UI state ────────────────────────────────────────────────
   showCompanyModal = signal(false);

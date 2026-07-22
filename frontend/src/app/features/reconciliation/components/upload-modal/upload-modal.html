@@ -5,6 +5,8 @@
   role="dialog"
   aria-modal="true"
   aria-labelledby="upload-modal-title"
+  appModalA11y
+  (closeRequested)="close.emit()"
   (click)="close.emit()"
 >
   <div

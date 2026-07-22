@@ -6,17 +6,13 @@ namespace ContableAI.Tests.Infrastructure;
 
 public class CredicoopParseRegressionTests
 {
-    private const string CredicoopFolder = @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos\CREDICOOP";
+    private static readonly string CredicoopFolder = TestData.PathTo("extractos", "CREDICOOP");
 
-    [Fact]
+    [SkippableFact]
     public void Parse_Credicoop_ShouldReturnTransactions_ForAllSamplePdfs()
     {
-        if (!Directory.Exists(CredicoopFolder)) return;
-
+        var pdfs = TestData.RequirePdfs(CredicoopFolder);
         var parser = new PdfBankParser();
-        var pdfs = Directory.EnumerateFiles(CredicoopFolder, "*.pdf", SearchOption.TopDirectoryOnly).OrderBy(p => p).ToList();
-
-        pdfs.Should().NotBeEmpty();
 
         foreach (var pdfPath in pdfs)
         {
@@ -32,13 +28,11 @@ public class CredicoopParseRegressionTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void Parse_Credicoop_ShouldNotLeakFooterBoilerplateIntoDescriptions()
     {
-        if (!Directory.Exists(CredicoopFolder)) return;
-
+        var pdfs = TestData.RequirePdfs(CredicoopFolder);
         var parser = new PdfBankParser();
-        var pdfs = Directory.EnumerateFiles(CredicoopFolder, "*.pdf", SearchOption.TopDirectoryOnly).OrderBy(p => p).ToList();
 
         foreach (var pdfPath in pdfs)
         {
@@ -54,13 +48,11 @@ public class CredicoopParseRegressionTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void Parse_Credicoop_ShouldExtractLeadingOperationNumberAsExternalId()
     {
-        if (!Directory.Exists(CredicoopFolder)) return;
-
+        var pdfs = TestData.RequirePdfs(CredicoopFolder);
         var parser = new PdfBankParser();
-        var pdfs = Directory.EnumerateFiles(CredicoopFolder, "*.pdf", SearchOption.TopDirectoryOnly).OrderBy(p => p).ToList();
 
         var matchedTransactions = new List<string>();
 

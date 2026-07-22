@@ -1,7 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
+import { SKIP_LOADING } from '../interceptors/loading.interceptor';
 
 export type Currency = 'ARS' | 'USD';
 
@@ -89,6 +90,25 @@ export interface UploadResponse {
   parseErrors?: string[];
 }
 
+/** Respuesta del endpoint de subida: el archivo se procesa en un job de Hangfire en segundo plano. */
+export interface EnqueueUploadResponse {
+  uploadId: string;
+  message: string;
+}
+
+/**
+ * Resultado polleado de un job de subida (GET /transactions/upload/{uploadId}/result).
+ * `done` es false mientras el job no terminó — nunca 404, para no disparar el interceptor
+ * global de errores en cada ciclo de polling.
+ */
+export interface UploadJobResultEnvelope {
+  done: boolean;
+  isSuccess?: boolean;
+  statusCode?: number;
+  error?: string | null;
+  value?: UploadResponse | null;
+}
+
 export interface UpdateTransactionResponse {
   transaction: BankTransaction;
   newSuggestionKeyword: string | null;
@@ -122,14 +142,23 @@ export class Transaction {
     return this.configService.config().apiUrl;
   }
 
-  uploadFiles(files: File[], bankCode: string, companyId?: string, withoutDateFilter = false, forceReapplyRules = false): Observable<UploadResponse> {
+  /** Encola el procesamiento del extracto (parseo/OCR/clasificación) como job de Hangfire; el
+   * resultado se consulta con `getUploadResult` (polling). */
+  uploadFiles(files: File[], bankCode: string, companyId?: string, withoutDateFilter = false, forceReapplyRules = false): Observable<EnqueueUploadResponse> {
     const formData = new FormData();
     for (const file of files) formData.append('files', file, file.name);
     if (bankCode) formData.append('bankCode', bankCode);
     if (companyId) formData.append('companyId', companyId);
     formData.append('withoutDateFilter', withoutDateFilter ? 'true' : 'false');
     formData.append('forceReapplyRules', forceReapplyRules ? 'true' : 'false');
-    return this.http.post<UploadResponse>(`${this.apiUrl}/upload`, formData);
+    return this.http.post<EnqueueUploadResponse>(`${this.apiUrl}/upload`, formData);
+  }
+
+  // Polling cada 2s: SKIP_LOADING evita que cada ciclo dispare el overlay global bloqueante.
+  getUploadResult(uploadId: string): Observable<UploadJobResultEnvelope> {
+    return this.http.get<UploadJobResultEnvelope>(`${this.apiUrl}/upload/${uploadId}/result`, {
+      context: new HttpContext().set(SKIP_LOADING, true),
+    });
   }
 
   getTransactions(params: TransactionQueryParams = {}): Observable<PagedResult<BankTransaction>> {

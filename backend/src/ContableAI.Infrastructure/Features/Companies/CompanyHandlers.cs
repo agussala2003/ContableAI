@@ -40,9 +40,11 @@ public sealed class GetCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(GetCompanyQuery q, CancellationToken ct)
     {
+        // P-2: las empresas dadas de baja (IsActive = false) no se devuelven por ID — para el
+        // consumidor de la API una empresa borrada no existe (mismo 404 que una inexistente).
         var company = await _db.Companies
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == q.Id, ct);
+            .FirstOrDefaultAsync(c => c.Id == q.Id && c.IsActive, ct);
 
         return company is null
             ? Result<CompanyResponse>.NotFound("Company not found.")
@@ -59,10 +61,16 @@ public sealed class GetCompanyRulesHandler
 
     public async Task<Result<List<RuleResponse>>> Handle(GetCompanyRulesQuery q, CancellationToken ct)
     {
+        // Global Query Filter: empresa de otro estudio → null → NotFound. Sin esta guarda,
+        // la query de reglas de abajo (AccountingRule no lleva filtro global) filtraría por
+        // r.CompanyId == q.CompanyId y expondría las reglas de la empresa ajena (IDOR).
         var company = await _db.Companies.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == q.CompanyId, ct);
 
-        Guid? studioGuid = company != null && Guid.TryParse(company.StudioTenantId, out var g) ? g : null;
+        if (company is null)
+            return Result<List<RuleResponse>>.NotFound("Company not found.");
+
+        Guid? studioGuid = Guid.TryParse(company.StudioTenantId, out var g) ? g : null;
 
         var query = _db.AccountingRules.AsNoTracking()
             .Where(r => r.CompanyId == q.CompanyId
@@ -119,8 +127,11 @@ public sealed class CreateCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(CreateCompanyCommand cmd, CancellationToken ct)
     {
-        if (await _db.Companies.AnyAsync(c => c.Cuit == cmd.Cuit, ct))
-            return Result<CompanyResponse>.Conflict($"Ya existe una empresa con CUIT {cmd.Cuit}.");
+        // M-3: la unicidad del CUIT es POR ESTUDIO (índice único compuesto StudioTenantId+Cuit),
+        // de modo que dos estudios distintos pueden gestionar el mismo contribuyente de forma
+        // independiente. El chequeo se acota explícitamente al estudio del comando.
+        if (await _db.Companies.AnyAsync(c => c.StudioTenantId == cmd.StudioTenantId && c.Cuit == cmd.Cuit, ct))
+            return Result<CompanyResponse>.Conflict($"Ya existe una empresa con CUIT {cmd.Cuit} en este estudio.");
 
         if (!await _quota.CanAddCompanyAsync(cmd.StudioTenantId))
             return Result<CompanyResponse>.PaymentRequired(
@@ -152,7 +163,9 @@ public sealed class UpdateCompanyHandler
 
     public async Task<Result<CompanyResponse>> Handle(UpdateCompanyCommand cmd, CancellationToken ct)
     {
-        var company = await _db.Companies.FindAsync([cmd.Id], ct);
+        // FirstOrDefaultAsync aplica el Global Query Filter de tenant: una empresa de otro
+        // estudio devuelve null y el handler responde NotFound (no 403, para no confirmar existencia).
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == cmd.Id, ct);
         if (company is null)
             return Result<CompanyResponse>.NotFound();
 
@@ -178,11 +191,17 @@ public sealed class DeleteCompanyHandler
 
     public async Task<Result<DeletedResponse>> Handle(DeleteCompanyCommand cmd, CancellationToken ct)
     {
-        var company = await _db.Companies.FindAsync([cmd.Id], ct);
+        // FirstOrDefaultAsync aplica el Global Query Filter de tenant: una empresa de otro
+        // estudio devuelve null y el handler responde NotFound (no 403, para no confirmar existencia).
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == cmd.Id, ct);
         if (company is null)
             return Result<DeletedResponse>.NotFound();
 
-        company.IsActive = false;
+        // P-2: soft-delete con marca temporal. DeletedAt inicia la ventana de retención de
+        // 90 días para la purga diferida (política en docs/AUDITORIA.MD); el job de retención
+        // (P-4) hará el hard-delete de las empresas con DeletedAt vencido.
+        company.IsActive  = false;
+        company.DeletedAt ??= DateTime.UtcNow; // idempotente: un segundo DELETE no corre la ventana
         await _db.SaveChangesAsync(ct);
         return Result<DeletedResponse>.Success(new DeletedResponse("Company deactivated."), 204);
     }
@@ -239,7 +258,9 @@ public sealed class CreateCompanyRuleHandler
 
     public async Task<Result<RuleResponse>> Handle(CreateCompanyRuleCommand cmd, CancellationToken ct)
     {
-        var company = await _db.Companies.FindAsync([cmd.CompanyId], ct);
+        // Global Query Filter: si la empresa pertenece a otro estudio, devuelve null → NotFound.
+        // Cierra el IDOR que permitía inyectar reglas en empresas ajenas (envenenamiento de clasificación).
+        var company = await _db.Companies.FirstOrDefaultAsync(c => c.Id == cmd.CompanyId, ct);
         if (company is null)
             return Result<RuleResponse>.NotFound("Company not found.");
 

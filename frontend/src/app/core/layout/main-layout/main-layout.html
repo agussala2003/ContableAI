@@ -65,6 +65,8 @@
         @if (sidebarOpen()) { <span class="whitespace-nowrap">Reglas</span> }
       </a>
 
+      <!-- M-4: gestión de reglas de estudio visible solo para el titular del estudio -->
+      @if (isStudioOwner) {
       <a routerLink="/studio-rules"
          routerLinkActive="bg-white/20 text-white"
          class="flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-white/70
@@ -74,6 +76,7 @@
         <lucide-icon name="library" [size]="16" color="currentColor" class="shrink-0" />
         @if (sidebarOpen()) { <span class="whitespace-nowrap">Reglas Estudio</span> }
       </a>
+      }
 
       <a routerLink="/chart-of-accounts"
          routerLinkActive="bg-white/20 text-white"

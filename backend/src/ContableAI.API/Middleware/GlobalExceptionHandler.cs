@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
@@ -60,6 +61,16 @@ internal sealed class GlobalExceptionHandler : IExceptionHandler
             Type     = $"https://httpstatuses.io/{statusCode}",
             Instance = httpContext.Request.Path,
         };
+
+        // O-3: traceId correlacionable con los logs. Es el mismo Correlation ID que publica
+        // CorrelationIdMiddleware (header X-Correlation-Id); si por algún motivo no está,
+        // se cae al identificador de traza del request.
+        var correlationId = httpContext.Items.TryGetValue(CorrelationIdMiddleware.ItemsKey, out var cid)
+            ? cid as string
+            : null;
+        problem.Extensions["traceId"] = correlationId
+            ?? Activity.Current?.Id
+            ?? httpContext.TraceIdentifier;
 
         if (exception is ValidationException)
             problem.Extensions["errors"] = errors;

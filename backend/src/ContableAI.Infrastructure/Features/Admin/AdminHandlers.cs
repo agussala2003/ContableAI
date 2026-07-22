@@ -211,42 +211,27 @@ public sealed class DeleteUserHandler : IRequestHandler<DeleteUserCommand, Resul
 
         if (studioMates == 0)
         {
-            var companyIds = await _db.Companies
-                .Where(c => c.StudioTenantId == user.StudioTenantId)
-                .Select(c => c.Id)
-                .ToListAsync(ct);
-
-            var jeIds = await _db.JournalEntries
-                .Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value))
-                .Select(je => je.Id)
-                .ToListAsync(ct);
-
-            await _db.JournalEntryLines
-                .Where(l => jeIds.Contains(l.JournalEntryId))
-                .ExecuteDeleteAsync(ct);
-            await _db.JournalEntries
-                .Where(je => je.CompanyId != null && companyIds.Contains(je.CompanyId.Value))
-                .ExecuteDeleteAsync(ct);
-            await _db.BankTransactions
-                .Where(t => t.CompanyId != null && companyIds.Contains(t.CompanyId.Value))
-                .ExecuteDeleteAsync(ct);
-            await _db.AccountingRules
-                .Where(r => r.CompanyId != null && companyIds.Contains(r.CompanyId.Value))
-                .ExecuteDeleteAsync(ct);
-            await _db.ClosedPeriods
-                .Where(p => p.StudioTenantId == user.StudioTenantId)
-                .ExecuteDeleteAsync(ct);
-            await _db.Companies
-                .Where(c => c.StudioTenantId == user.StudioTenantId)
-                .ExecuteDeleteAsync(ct);
-
-            if (Guid.TryParse(user.StudioTenantId, out var tenantGuid))
-            {
-                await _db.ChartOfAccounts
-                    .Where(c => c.StudioTenantId == tenantGuid)
-                    .ExecuteDeleteAsync(ct);
-            }
+            // Último usuario del estudio → cascada COMPLETA del tenant (misma que el cierre
+            // formal de cuenta, P-1/P-3): incluye reglas de estudio, UploadJobResults,
+            // RefreshTokens, sugerencias, vouchers AFIP y seudonimización de AuditLogs.
+            // El purger también elimina al propio usuario.
+            await StudioTenantPurger.PurgeAsync(_db, user.StudioTenantId, ct);
+            return Result<AdminMessageResponse>.Success(
+                new AdminMessageResponse($"Usuario {user.Email} eliminado junto con todos los datos de su estudio."));
         }
+
+        // Quedan otros usuarios en el estudio: se borra solo este usuario, pero sin dejar
+        // residuos personales (P-3): sesiones activas y email en la auditoría.
+        if (_db.Database.IsRelational())
+        {
+            await _db.RefreshTokens.Where(t => t.UserId == request.Id).ExecuteDeleteAsync(ct);
+        }
+        else
+        {
+            _db.RefreshTokens.RemoveRange(await _db.RefreshTokens.Where(t => t.UserId == request.Id).ToListAsync(ct));
+        }
+
+        await StudioTenantPurger.AnonymizeAuditLogsAsync(_db, studioTenantId: null, [request.Id.ToString()], ct);
 
         _db.Users.Remove(user);
         await _db.SaveChangesAsync(ct);
@@ -320,8 +305,10 @@ public sealed class SendAdminPasswordResetHandler : IRequestHandler<SendAdminPas
         var user = await _db.Users.FindAsync([request.Id], ct);
         if (user is null) return Result<AdminMessageResponse>.NotFound();
 
-        var token = Guid.NewGuid().ToString("N");
-        user.PasswordResetToken = token;
+        // B-1c: mismo esquema que el forgot-password de autoservicio — token CSPRNG de 256
+        // bits, en la BD solo el hash SHA-256 (el claro viaja únicamente en el email).
+        var token = PasswordResetTokens.Generate();
+        user.PasswordResetToken = PasswordResetTokens.Hash(token);
         user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(24);
         await _db.SaveChangesAsync(ct);
 
@@ -553,14 +540,19 @@ public sealed class AdminNormalizeAccountsHandler
             c => c.Id,
             c => Guid.TryParse(c.StudioTenantId, out var g) ? (Guid?)g : null);
 
-        // Cache de mapas canónicos por estudio (null = solo cuentas globales).
-        var mapCache = new Dictionary<Guid?, CanonicalAccountMap>();
+        // Cache de mapas canónicos por estudio. El caso "sin estudio" (solo cuentas globales)
+        // va en una variable aparte: Dictionary no admite clave null (lanzaría en runtime).
+        var mapCache = new Dictionary<Guid, CanonicalAccountMap>();
+        CanonicalAccountMap? globalMap = null;
         async Task<CanonicalAccountMap> GetMapAsync(Guid? studio)
         {
-            if (!mapCache.TryGetValue(studio, out var map))
+            if (studio is null)
+                return globalMap ??= await _resolver.BuildMapAsync(null, ct);
+
+            if (!mapCache.TryGetValue(studio.Value, out var map))
             {
                 map = await _resolver.BuildMapAsync(studio, ct);
-                mapCache[studio] = map;
+                mapCache[studio.Value] = map;
             }
             return map;
         }

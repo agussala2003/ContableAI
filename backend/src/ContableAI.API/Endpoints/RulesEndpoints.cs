@@ -44,6 +44,7 @@ public static class RulesEndpoints
 
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("UpdateRule")
         .WithTags("Reglas")
         .WithSummary("Actualizar una regla de clasificación de empresa.")
@@ -59,6 +60,7 @@ public static class RulesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeleteRule")
         .WithTags("Reglas")
         .WithSummary("Eliminar una regla de clasificación de empresa.")
@@ -74,6 +76,7 @@ public static class RulesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("DeactivateRule")
         .WithTags("Reglas")
         .WithSummary("Desactivar (soft-delete) una regla.")
@@ -88,6 +91,7 @@ public static class RulesEndpoints
             await dbContext.SaveChangesAsync();
             return Results.NoContent();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("ActivateRule")
         .WithTags("Reglas")
         .WithSummary("Activar una regla previamente desactivada.")
@@ -158,6 +162,7 @@ public static class RulesEndpoints
                 AppliedAccount = rule.TargetAccount,
             });
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("ReapplyRule")
         .WithTags("Reglas")
         .WithSummary("Reaplicar una regla sobre movimientos sin clasificar ya cargados.")
@@ -165,32 +170,6 @@ public static class RulesEndpoints
         .Produces(200)
         .Produces(400)
         .Produces(404);
-
-        app.MapGet("/api/suggestions/debug-log", () =>
-        {
-            var logPath = Path.Combine(Directory.GetCurrentDirectory(), "logs", "suggestions-debug.jsonl");
-            if (!File.Exists(logPath))
-                return Results.NotFound(new { Message = "No hay entradas de debug todavía. Probá asignar una cuenta y ejecutar Recalcular." });
-            return Results.File(logPath, "application/x-ndjson", "suggestions-debug.jsonl");
-        })
-        .WithName("GetSuggestionsDebugLog")
-        .WithTags("Reglas", "IA Proactiva")
-        .WithSummary("Descarga el log de debug del sistema de sugerencias (JSONL).")
-        .RequireAuthorization(p => p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()))
-        .Produces(200)
-        .Produces(404);
-
-        app.MapDelete("/api/suggestions/debug-log", () =>
-        {
-            var logPath = Path.Combine(Directory.GetCurrentDirectory(), "logs", "suggestions-debug.jsonl");
-            if (File.Exists(logPath)) File.Delete(logPath);
-            return Results.Ok(new { Message = "Log de debug eliminado." });
-        })
-        .WithName("ClearSuggestionsDebugLog")
-        .WithTags("Reglas", "IA Proactiva")
-        .WithSummary("Limpia el log de debug para empezar una sesión de prueba desde cero.")
-        .RequireAuthorization(p => p.RequireRole(UserRole.StudioOwner.ToString(), UserRole.SystemAdmin.ToString()))
-        .Produces(200);
 
         // Suggestion endpoints (GET/accept/reject) -> CompanyEndpoints.cs
 
@@ -219,6 +198,7 @@ public static class RulesEndpoints
                 ? result.ToCreatedResult($"/api/studio/rules/{result.Value?.Id}")
                 : result.ToHttpResult();
         })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
         .WithName("CreateStudioRule")
         .WithTags("Reglas", "Estudio")
         .WithSummary("Crear una regla global de estudio.")

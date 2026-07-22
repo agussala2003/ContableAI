@@ -1,0 +1,9 @@
+Banco Galicia
+Empresa Ficticia SRL - CUIT 30-00000000-1
+Cuenta Corriente en Pesos
+
+FECHA       DETALLE                               DEBITO     CREDITO         SALDO
+10/07/2025  TRANSFERENCIA SUELDOS              45.000,00                200.000,00
+15/07/2025  ACREDITACION COBRANZA                          80.000,00    280.000,00
+20/07/2025  IMPUESTO SELLOS                     1.234,56                278.765,44
+            Total retencion de impuestos        9.999,99                          

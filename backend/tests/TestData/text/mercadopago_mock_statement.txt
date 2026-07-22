@@ -1,0 +1,7 @@
+Mercado Pago - Cuenta Ficticia
+Estado de cuenta - CUIT 30-00000000-1
+
+FECHA       DESCRIPCION                   ID                VALOR         SALDO
+02/05/2025  Pago de servicio ficticio     12345678      -1.500,00      8.500,00
+05/05/2025  Cobro venta ficticia          23456789       3.200,00     11.700,00
+09/05/2025  Transferencia enviada         34567890      -2.000,00      9.700,00

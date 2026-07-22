@@ -14,7 +14,8 @@
         <input type="text" [value]="newHeaderAccountValue()"
           (input)="newHeaderAccountValue.set($any($event.target).value)" (keyup.enter)="saveHeaderAccount()"
           (keyup.escape)="creatingHeaderAccount.set(false); newHeaderAccountValue.set('')"
-          placeholder="Nombre de cuenta…" autofocus class="h-6 w-44 px-2 rounded-md border border-indigo-400 dark:border-indigo-500
+          placeholder="Nombre de cuenta…" autofocus
+          aria-label="Nombre de la nueva cuenta contable" class="h-6 w-44 px-2 rounded-md border border-indigo-400 dark:border-indigo-500
                      bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200
                      placeholder:text-slate-400 dark:placeholder:text-slate-500
                      focus:outline-none focus:ring-1 focus:ring-indigo-500" />
@@ -129,9 +130,10 @@
           <th class="pl-4 pr-2 py-3 w-10">
             <input type="checkbox" [checked]="allSelected()" [indeterminate]="someSelected()"
               (change)="toggleSelectAll()" [title]="allSelected() ? 'Deseleccionar todos' : 'Seleccionar todos'"
+              [attr.aria-label]="allSelected() ? 'Deseleccionar todos los movimientos' : 'Seleccionar todos los movimientos'"
               class="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-indigo-600 bg-white dark:bg-slate-900 cursor-pointer focus:ring-1 focus:ring-indigo-500" />
           </th>
-          <th class="px-2 py-3 w-8"></th>
+          <th class="px-2 py-3 w-8"><span class="sr-only">Confianza de la clasificación</span></th>
 
           @for (col of [
           { id: 'date', label: 'Fecha' },
@@ -141,8 +143,10 @@
           { id: 'account', label: 'Cuenta contable' },
           { id: 'source', label: 'Origen' }
           ]; track col.id) {
-          <th class="px-3 py-3" [class.text-right]="col.align === 'right'">
+          <th class="px-3 py-3" [class.text-right]="col.align === 'right'"
+            [attr.aria-sort]="sortBy() === col.id ? (sortDir() === 'asc' ? 'ascending' : 'descending') : 'none'">
             <button (click)="onColumnSort(col.id)"
+              [attr.aria-label]="'Ordenar por ' + col.label"
               class="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors select-none">
               {{ col.label }}
               @if (sortBy() === col.id && sortDir() === 'asc') {
@@ -165,12 +169,17 @@
 
           <td class="pl-4 pr-2 py-3">
             <input type="checkbox" [checked]="selectedIds().has(tx.id)" (click)="onCheckboxClick($event, tx.id)"
+              [attr.aria-label]="'Seleccionar movimiento ' + (tx.description || tx.date)"
               class="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-indigo-600 bg-white dark:bg-slate-900 cursor-pointer focus:ring-1 focus:ring-indigo-500" />
           </td>
 
           <td class="px-2 py-3">
-            <span class="block w-2 h-2 rounded-full ring-2 ring-white dark:ring-slate-900" [ngClass]="semaforoClass(tx)"
-              [title]="semaforoTitle(tx)"></span>
+            <span class="block w-2 h-2 rounded-full ring-2 ring-white dark:ring-slate-900
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              [ngClass]="semaforoClass(tx)"
+              [title]="semaforoTitle(tx)"
+              role="img" tabindex="0"
+              [attr.aria-label]="semaforoTitle(tx)"></span>
           </td>
 
           <td class="px-3 py-3 tabular-nums font-medium text-slate-500 dark:text-slate-400">
@@ -184,10 +193,12 @@
                 {{ tx.description || 'Sin descripción' }}
               </span>
               @if (tx.externalId) {
-                <div class="relative group/tip inline-flex shrink-0">
-                  <lucide-icon name="info" class="w-3.5 h-3.5 text-slate-400 group-hover/tip:text-indigo-500 transition-colors cursor-help"></lucide-icon>
+                <div tabindex="0"
+                     [attr.aria-label]="'Identificador del banco: ' + tx.externalId"
+                     class="relative group/tip inline-flex shrink-0 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500">
+                  <lucide-icon name="info" class="w-3.5 h-3.5 text-slate-400 group-hover/tip:text-indigo-500 transition-colors cursor-help" aria-hidden="true"></lucide-icon>
                   <div class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50
-                              opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150
+                              opacity-0 group-hover/tip:opacity-100 group-focus-within/tip:opacity-100 transition-opacity duration-150
                               px-2 py-1 rounded-md bg-slate-800 dark:bg-slate-700 text-white text-[10px] whitespace-nowrap shadow-lg">
                     ID: {{ tx.externalId }}
                     <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-[4px] border-r-[4px] border-t-[4px] border-l-transparent border-r-transparent border-t-slate-800 dark:border-t-slate-700"></div>
@@ -233,7 +244,8 @@
             } @else if (editingNewAccountForId() === tx.id) {
             <input type="text" [value]="newAccountValue()" (input)="newAccountValue.set($any($event.target).value)"
               (keyup.enter)="confirmNewAccount(tx.id)" (keyup.escape)="cancelNewAccount()"
-              (blur)="confirmNewAccount(tx.id)" placeholder="Nombre de cuenta…" autofocus class="h-7 w-44 px-2 rounded border border-indigo-400 dark:border-indigo-500
+              (blur)="confirmNewAccount(tx.id)" placeholder="Nombre de cuenta…" autofocus
+              aria-label="Nombre de la nueva cuenta contable" class="h-7 w-44 px-2 rounded border border-indigo-400 dark:border-indigo-500
                          bg-white dark:bg-slate-900 text-xs text-slate-800 dark:text-slate-200
                          placeholder:text-slate-400 dark:placeholder:text-slate-500
                          focus:outline-none focus:ring-1 focus:ring-indigo-500" />
@@ -245,6 +257,7 @@
                 (change)="onAccountInput(tx.id, $event)" (blur)="cancelInlineEdit(tx.id)"
                 (keydown)="onInputKeyDown($event, i)" (keydown.escape)="cancelInlineEdit(tx.id)"
                 (click)="$event.stopPropagation()" placeholder="— Pendiente —"
+                [attr.aria-label]="'Cuenta contable de ' + (tx.description || tx.date)"
                 class="h-7 w-full pl-2 pr-2 rounded border text-xs font-semibold focus:outline-none focus:ring-1 appearance-none bg-white dark:bg-slate-900 transition-colors"
                 [ngClass]="tx.needsTaxMatching
                         ? 'border-violet-300 dark:border-violet-600 text-violet-700 dark:text-violet-400 focus:ring-violet-500 hover:border-violet-400'
@@ -257,7 +270,12 @@
               }
               } @else {
               <div (click)="startInlineEdit(tx.id, $event)"
-                class="h-7 w-full pl-2 pr-6 rounded border text-xs font-semibold appearance-none bg-white dark:bg-slate-900 transition-colors cursor-pointer flex items-center truncate"
+                (keydown.enter)="startInlineEdit(tx.id, $event)"
+                (keydown.space)="$event.preventDefault(); startInlineEdit(tx.id, $event)"
+                role="button" tabindex="0"
+                [attr.aria-label]="'Editar cuenta contable de ' + (tx.description || tx.date) + '. Cuenta actual: ' + tx.assignedAccount"
+                class="h-7 w-full pl-2 pr-6 rounded border text-xs font-semibold appearance-none bg-white dark:bg-slate-900 transition-colors cursor-pointer flex items-center truncate
+                       focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
                 [ngClass]="tx.needsTaxMatching
                         ? 'border-violet-300/50 dark:border-violet-600/50 text-violet-700 dark:text-violet-400 hover:border-violet-400'
                         : 'border-emerald-300/50 dark:border-emerald-700/50 text-emerald-700 dark:text-emerald-400 hover:border-emerald-400'"

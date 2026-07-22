@@ -4,6 +4,7 @@ import { NgClass } from '@angular/common';
 import { Company, CompanyService, CreateCompanyRequest, UpdateCompanyRequest } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.service';
+import { AuthService } from '../../../../core/services/auth.service';
 import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
@@ -18,6 +19,12 @@ export class CompanyBar implements OnInit {
   private fb      = inject(FormBuilder);
   private toast   = inject(ToastService);
   private confirmDialog = inject(ConfirmDialogService);
+  private auth    = inject(AuthService);
+
+  /** M-4: la gestión de empresas (crear/editar/eliminar) es solo del titular del estudio. */
+  get isStudioOwner(): boolean {
+    return this.auth.isStudioOwnerOrAdmin();
+  }
 
   readonly created = output<void>();
 

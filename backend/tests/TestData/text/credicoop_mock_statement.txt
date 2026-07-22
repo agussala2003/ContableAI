@@ -1,0 +1,8 @@
+Banco Credicoop Cooperativo Limitado
+Empresa Ficticia SA - CUIT 30-00000000-1
+Cuenta Corriente en Pesos
+
+FECHA       DETALLE                               DEBITO     CREDITO         SALDO
+08/09/2025  DEPOSITO EN EFECTIVO                           50.000,00    150.000,00
+12/09/2025  PAGO PROVEEDOR SERVICIOS           12.500,00                137.500,00
+20/09/2025  COMISION TRANSFERENCIA                500,00                137.000,00

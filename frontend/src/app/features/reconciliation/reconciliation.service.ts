@@ -1,7 +1,7 @@
 import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { timer, switchMap, takeWhile } from 'rxjs';
-import { BankTransaction, Transaction, UploadResponse, SkippedDuplicate, CurrencyTotals } from '../../core/services/transaction';
+import { timer, switchMap, takeWhile, take, tap } from 'rxjs';
+import { BankTransaction, Transaction, UploadResponse, UploadJobResultEnvelope, SkippedDuplicate, CurrencyTotals } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
 import { CompanyService } from '../../core/services/company.service';
@@ -337,6 +337,13 @@ export class ReconciliationService {
   }
 
   // ── File upload ────────────────────────────────────────────────────────
+  private readonly UPLOAD_POLL_INTERVAL_MS = 2000;
+  /** Tope del polling de jobs: pasado este tiempo sin resultado, se corta y se avisa al usuario. */
+  private readonly JOB_POLL_TIMEOUT_MS = 5 * 60_000;
+  private readonly JOB_POLL_TIMEOUT_MSG =
+    'El proceso está tardando más de lo normal. Por favor, reintentá en unos minutos o contactá a soporte.';
+
+  /** Encola la subida (procesamiento en un job de Hangfire) y arranca el polling del resultado. */
   uploadFiles(
     event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
     onSuccess?: () => void,
@@ -345,85 +352,148 @@ export class ReconciliationService {
     const companyId = event.companyId ?? this.companyService.activeCompany()?.id;
 
     this.txService.uploadFiles(event.files, event.bankCode, companyId, event.withoutDateFilter, event.forceReapplyRules).subscribe({
-      next: (response) => {
-        const generated = response.totalProcessed > 0;
-        const reapplied = (response.reappliedToExisting ?? 0) > 0;
+      next: ({ uploadId }) => this._pollUploadResult(uploadId, event, onSuccess),
+      error: () => {
+        this._isLoading.set(false);
+        this.toast.error('No pudimos conectar con el servidor. Revisá tu conexión o intentá de nuevo.');
+      },
+    });
+  }
 
-        if (event.withoutDateFilter && generated) {
-          this._filters.update(ff => ({ ...ff, month: null, year: null }));
-        }
-        else if (generated) {
-          this._adjustFiltersForImport(response);
-        }
-        
-        if (generated || reapplied) {
-          this._pagination.update(p => ({ ...p, page: 1 }));
-          this.loadData(); // sets _isLoading=true internally, clears it when done
-          onSuccess?.();
-          
-          const filesInfo = response.totalFiles > 1 ? ` (${response.totalFiles} archivos)` : '';
-          if (generated) {
-            this.toast.success(
-              `¡Éxito${filesInfo}! Se procesaron ${response.totalProcessed} movimientos` +
-              `${response.companyName ? ' para ' + response.companyName : ''}. ` +
-              `(${response.duplicatesSkipped} duplicados omitidos)`
-            );
-            if (response.skippedDuplicates?.length) {
-              this._skippedDuplicates.set(response.skippedDuplicates);
-            }
-          }
-          if (response.parseErrors?.length) {
-            // Rechazo por extracto multi-cuenta (mezcla de monedas): mostrar el mensaje
-            // específico del backend en lugar del genérico de OCR.
-            const mixedCurrencyErrors = response.parseErrors.filter(e => /m[aá]s de una moneda/i.test(e));
-            const otherErrors = response.parseErrors.filter(e => !/m[aá]s de una moneda/i.test(e));
+  /** Mismo patrón de polling que la generación de asientos (ver _doGenerate más abajo). */
+  private _pollUploadResult(
+    uploadId: string,
+    event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
+    onSuccess?: () => void,
+  ): void {
+    const maxPolls = Math.ceil(this.JOB_POLL_TIMEOUT_MS / this.UPLOAD_POLL_INTERVAL_MS);
+    let polls = 0;
+    let finished = false;
 
-            if (mixedCurrencyErrors.length) {
-              const n = mixedCurrencyErrors.length;
-              this.toast.error(
-                `${n} extracto${n > 1 ? 's contienen' : ' contiene'} cuentas en más de una moneda (pesos y dólares). ` +
-                `Subí el extracto de cada cuenta por separado.`
-              );
-            }
-            if (otherErrors.length) {
-              const count = otherErrors.length;
-              this.toast.warning(
-                `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
-              );
-            }
-          }
-          if (reapplied) {
-            this.toast.success(`Se aplicaron tus reglas actualizadas a ${response.reappliedToExisting} transacciones existentes.`);
-          }
-        } 
-        else if (response.duplicatesSkipped > 0 && !event.forceReapplyRules) {
-          this._isLoading.set(false);
-          this.confirmDialog.confirm({
-            title: 'Extracto ya subido',
-            message: `Se detectaron ${response.duplicatesSkipped} movimientos que ya estaban cargados. ¿Querés re-aplicar tus reglas actuales sobre esos movimientos pendientes?`,
-            confirmLabel: 'Sí, re-aplicar reglas'
-          }).then(ok => {
-            if (ok) {
-              this.uploadFiles({ ...event, forceReapplyRules: true }, onSuccess);
-            }
-          });
-        } 
-        else if (response.duplicatesSkipped > 0) {
-          this._isLoading.set(false);
-          this.toast.warning(
-            `No se agregaron movimientos nuevos, ni hubo cambios que requieran reclasificar. ${response.duplicatesSkipped} transacciones ya estaban cargadas y siguen igual.`
-          );
-        } 
-        else {
-          this._isLoading.set(false);
-          this.toast.warning('No se encontraron movimientos para importar.');
+    timer(this.UPLOAD_POLL_INTERVAL_MS, this.UPLOAD_POLL_INTERVAL_MS).pipe(
+      take(maxPolls),
+      tap(() => polls++),
+      switchMap(() => this.txService.getUploadResult(uploadId)),
+      takeWhile(envelope => !envelope.done, true),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: (envelope) => {
+        if (envelope.done) {
+          finished = true;
+          this._handleUploadResult(envelope, event, onSuccess);
         }
       },
       error: () => {
         this._isLoading.set(false);
-        this.toast.error('Error de conexión con el servidor. Intentá de nuevo.');
+        this.toast.error('No pudimos conectar con el servidor. Revisá tu conexión o intentá de nuevo.');
+      },
+      complete: () => {
+        // El stream completa sin resultado solo si se agotó el tope de intentos
+        // (en destroy del servicio polls < maxPolls, así que no hay toast espurio).
+        if (!finished && polls >= maxPolls) {
+          this._isLoading.set(false);
+          this.toast.warning(this.JOB_POLL_TIMEOUT_MSG);
+        }
       },
     });
+  }
+
+  /**
+   * Reproduce las mismas ramas de UX que antes resolvía la respuesta síncrona del upload, ahora a
+   * partir del resultado polleado. `statusCode` 402/403 replican el texto que antes mostraba
+   * error.interceptor.ts (acá ya no aplica: la respuesta es 200 con el resultado adentro, no un
+   * error HTTP real).
+   */
+  private _handleUploadResult(
+    envelope: UploadJobResultEnvelope,
+    event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
+    onSuccess?: () => void,
+  ): void {
+    if (!envelope.isSuccess) {
+      this._isLoading.set(false);
+      if (envelope.statusCode === 402) {
+        this.toast.warning('Límite del plan alcanzado. Actualizá tu suscripción en la sección Plan.');
+      } else if (envelope.statusCode === 403) {
+        this.toast.error('No tenés permisos para realizar esta acción.');
+      } else {
+        this.toast.error(envelope.error ?? 'Error al procesar el extracto. Intentá de nuevo.');
+      }
+      return;
+    }
+
+    const response = envelope.value!;
+    const generated = response.totalProcessed > 0;
+    const reapplied = (response.reappliedToExisting ?? 0) > 0;
+
+    if (event.withoutDateFilter && generated) {
+      this._filters.update(ff => ({ ...ff, month: null, year: null }));
+    }
+    else if (generated) {
+      this._adjustFiltersForImport(response);
+    }
+
+    if (generated || reapplied) {
+      this._pagination.update(p => ({ ...p, page: 1 }));
+      this.loadData(); // sets _isLoading=true internally, clears it when done
+      onSuccess?.();
+
+      const filesInfo = response.totalFiles > 1 ? ` (${response.totalFiles} archivos)` : '';
+      if (generated) {
+        this.toast.success(
+          `¡Éxito${filesInfo}! Se procesaron ${response.totalProcessed} movimientos` +
+          `${response.companyName ? ' para ' + response.companyName : ''}. ` +
+          `(${response.duplicatesSkipped} duplicados omitidos)`
+        );
+        if (response.skippedDuplicates?.length) {
+          this._skippedDuplicates.set(response.skippedDuplicates);
+        }
+      }
+      if (response.parseErrors?.length) {
+        // Rechazo por extracto multi-cuenta (mezcla de monedas): mostrar el mensaje
+        // específico del backend en lugar del genérico de OCR.
+        const mixedCurrencyErrors = response.parseErrors.filter(e => /m[aá]s de una moneda/i.test(e));
+        const otherErrors = response.parseErrors.filter(e => !/m[aá]s de una moneda/i.test(e));
+
+        if (mixedCurrencyErrors.length) {
+          const n = mixedCurrencyErrors.length;
+          this.toast.error(
+            `${n} extracto${n > 1 ? 's contienen' : ' contiene'} cuentas en más de una moneda (pesos y dólares). ` +
+            `Subí el extracto de cada cuenta por separado.`
+          );
+        }
+        if (otherErrors.length) {
+          const count = otherErrors.length;
+          this.toast.warning(
+            `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
+          );
+        }
+      }
+      if (reapplied) {
+        this.toast.success(`Se aplicaron tus reglas actualizadas a ${response.reappliedToExisting} transacciones existentes.`);
+      }
+    }
+    else if (response.duplicatesSkipped > 0 && !event.forceReapplyRules) {
+      this._isLoading.set(false);
+      this.confirmDialog.confirm({
+        title: 'Extracto ya subido',
+        message: `Se detectaron ${response.duplicatesSkipped} movimientos que ya estaban cargados. ¿Querés re-aplicar tus reglas actuales sobre esos movimientos pendientes?`,
+        confirmLabel: 'Sí, re-aplicar reglas'
+      }).then(ok => {
+        if (ok) {
+          this.uploadFiles({ ...event, forceReapplyRules: true }, onSuccess);
+        }
+      });
+    }
+    else if (response.duplicatesSkipped > 0) {
+      this._isLoading.set(false);
+      this.toast.warning(
+        `No se agregaron movimientos nuevos, ni hubo cambios que requieran reclasificar. ${response.duplicatesSkipped} transacciones ya estaban cargadas y siguen igual.`
+      );
+    }
+    else {
+      this._isLoading.set(false);
+      this.toast.warning('No se encontraron movimientos para importar.');
+    }
   }
 
   // ── Delete all ─────────────────────────────────────────────────────────
@@ -511,26 +581,48 @@ export class ReconciliationService {
     this._isGenerating.set(true);
     this.journalEntryService.generate(ids).subscribe({
       next: (res) => {
-        this._isGenerating.set(false);
         this.toast.success(res.message || 'Generación de asientos iniciada en segundo plano. Esto puede demorar unos minutos.');
-        
+
         if (res.jobId) {
-          timer(3000, 3000).pipe(
+          // _isGenerating queda en true durante todo el polling: el botón "Asentar" permanece
+          // deshabilitado mientras el job de Hangfire corre, evitando una doble generación.
+          const GENERATE_POLL_INTERVAL_MS = 3000;
+          const maxPolls = Math.ceil(this.JOB_POLL_TIMEOUT_MS / GENERATE_POLL_INTERVAL_MS);
+          let polls = 0;
+          let finished = false;
+
+          timer(GENERATE_POLL_INTERVAL_MS, GENERATE_POLL_INTERVAL_MS).pipe(
+            take(maxPolls),
+            tap(() => polls++),
             switchMap(() => this.journalEntryService.getJobStatus(res.jobId!)),
             takeWhile(status => status.state === 'Processing' || status.state === 'Enqueued', true),
             takeUntilDestroyed(this.destroyRef),
           ).subscribe({
             next: (status) => {
+              if (status.state === 'Processing' || status.state === 'Enqueued') return;
+              // Cualquier estado terminal (Succeeded, Failed, u otro inesperado) libera el botón.
+              finished = true;
+              this._isGenerating.set(false);
               if (status.state === 'Succeeded') {
                 this.toast.success('¡Asientos generados correctamente!');
                 this.loadData();
               } else if (status.state === 'Failed') {
-                this.toast.error('La generación de asientos falló. Revisa los logs del servidor.');
+                this.toast.error('No pudimos generar los asientos. Intentá de nuevo en unos minutos; si el problema sigue, contactá a soporte.');
               }
             },
-            error: () => this.toast.error('Error al monitorear el estado de la generación de asientos.'),
+            error: () => {
+              this._isGenerating.set(false);
+              this.toast.error('No pudimos verificar el estado de la generación de asientos. Actualizá la página en unos minutos para ver si se completó.');
+            },
+            complete: () => {
+              if (!finished && polls >= maxPolls) {
+                this._isGenerating.set(false);
+                this.toast.warning(this.JOB_POLL_TIMEOUT_MSG);
+              }
+            },
           });
         } else {
+          this._isGenerating.set(false);
           this.loadData();
         }
       },

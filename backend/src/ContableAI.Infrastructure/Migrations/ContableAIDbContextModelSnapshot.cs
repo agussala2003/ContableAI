@@ -228,6 +228,9 @@ namespace ContableAI.Infrastructure.Migrations
                     b.Property<string>("SourceBank")
                         .HasColumnType("text");
 
+                    b.Property<string>("StudioTenantId")
+                        .HasColumnType("text");
+
                     b.Property<string>("TenantId")
                         .IsRequired()
                         .HasColumnType("text");
@@ -245,7 +248,16 @@ namespace ContableAI.Infrastructure.Migrations
 
                     b.HasIndex("CompanyId");
 
+                    b.HasIndex("StudioTenantId")
+                        .HasDatabaseName("IX_BankTransactions_StudioTenantId");
+
                     b.HasIndex("TenantId");
+
+                    b.HasIndex("CompanyId", "Amount")
+                        .HasDatabaseName("IX_BankTransactions_CompanyId_Amount");
+
+                    b.HasIndex("CompanyId", "AssignedAccount")
+                        .HasDatabaseName("IX_BankTransactions_CompanyId_AssignedAccount");
 
                     b.HasIndex("CompanyId", "ClassificationSource")
                         .HasDatabaseName("IX_BankTransactions_CompanyId_ClassificationSource");
@@ -255,6 +267,9 @@ namespace ContableAI.Infrastructure.Migrations
 
                     b.HasIndex("CompanyId", "Date")
                         .HasDatabaseName("IX_BankTransactions_CompanyId_Date");
+
+                    b.HasIndex("CompanyId", "SortOrder", "Date")
+                        .HasDatabaseName("IX_BankTransactions_CompanyId_SortOrder_Date");
 
                     b.ToTable("BankTransactions");
                 });
@@ -339,6 +354,9 @@ namespace ContableAI.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -358,10 +376,10 @@ namespace ContableAI.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Cuit")
-                        .IsUnique();
-
                     b.HasIndex("StudioTenantId");
+
+                    b.HasIndex("StudioTenantId", "Cuit")
+                        .IsUnique();
 
                     b.ToTable("Companies");
                 });
@@ -438,6 +456,41 @@ namespace ContableAI.Infrastructure.Migrations
                     b.ToTable("JournalEntryLines");
                 });
 
+            modelBuilder.Entity("ContableAI.Domain.Entities.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ReplacedByTokenId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("RefreshTokens");
+                });
+
             modelBuilder.Entity("ContableAI.Domain.Entities.RuleSuggestion", b =>
                 {
                     b.Property<Guid>("Id")
@@ -473,6 +526,60 @@ namespace ContableAI.Infrastructure.Migrations
                     b.HasIndex("CompanyId", "Status");
 
                     b.ToTable("RuleSuggestions");
+                });
+
+            modelBuilder.Entity("ContableAI.Domain.Entities.StagedUploadFile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Length")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("StagedUploadFiles");
+                });
+
+            modelBuilder.Entity("ContableAI.Domain.Entities.UploadJobResult", b =>
+                {
+                    b.Property<string>("JobId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsSuccess")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("StudioTenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("JobId");
+
+                    b.HasIndex("StudioTenantId");
+
+                    b.ToTable("UploadJobResults");
                 });
 
             modelBuilder.Entity("ContableAI.Domain.Entities.User", b =>

@@ -1,11 +1,20 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/guards/auth.guard';
 import { adminGuard } from './core/guards/admin.guard';
+import { ownerGuard } from './core/guards/owner.guard';
 
 export const routes: Routes = [
   {
     path: 'inicio',
     loadComponent: () => import('./features/landing/pages/landing-page/landing-page').then(m => m.LandingPage),
+  },
+  {
+    path: 'terminos',
+    loadComponent: () => import('./features/legal/pages/terms-page/terms-page').then(m => m.TermsPage),
+  },
+  {
+    path: 'privacidad',
+    loadComponent: () => import('./features/legal/pages/privacy-page/privacy-page').then(m => m.PrivacyPage),
   },
   {
     path: 'login',
@@ -35,6 +44,7 @@ export const routes: Routes = [
       {
         path: 'studio-rules',
         loadComponent: () => import('./features/rules/pages/studio-rules-page/studio-rules-page').then(m => m.StudioRulesPage),
+        canActivate: [ownerGuard], // M-4: gestión de reglas de estudio solo para StudioOwner
       },
       {
         path: 'admin',
@@ -58,5 +68,9 @@ export const routes: Routes = [
         loadComponent: () => import('./features/settings/pages/settings-page/settings-page').then(m => m.SettingsPage),
       },
     ],
+  },
+  {
+    path: '**',
+    redirectTo: 'inicio',
   },
 ];

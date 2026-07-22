@@ -838,7 +838,10 @@ public class BankParserFactory : IBankParserService
             new MercadoPagoParser(),
             new UalaParser(),
             new CredicoopParser(),
-            new PdfBankParser(loggerFactory.CreateLogger<PdfBankParser>()),
+            // Composición explícita: el parser interpreta; el extractor lee físicamente (PdfPig/OCR).
+            new PdfBankParser(
+                new OcrStatementExtractor(loggerFactory.CreateLogger<OcrStatementExtractor>()),
+                loggerFactory.CreateLogger<PdfBankParser>()),
         };
 
         _parsers = list.ToDictionary(

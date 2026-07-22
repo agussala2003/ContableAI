@@ -1,4 +1,4 @@
-import { Component, input, output, signal, computed, effect, untracked, inject, HostListener } from '@angular/core';
+import { Component, ChangeDetectionStrategy, input, output, signal, computed, effect, untracked, inject, HostListener } from '@angular/core';
 import { NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -15,6 +15,7 @@ import { CurrencyAmountPipe } from '../../../../shared/pipes/currency-amount.pip
   imports: [FormsModule, NgClass, LucideAngularModule, AccountCombobox, CurrencyAmountPipe],
   templateUrl: './transaction-grid.html',
   styleUrl: './transaction-grid.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TransactionGrid {
 

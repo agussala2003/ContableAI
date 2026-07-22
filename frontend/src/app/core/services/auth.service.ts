@@ -1,6 +1,6 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, map, tap } from 'rxjs';
+import { Observable, map, tap, finalize, shareReplay, catchError, of } from 'rxjs';
 import { Router } from '@angular/router';
 import { ConfigService } from '../config/config.service';
 
@@ -49,47 +49,37 @@ export interface RegisterRequest {
   studioTenantId?: string; // omitir para crear un estudio nuevo
 }
 
-const TOKEN_KEY = 'contableai_token';
-const USER_KEY  = 'contableai_user';
-// TODO: Mover a HttpOnly cookies por seguridad XSS.
-
+/**
+ * A-3: el JWT de acceso (vida corta) vive SOLO en memoria — nunca en localStorage —
+ * para que un XSS no pueda robar una sesión persistente. El refresh token viaja en una
+ * cookie HttpOnly (inaccesible a JS) y se usa vía /auth/refresh (withCredentials) para
+ * rehidratar la sesión al cargar la app o cuando el access token expira.
+ */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private http   = inject(HttpClient);
   private router = inject(Router);
   private configService = inject(ConfigService);
 
+  /** JWT de acceso en memoria (no persistido). */
+  private accessToken: string | null = null;
+
+  /** Refresh en vuelo compartido para deduplicar llamadas concurrentes. */
+  private refreshInFlight$?: Observable<string>;
+
   private get baseUrl(): string {
     return `${this.configService.config().apiUrl}/auth`;
   }
 
   /** Usuario actualmente autenticado (reactivo). */
-  currentUser = signal<AuthUser | null>(this.loadUserOrToken());
-
-  private loadUserOrToken(): AuthUser | null {
-    const stored = localStorage.getItem(USER_KEY);
-    if (stored && stored !== 'undefined' && stored !== 'null') {
-      try {
-        return JSON.parse(stored);
-      } catch {
-        localStorage.removeItem(USER_KEY);
-      }
-    }
-
-    const token = this.getToken();
-    const user = token ? this.userFromToken(token) : null;
-    if (user) {
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
-    }
-    return user;
-  }
+  currentUser = signal<AuthUser | null>(null);
 
   getToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
+    return this.accessToken;
   }
 
   isLoggedIn(): boolean {
-    const token = this.getToken();
+    const token = this.accessToken;
     if (!token) return false;
     try {
       const payload = JSON.parse(atob(token.split('.')[1]));
@@ -100,10 +90,12 @@ export class AuthService {
   }
 
   login(req: LoginRequest): Observable<AuthResponse> {
-    return this.http.post<BackendAuthResponse>(`${this.baseUrl}/login`, req).pipe(
-      map(res => this.mapBackendAuthResponse(res)),
-      tap(res => this.storeSession(res)),
-    );
+    return this.http
+      .post<BackendAuthResponse>(`${this.baseUrl}/login`, req, { withCredentials: true })
+      .pipe(
+        map(res => this.mapBackendAuthResponse(res)),
+        tap(res => this.storeSession(res)),
+      );
   }
 
   register(req: RegisterRequest): Observable<RegisterPendingResponse> {
@@ -111,25 +103,67 @@ export class AuthService {
     // No almacena sesión — la cuenta queda pendiente de activación manual.
   }
 
-  /** Registro público de estudio nuevo: cuenta activa y auto-login immediato. */
+  /** Registro público de estudio nuevo: cuenta activa y auto-login inmediato. */
   registerStudio(req: RegisterStudioRequest): Observable<AuthResponse> {
-    return this.http.post<BackendAuthResponse>(`${this.baseUrl}/register-studio`, req).pipe(
-      map(res => this.mapBackendAuthResponse(res)),
-      tap(res => this.storeSession(res)),
+    return this.http
+      .post<BackendAuthResponse>(`${this.baseUrl}/register-studio`, req, { withCredentials: true })
+      .pipe(
+        map(res => this.mapBackendAuthResponse(res)),
+        tap(res => this.storeSession(res)),
+      );
+  }
+
+  /**
+   * Renueva el JWT de acceso usando el refresh token (cookie HttpOnly). Deduplica llamadas
+   * concurrentes: varias requests que reciban 401 a la vez comparten un único /auth/refresh.
+   */
+  refresh(): Observable<string> {
+    if (!this.refreshInFlight$) {
+      this.refreshInFlight$ = this.http
+        .post<BackendAuthResponse>(`${this.baseUrl}/refresh`, {}, { withCredentials: true })
+        .pipe(
+          map(res => this.mapBackendAuthResponse(res)),
+          tap(res => this.storeSession(res)),
+          map(res => res.token),
+          finalize(() => { this.refreshInFlight$ = undefined; }),
+          shareReplay(1),
+        );
+    }
+    return this.refreshInFlight$;
+  }
+
+  /**
+   * Intento silencioso de rehidratar la sesión al arrancar la app (APP_INITIALIZER).
+   * Si no hay cookie válida, resuelve como anónimo sin propagar error.
+   */
+  restoreSession(): Observable<boolean> {
+    return this.refresh().pipe(
+      map(() => true),
+      catchError(() => {
+        this.clearSession();
+        return of(false);
+      }),
     );
   }
 
   logout(): void {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    this.currentUser.set(null);
-    this.router.navigate(['/login']);
+    // Revoca el refresh token en el server (best-effort) y limpia el estado local.
+    this.http.post(`${this.baseUrl}/logout`, {}, { withCredentials: true }).pipe(
+      catchError(() => of(null)),
+    ).subscribe(() => {
+      this.clearSession();
+      this.router.navigate(['/login']);
+    });
   }
 
   private storeSession(res: AuthResponse): void {
-    localStorage.setItem(TOKEN_KEY, res.token);
-    localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+    this.accessToken = res.token;
     this.currentUser.set(res.user);
+  }
+
+  private clearSession(): void {
+    this.accessToken = null;
+    this.currentUser.set(null);
   }
 
   forgotPassword(email: string): Observable<{ message: string }> {

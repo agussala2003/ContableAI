@@ -12,13 +12,14 @@ namespace ContableAI.Tests.Infrastructure;
 /// </summary>
 public class CurrencyDetectionTests
 {
-    private static readonly string ExtractsDir =
-        @"C:\Users\aguss\Documents\Projects\ContableAI\tests\extractos";
+    private static readonly string ExtractsDir = TestData.Extractos;
 
+    /// <summary>Parsea el PDF pedido; si no está disponible, salta el test (Skipped, no Passed).</summary>
     private static IReadOnlyList<BankTransaction> Parse(string relativePath)
     {
-        var path = Path.Combine(ExtractsDir, relativePath);
-        if (!File.Exists(path)) return [];
+        // Los InlineData usan '\' como separador; normalizamos para que resuelva en Linux/CI.
+        var path = Path.Combine(ExtractsDir, relativePath.Replace('\\', Path.DirectorySeparatorChar));
+        TestData.RequireFile(path);
         var parser = new PdfBankParser();
         using var stream = File.OpenRead(path);
         return parser.Parse(stream, Path.GetFileName(path)).ToList();
@@ -26,14 +27,13 @@ public class CurrencyDetectionTests
 
     // ── Galicia USD → USD ─────────────────────────────────────────────────────
 
-    [Theory]
+    [SkippableTheory]
     [InlineData(@"GALICIA USD\Extracto_Cuentas_Galicia_2024_11_29.pdf", 10)]
     [InlineData(@"GALICIA USD\Extracto_Cuentas_Galicia_2024_12_30.pdf", 3)]
     [InlineData(@"GALICIA USD\Extracto_Cuentas_Galicia_2025_01_31 (1).pdf", 5)]
     public void Parse_GaliciaUsd_AllTransactionsAreUsd(string relativePath, int expectedCount)
     {
         var txs = Parse(relativePath);
-        if (txs.Count == 0) return; // PDF no disponible en este entorno, omitir
 
         txs.Should().HaveCount(expectedCount, "la fila de totales no se cuenta (fix Fase 2 intacto)");
         txs.Should().OnlyContain(t => t.Currency == Currencies.Usd,
@@ -48,7 +48,7 @@ public class CurrencyDetectionTests
 
     // ── Resto del corpus → ARS ────────────────────────────────────────────────
 
-    [Theory]
+    [SkippableTheory]
     [InlineData(@"BBVA FALLAS 15-7-2026\1225 (1).pdf")]        // BBVA pesos ("CC $")
     [InlineData(@"BBVA FALLAS 15-7-2026\0925.pdf")]
     [InlineData(@"GALICIA\Extracto_Cuentas_Galicia_2025_04_30 (2).pdf")] // Galicia pesos
@@ -59,7 +59,6 @@ public class CurrencyDetectionTests
     public void Parse_RestOfCorpus_AllTransactionsAreArs(string relativePath)
     {
         var txs = Parse(relativePath);
-        if (txs.Count == 0) return;
 
         txs.Should().OnlyContain(t => t.Currency == Currencies.Ars,
             $"{relativePath}: cuenta en pesos, ninguna transacción debe quedar en USD");

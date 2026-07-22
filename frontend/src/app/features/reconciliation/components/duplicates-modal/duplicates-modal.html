@@ -4,6 +4,9 @@
          animate-[fadeIn_0.15s_ease-out_forwards]"
   role="dialog"
   aria-modal="true"
+  aria-labelledby="duplicates-modal-title"
+  appModalA11y
+  (closeRequested)="close.emit()"
   (click)="close.emit()"
 >
   <div
@@ -21,7 +24,7 @@
           <lucide-icon name="alert-circle" class="w-4 h-4 text-amber-500"></lucide-icon>
         </div>
         <div>
-          <h2 class="text-sm font-semibold text-slate-800 dark:text-slate-100">{{ title() }}</h2>
+          <h2 id="duplicates-modal-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">{{ title() }}</h2>
           <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
             {{ duplicates().length }} registro{{ duplicates().length !== 1 ? 's' : '' }} ya existían en el sistema y fueron omitidos
           </p>

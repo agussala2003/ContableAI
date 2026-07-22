@@ -11,6 +11,8 @@ namespace ContableAI.Application.Features.JournalEntries.Commands;
 
 public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<GenerateJournalEntriesCommand>
 {
+    private const int BatchSize = 500;
+
     private readonly ContableAIDbContext _dbContext;
     private readonly ILogger<GenerateJournalEntriesCommandHandler> _logger;
 
@@ -20,83 +22,72 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         _logger = logger;
     }
 
+    /// <summary>
+    /// Orquesta la generación de asientos para un lote de movimientos: carga los movimientos
+    /// pendientes, valida período cerrado y cuentas configuradas, y genera los asientos aplicando
+    /// la deduplicación por firma. Cada fase vive en un método propio para que este flujo se lea
+    /// de arriba a abajo.
+    /// </summary>
     public async Task Handle(GenerateJournalEntriesCommand request, CancellationToken cancellationToken)
     {
         if (request.TransactionIds == null || request.TransactionIds.Count == 0)
             return;
 
-        var studioCompanyIds = await _dbContext.Companies
+        var studioCompanyIds = await LoadStudioCompanyIdsAsync(request, cancellationToken);
+        var transactions     = await LoadPendingTransactionsAsync(request, studioCompanyIds, cancellationToken);
+        if (transactions.Count == 0)
+            return;
+
+        if (await HasClosedPeriodConflictAsync(request, transactions, cancellationToken))
+            return;
+
+        var companiesMap = await LoadCompanyAccountsAsync(transactions, cancellationToken);
+        if (!await EnsureArsAccountsConfiguredAsync(transactions, companiesMap, cancellationToken))
+            return;
+
+        var signatureToEntryIds = await LoadExistingSignatureMapAsync(transactions, cancellationToken);
+        var comboVouchersByTx   = await LoadComboVouchersAsync(transactions, cancellationToken);
+
+        await GenerateEntriesAsync(transactions, companiesMap, signatureToEntryIds, comboVouchersByTx, cancellationToken);
+    }
+
+    // ── Carga de datos ──────────────────────────────────────────────────────────
+
+    private async Task<List<Guid>> LoadStudioCompanyIdsAsync(GenerateJournalEntriesCommand request, CancellationToken ct)
+        => await _dbContext.Companies
             .AsNoTracking()
             .Where(c => c.StudioTenantId == request.StudioTenantId && c.IsActive)
             .Select(c => c.Id)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(ct);
 
-        var transactions = await _dbContext.BankTransactions
+    private async Task<List<BankTransaction>> LoadPendingTransactionsAsync(
+        GenerateJournalEntriesCommand request, List<Guid> studioCompanyIds, CancellationToken ct)
+        => await _dbContext.BankTransactions
             .Where(t => request.TransactionIds.Contains(t.Id)
                      && t.CompanyId.HasValue
                      && studioCompanyIds.Contains(t.CompanyId.Value)
                      && t.AssignedAccount != null
                      && t.JournalEntryId == null)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(ct);
 
-        if (transactions.Count == 0)
-            return;
-
-        var closedPeriods = await _dbContext.ClosedPeriods
-            .AsNoTracking()
-            .Where(p => p.StudioTenantId == request.StudioTenantId)
-            .Select(p => new { p.Year, p.Month })
-            .ToListAsync(cancellationToken);
-
-        if (closedPeriods.Count > 0)
-        {
-            var closedSet = closedPeriods.Select(p => (p.Year, p.Month)).ToHashSet();
-            var offender  = transactions.FirstOrDefault(t => closedSet.Contains((t.Date.Year, t.Date.Month)));
-            if (offender != null)
-            {
-                _logger.LogWarning("Período cerrado detectado en Hangfire. Cancelando generación.");
-                return;
-            }
-        }
-
+    private async Task<Dictionary<Guid, CompanyBankAccounts>> LoadCompanyAccountsAsync(
+        List<BankTransaction> transactions, CancellationToken ct)
+    {
         var companyIds = transactions.Select(t => t.CompanyId!.Value).Distinct().ToList();
-        var companiesMap = await _dbContext.Companies
+        return await _dbContext.Companies
             .AsNoTracking()
             .Where(c => companyIds.Contains(c.Id))
             .ToDictionaryAsync(
                 c => c.Id,
                 c => new CompanyBankAccounts(c.BankAccountName, c.UsdBankAccountName),
-                cancellationToken);
+                ct);
+    }
 
-        // La cuenta en pesos es requisito para asentar cualquier movimiento ARS. Se mantiene el
-        // corte total (return) cuando falta, pero acotado a las empresas que efectivamente tienen
-        // movimientos en pesos en este lote (una empresa que solo opera en USD no debe frenar por
-        // no tener cuenta en pesos configurada).
-        var arsCompanyIds = transactions
-            .Where(t => t.Currency == Currencies.Ars)
-            .Select(t => t.CompanyId!.Value)
-            .Distinct()
-            .ToList();
-
-        var missingBank = arsCompanyIds
-            .Where(id => !companiesMap.TryGetValue(id, out var acc) || string.IsNullOrWhiteSpace(acc.Ars))
-            .ToList();
-        if (missingBank.Count > 0)
-        {
-            var names = await _dbContext.Companies
-                .AsNoTracking()
-                .Where(c => missingBank.Contains(c.Id))
-                .Select(c => c.Name)
-                .ToListAsync(cancellationToken);
-            _logger.LogWarning(
-                "Cuenta bancaria en pesos no configurada para: {Companies}. Editá la empresa y completá el campo 'Nombre de cuenta bancaria' antes de asentar.",
-                string.Join(", ", names));
-            return;
-        }
-
-        const int BatchSize = 500;
-        var pendingEntries  = new List<JournalEntry>(BatchSize);
-        var totalGenerated  = 0;
+    /// <summary>Asientos ya existentes en el rango del lote, agrupados por firma para deduplicar.</summary>
+    private async Task<Dictionary<string, Queue<Guid>>> LoadExistingSignatureMapAsync(
+        List<BankTransaction> transactions, CancellationToken ct)
+    {
+        var companyIds = transactions.Select(t => t.CompanyId!.Value).Distinct().ToList();
         var minTxDate = transactions.Min(t => t.Date);
         var maxTxDate = transactions.Max(t => t.Date);
 
@@ -107,42 +98,117 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                      && companyIds.Contains(j.CompanyId.Value)
                      && j.Date >= minTxDate
                      && j.Date <= maxTxDate)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(ct);
 
-        var signatureToEntryIds = existingEntries
+        return existingEntries
             .GroupBy(BuildEntrySignature)
             .ToDictionary(
                 g => g.Key,
                 g => new Queue<Guid>(g.Select(e => e.Id)),
                 StringComparer.Ordinal);
+    }
 
-        var duplicatesSkipped = 0;
-        var skippedMissingUsdAccount = 0;
-
-        // Vouchers de cruces múltiples AFIP (un débito bancario = N VEPs): el asiento se
-        // desglosa con una línea por impuesto, así que se precargan en bloque.
+    /// <summary>
+    /// Vouchers de cruces múltiples AFIP (un débito bancario = N VEPs) por movimiento: el asiento
+    /// se desglosa con una línea por impuesto, así que se precargan en bloque.
+    /// </summary>
+    private async Task<Dictionary<Guid, List<AfipVoucher>>> LoadComboVouchersAsync(
+        List<BankTransaction> transactions, CancellationToken ct)
+    {
         var comboTxIds = transactions
             .Where(t => t.ClassificationSource == ClassificationSources.AfipComboMatch)
             .Select(t => t.Id)
             .ToList();
 
-        var comboVouchersByTx = comboTxIds.Count == 0
-            ? new Dictionary<Guid, List<AfipVoucher>>()
-            : (await _dbContext.AfipVouchers
+        if (comboTxIds.Count == 0)
+            return new Dictionary<Guid, List<AfipVoucher>>();
+
+        return (await _dbContext.AfipVouchers
                 .AsNoTracking()
                 .Where(v => v.MatchedTransactionId != null && comboTxIds.Contains(v.MatchedTransactionId.Value))
-                .ToListAsync(cancellationToken))
-              .GroupBy(v => v.MatchedTransactionId!.Value)
-              .ToDictionary(g => g.Key, g => g.ToList());
+                .ToListAsync(ct))
+            .GroupBy(v => v.MatchedTransactionId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+    }
+
+    // ── Validaciones (cortan la generación del lote) ────────────────────────────
+
+    private async Task<bool> HasClosedPeriodConflictAsync(
+        GenerateJournalEntriesCommand request, List<BankTransaction> transactions, CancellationToken ct)
+    {
+        var closedPeriods = await _dbContext.ClosedPeriods
+            .AsNoTracking()
+            .Where(p => p.StudioTenantId == request.StudioTenantId)
+            .Select(p => new { p.Year, p.Month })
+            .ToListAsync(ct);
+
+        if (closedPeriods.Count == 0)
+            return false;
+
+        var closedSet = closedPeriods.Select(p => (p.Year, p.Month)).ToHashSet();
+        if (transactions.Any(t => closedSet.Contains((t.Date.Year, t.Date.Month))))
+        {
+            _logger.LogWarning("Período cerrado detectado en Hangfire. Cancelando generación.");
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// La cuenta en pesos es requisito para asentar cualquier movimiento ARS. Devuelve false (y
+    /// corta el lote) si falta, acotado a las empresas que efectivamente tienen movimientos en
+    /// pesos en este lote (una empresa que solo opera en USD no debe frenar por no tener cuenta
+    /// en pesos configurada).
+    /// </summary>
+    private async Task<bool> EnsureArsAccountsConfiguredAsync(
+        List<BankTransaction> transactions, Dictionary<Guid, CompanyBankAccounts> companiesMap, CancellationToken ct)
+    {
+        var arsCompanyIds = transactions
+            .Where(t => t.Currency == Currencies.Ars)
+            .Select(t => t.CompanyId!.Value)
+            .Distinct()
+            .ToList();
+
+        var missingBank = arsCompanyIds
+            .Where(id => !companiesMap.TryGetValue(id, out var acc) || string.IsNullOrWhiteSpace(acc.Ars))
+            .ToList();
+
+        if (missingBank.Count == 0)
+            return true;
+
+        var names = await _dbContext.Companies
+            .AsNoTracking()
+            .Where(c => missingBank.Contains(c.Id))
+            .Select(c => c.Name)
+            .ToListAsync(ct);
+        _logger.LogWarning(
+            "Cuenta bancaria en pesos no configurada para: {Companies}. Editá la empresa y completá el campo 'Nombre de cuenta bancaria' antes de asentar.",
+            string.Join(", ", names));
+        return false;
+    }
+
+    // ── Generación ──────────────────────────────────────────────────────────────
+
+    private async Task GenerateEntriesAsync(
+        List<BankTransaction> transactions,
+        Dictionary<Guid, CompanyBankAccounts> companiesMap,
+        Dictionary<string, Queue<Guid>> signatureToEntryIds,
+        Dictionary<Guid, List<AfipVoucher>> comboVouchersByTx,
+        CancellationToken ct)
+    {
+        var pendingEntries = new List<JournalEntry>(BatchSize);
+        var totalGenerated = 0;
+        var duplicatesSkipped = 0;
+        var skippedMissingUsdAccount = 0;
 
         foreach (var tx in transactions)
         {
-            JournalEntry entry;
             var accounts = companiesMap[tx.CompanyId!.Value];
 
-            // Contrapartida por moneda: USD → cuenta en dólares; ARS → cuenta en pesos.
-            // Si el movimiento es en dólares y la empresa no configuró su cuenta USD, se omite
-            // este movimiento (warning claro) sin frenar el resto del lote.
+            // Contrapartida por moneda: USD → cuenta en dólares; ARS → cuenta en pesos. Si el
+            // movimiento es en dólares y la empresa no configuró su cuenta USD, se omite este
+            // movimiento (warning claro) sin frenar el resto del lote.
             if (!TryResolveBankAccount(tx.Currency, accounts.Ars, accounts.Usd, out var bankAccount))
             {
                 _logger.LogWarning(
@@ -153,79 +219,9 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                 continue;
             }
 
-            List<JournalEntryLine> projectedLines;
-
-            if (tx.ClassificationSource == ClassificationSources.ChequeTaxSplit)
-            {
-                var half1 = Math.Round(tx.Amount / 2, 2);
-                var half2 = tx.Amount - half1;
-
-                projectedLines =
-                [
-                    new JournalEntryLine { Account = "Impuesto a los Débitos Bancarios",  Amount = half1,     IsDebit = true  },
-                    new JournalEntryLine { Account = "Impuesto a los Créditos Bancarios", Amount = half2,     IsDebit = true  },
-                    new JournalEntryLine { Account = bankAccount,                          Amount = tx.Amount, IsDebit = false },
-                ];
-
-                entry = new JournalEntry
-                {
-                    Date              = tx.Date,
-                    Description       = tx.Description,
-                    CompanyId         = tx.CompanyId,
-                    BankTransactionId = tx.Id,
-                    Currency          = tx.Currency,
-                    Lines             = projectedLines,
-                };
-            }
-            else if (tx.ClassificationSource == ClassificationSources.AfipComboMatch
-                     && comboVouchersByTx.TryGetValue(tx.Id, out var comboVouchers)
-                     && comboVouchers.Count >= 2
-                     && comboVouchers.Sum(v => v.Amount) == tx.Amount)
-            {
-                // Un pago agrupado de ARCA: una línea de débito por impuesto (VEPs con el
-                // mismo impuesto se consolidan) contra el banco por el total del movimiento.
-                projectedLines = comboVouchers
-                    .GroupBy(v => v.TaxName)
-                    .Select(g => new JournalEntryLine
-                    {
-                        Account = g.Key,
-                        Amount  = g.Sum(v => v.Amount),
-                        IsDebit = true,
-                    })
-                    .OrderByDescending(l => l.Amount)
-                    .Append(new JournalEntryLine { Account = bankAccount, Amount = tx.Amount, IsDebit = false })
-                    .ToList();
-
-                entry = new JournalEntry
-                {
-                    Date              = tx.Date,
-                    Description       = tx.Description,
-                    CompanyId         = tx.CompanyId,
-                    BankTransactionId = tx.Id,
-                    Currency          = tx.Currency,
-                    Lines             = projectedLines,
-                };
-            }
-            else
-            {
-                bool isDebit = tx.Type == TransactionType.Debit;
-
-                projectedLines =
-                [
-                    new JournalEntryLine { Account = isDebit ? tx.AssignedAccount! : bankAccount, Amount = tx.Amount, IsDebit = true  },
-                    new JournalEntryLine { Account = isDebit ? bankAccount : tx.AssignedAccount!, Amount = tx.Amount, IsDebit = false },
-                ];
-
-                entry = new JournalEntry
-                {
-                    Date              = tx.Date,
-                    Description       = tx.Description,
-                    CompanyId         = tx.CompanyId,
-                    BankTransactionId = tx.Id,
-                    Currency          = tx.Currency,
-                    Lines             = projectedLines,
-                };
-            }
+            comboVouchersByTx.TryGetValue(tx.Id, out var comboVouchers);
+            var projectedLines = ProjectLines(tx, bankAccount, comboVouchers);
+            var entry = CreateEntry(tx, projectedLines);
 
             var signature = BuildEntrySignature(tx.CompanyId, tx.Date, tx.Description, tx.Currency, projectedLines);
             if (signatureToEntryIds.TryGetValue(signature, out var existingEntryIds)
@@ -247,7 +243,7 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
             if (pendingEntries.Count >= BatchSize)
             {
                 _dbContext.JournalEntries.AddRange(pendingEntries);
-                await _dbContext.SaveChangesAsync(cancellationToken);
+                await _dbContext.SaveChangesAsync(ct);
                 totalGenerated += pendingEntries.Count;
                 pendingEntries.Clear();
             }
@@ -257,12 +253,70 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
             _dbContext.JournalEntries.AddRange(pendingEntries);
 
         totalGenerated += pendingEntries.Count;
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _dbContext.SaveChangesAsync(ct);
 
         _logger.LogInformation(
             "Background job finished: Generated {Generated}, Skipped {Skipped}, MissingUsdAccount {MissingUsd}",
             totalGenerated, duplicatesSkipped, skippedMissingUsdAccount);
     }
+
+    /// <summary>
+    /// Proyecta las líneas de partida doble de un movimiento según su tipo: split 50/50 de impuesto
+    /// al cheque, desglose por impuesto de un combo AFIP (una línea por impuesto contra el banco),
+    /// o el caso genérico (cuenta asignada vs. banco según débito/crédito). Método puro.
+    /// </summary>
+    private static List<JournalEntryLine> ProjectLines(
+        BankTransaction tx, string bankAccount, IReadOnlyList<AfipVoucher>? comboVouchers)
+    {
+        if (tx.ClassificationSource == ClassificationSources.ChequeTaxSplit)
+        {
+            var half1 = Math.Round(tx.Amount / 2, 2);
+            var half2 = tx.Amount - half1;
+
+            return
+            [
+                new JournalEntryLine { Account = "Impuesto a los Débitos Bancarios",  Amount = half1,     IsDebit = true  },
+                new JournalEntryLine { Account = "Impuesto a los Créditos Bancarios", Amount = half2,     IsDebit = true  },
+                new JournalEntryLine { Account = bankAccount,                          Amount = tx.Amount, IsDebit = false },
+            ];
+        }
+
+        if (tx.ClassificationSource == ClassificationSources.AfipComboMatch
+            && comboVouchers is { Count: >= 2 }
+            && comboVouchers.Sum(v => v.Amount) == tx.Amount)
+        {
+            // Un pago agrupado de ARCA: una línea de débito por impuesto (VEPs con el mismo
+            // impuesto se consolidan) contra el banco por el total del movimiento.
+            return comboVouchers
+                .GroupBy(v => v.TaxName)
+                .Select(g => new JournalEntryLine
+                {
+                    Account = g.Key,
+                    Amount  = g.Sum(v => v.Amount),
+                    IsDebit = true,
+                })
+                .OrderByDescending(l => l.Amount)
+                .Append(new JournalEntryLine { Account = bankAccount, Amount = tx.Amount, IsDebit = false })
+                .ToList();
+        }
+
+        bool isDebit = tx.Type == TransactionType.Debit;
+        return
+        [
+            new JournalEntryLine { Account = isDebit ? tx.AssignedAccount! : bankAccount, Amount = tx.Amount, IsDebit = true  },
+            new JournalEntryLine { Account = isDebit ? bankAccount : tx.AssignedAccount!, Amount = tx.Amount, IsDebit = false },
+        ];
+    }
+
+    private static JournalEntry CreateEntry(BankTransaction tx, List<JournalEntryLine> lines) => new()
+    {
+        Date              = tx.Date,
+        Description       = tx.Description,
+        CompanyId         = tx.CompanyId,
+        BankTransactionId = tx.Id,
+        Currency          = tx.Currency,
+        Lines             = lines,
+    };
 
     /// <summary>Cuentas bancarias de una empresa por moneda (pesos y dólares).</summary>
     private sealed record CompanyBankAccounts(string? Ars, string? Usd);
