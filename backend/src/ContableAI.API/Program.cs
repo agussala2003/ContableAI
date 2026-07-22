@@ -62,11 +62,11 @@ builder.Services.AddContableAuth(builder.Configuration);
 // X-Forwarded-For / X-Forwarded-Proto. Sin esto, Connection.RemoteIpAddress sería
 // la IP del proxy: el rate-limiter anti-fuerza-bruta particionaría a TODOS los
 // clientes en un único bucket y los logs registrarían la IP equivocada.
-// KnownNetworks/KnownProxies se limpian porque la IP del proxy de Render es dinámica.
+// KnownIPNetworks/KnownProxies se limpian porque la IP del proxy de Render es dinámica.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.KnownNetworks.Clear();
+    options.KnownIPNetworks.Clear();
     options.KnownProxies.Clear();
 });
 // ── Global exception handler (RFC 7807) ──────────────────────────────────────

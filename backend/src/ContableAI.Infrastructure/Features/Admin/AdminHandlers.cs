@@ -540,14 +540,19 @@ public sealed class AdminNormalizeAccountsHandler
             c => c.Id,
             c => Guid.TryParse(c.StudioTenantId, out var g) ? (Guid?)g : null);
 
-        // Cache de mapas canónicos por estudio (null = solo cuentas globales).
-        var mapCache = new Dictionary<Guid?, CanonicalAccountMap>();
+        // Cache de mapas canónicos por estudio. El caso "sin estudio" (solo cuentas globales)
+        // va en una variable aparte: Dictionary no admite clave null (lanzaría en runtime).
+        var mapCache = new Dictionary<Guid, CanonicalAccountMap>();
+        CanonicalAccountMap? globalMap = null;
         async Task<CanonicalAccountMap> GetMapAsync(Guid? studio)
         {
-            if (!mapCache.TryGetValue(studio, out var map))
+            if (studio is null)
+                return globalMap ??= await _resolver.BuildMapAsync(null, ct);
+
+            if (!mapCache.TryGetValue(studio.Value, out var map))
             {
                 map = await _resolver.BuildMapAsync(studio, ct);
-                mapCache[studio] = map;
+                mapCache[studio.Value] = map;
             }
             return map;
         }

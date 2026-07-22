@@ -50,7 +50,7 @@ public static class AfipEndpoints
 
             // HashSet unificado: detecta duplicados en BD y dentro del mismo lote
             var seenKeys = new HashSet<(DateOnly, decimal, string?)>(
-                existingKeys.Select(e => (e.Date, e.Amount, e.TaxName)));
+                existingKeys.Select(e => (e.Date, e.Amount, (string?)e.TaxName)));
 
             int addedCount = 0;
             var skippedDuplicates = new List<object>();
@@ -74,7 +74,7 @@ public static class AfipEndpoints
                     CompanyId       = companyId,
                     Date            = p.Date,
                     Amount          = p.Amount,
-                    TaxName         = p.TaxName,
+                    TaxName         = p.TaxName ?? string.Empty,
                 });
                 addedCount++;
             }

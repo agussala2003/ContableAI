@@ -18,6 +18,9 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Resilience" Version="10.8.0" />
+    <!-- Explícita para unificar en 9.0.2: Npgsql arrastra Relational 9.0.1 y Design (PrivateAssets)
+         compila contra 9.0.2, lo que generaba MSB3277 en los proyectos consumidores. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.2" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageReference Include="PdfPig" Version="0.1.15" />
     <PackageReference Include="PDFtoImage" Version="4.1.0" />
