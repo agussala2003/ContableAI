@@ -143,6 +143,13 @@
         @for (acc of uniqueAccounts(); track acc) { <option [value]="acc">{{ acc }}</option> }
       </select>
 
+      <select [ngModel]="selectedCurrency() ?? ''" (ngModelChange)="selectedCurrency.set($event === '' ? null : $event)"
+        class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 cursor-pointer">
+        <option value="">Todas las monedas</option>
+        <option value="ARS">ARS</option>
+        <option value="USD">USD</option>
+      </select>
+
       <select [ngModel]="selectedMonth() ?? ''" (ngModelChange)="selectedMonth.set($event === '' ? null : +$event)"
         class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 cursor-pointer">
         <option value="">Mes</option>
@@ -233,6 +240,9 @@
                         <span [class]="entry.description ? 'font-medium text-slate-800 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500 italic'">
                           {{ entry.description || 'Sin descripción' }}
                         </span>
+                        @if (entry.currency === 'USD') {
+                          <span class="ml-2 shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400">USD</span>
+                        }
                       }
                     </div>
 

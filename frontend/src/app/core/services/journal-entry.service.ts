@@ -18,6 +18,8 @@ export interface JournalEntry {
   companyId: string | null;
   bankTransactionId: string;
   generatedAt: string;
+  /** Moneda del asiento (ISO 4217: "ARS" | "USD"). */
+  currency: string;
   lines: JournalEntryLine[];
 }
 
@@ -59,11 +61,12 @@ export class JournalEntryService {
     );
   }
 
-  getEntries(params?: { companyId?: string; month?: number; year?: number }): Observable<JournalEntry[]> {
+  getEntries(params?: { companyId?: string; month?: number; year?: number; currency?: string }): Observable<JournalEntry[]> {
     let p = new HttpParams();
     if (params?.companyId) p = p.set('companyId', params.companyId);
     if (params?.month)     p = p.set('month',     params.month);
     if (params?.year)      p = p.set('year',       params.year);
+    if (params?.currency)  p = p.set('currency',   params.currency);
     return this.http.get<JournalEntry[]>(this.baseUrl, { params: p });
   }
 
@@ -95,6 +98,7 @@ export class JournalEntryService {
     search?: string,
     account?: string,
     entryIds?: string[],
+    currency?: string,
   ): void {
     const payload = {
       companyId,
@@ -102,6 +106,7 @@ export class JournalEntryService {
       year,
       search,
       account,
+      currency,
       entryIds,
     };
 
@@ -127,16 +132,16 @@ export class JournalEntryService {
     });
   }
 
-  downloadHolistor(companyId?: string, month?: number, year?: number): void {
-    this._downloadBlob(`${this.baseUrl}/export/holistor`, 'txt', 'Holistor', companyId, month, year);
+  downloadHolistor(companyId?: string, month?: number, year?: number, currency?: string): void {
+    this._downloadBlob(`${this.baseUrl}/export/holistor`, 'txt', 'Holistor', companyId, month, year, undefined, undefined, undefined, currency);
   }
 
-  downloadBejerman(companyId?: string, month?: number, year?: number): void {
-    this._downloadBlob(`${this.baseUrl}/export/bejerman`, 'csv', 'Bejerman', companyId, month, year);
+  downloadBejerman(companyId?: string, month?: number, year?: number, currency?: string): void {
+    this._downloadBlob(`${this.baseUrl}/export/bejerman`, 'csv', 'Bejerman', companyId, month, year, undefined, undefined, undefined, currency);
   }
 
-  downloadCsv(companyId?: string, month?: number, year?: number): void {
-    this._downloadBlob(`${this.baseUrl}/export/csv`, 'csv', 'Asientos', companyId, month, year);
+  downloadCsv(companyId?: string, month?: number, year?: number, currency?: string): void {
+    this._downloadBlob(`${this.baseUrl}/export/csv`, 'csv', 'Asientos', companyId, month, year, undefined, undefined, undefined, currency);
   }
 
   private _downloadBlob(
@@ -149,6 +154,7 @@ export class JournalEntryService {
     search?: string,
     account?: string,
     entryIds?: string[],
+    currency?: string,
   ): void {
     let p = new HttpParams();
     if (companyId) p = p.set('companyId', companyId);
@@ -156,6 +162,7 @@ export class JournalEntryService {
     if (year)      p = p.set('year',  year);
     if (search)    p = p.set('search', search);
     if (account)   p = p.set('account', account);
+    if (currency)  p = p.set('currency', currency);
     if (entryIds?.length) p = p.set('entryIds', entryIds.join(','));
 
     this.http.get<Blob>(url, { params: p, responseType: 'blob' as 'json' }).subscribe({

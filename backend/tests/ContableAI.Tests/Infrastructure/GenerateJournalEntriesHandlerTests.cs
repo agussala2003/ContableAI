@@ -355,6 +355,39 @@ public class GenerateJournalEntriesHandlerTests
         persistedUsd.JournalEntryId.Should().BeNull("el movimiento en USD queda sin asentar");
     }
 
+    // ── 6b. USD con cuenta en dólares configurada: asiento USD completo ────────
+
+    [Fact]
+    public async Task UsdTransaction_WithUsdAccount_GeneratesUsdEntry_AndLinksTransaction()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var company = NewCompany(withUsdAccount: true);
+        var tx = NewTx(company.Id, 250.75m, TransactionType.Debit, "Honorarios", "Pago dólares",
+            currency: Currencies.Usd);
+
+        await using (var seed = NewDb(dbName))
+        {
+            seed.Companies.Add(company);
+            seed.BankTransactions.Add(tx);
+            await seed.SaveChangesAsync();
+        }
+
+        await Generate(dbName, tx.Id);
+
+        await using var db = NewDb(dbName);
+        var entry = await db.JournalEntries.Include(e => e.Lines).SingleAsync();
+
+        AssertBalanced(entry);
+        entry.Currency.Should().Be(Currencies.Usd, "el asiento hereda la moneda del movimiento");
+        entry.Lines.Single(l => l.IsDebit).Account.Should().Be("Honorarios");
+        entry.Lines.Single(l => !l.IsDebit).Account.Should().Be(UsdBankAccount,
+            "la contrapartida de un movimiento USD es la cuenta bancaria en dólares");
+
+        var persistedTx = await db.BankTransactions.SingleAsync();
+        persistedTx.JournalEntryId.Should().Be(entry.Id,
+            "el movimiento USD debe quedar asentado (vinculado a su asiento)");
+    }
+
     // ── 7. Período cerrado: se cancela toda la generación del lote ─────────────
 
     [Fact]
