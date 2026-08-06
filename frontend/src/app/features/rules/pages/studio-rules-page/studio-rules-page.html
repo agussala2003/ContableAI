@@ -57,11 +57,9 @@
     [form]="form()"
     [isSaving]="isSaving()"
     [isEditing]="!!editingRule()"
-    [applyRetroactive]="false"
     [accounts]="chartOfAccountService.accountNames()"
     (closeRequested)="closePanel()"
     (saveRequested)="saveRule()"
     (formFieldChanged)="onFormFieldChange($event)"
-    (applyRetroactiveChange)="noop()"
   />
 </div>

@@ -41,6 +41,7 @@ public class ContableAIDbContext : DbContext
     public static string Unaccent(string text) => throw new InvalidOperationException("Solo se puede usar en consultas LINQ-to-SQL.");
 
     public DbSet<BankTransaction>  BankTransactions  { get; set; }
+    public DbSet<BankAccount>      BankAccounts      { get; set; }
     public DbSet<AccountingRule>   AccountingRules   { get; set; }
     public DbSet<Company>          Companies         { get; set; }
     public DbSet<User>             Users             { get; set; }
@@ -128,6 +129,42 @@ public class ContableAIDbContext : DbContext
             .HasForeignKey(b => b.CompanyId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // ==========================================
+        // BankAccount (F1 — multi-cuenta bancaria)
+        // ==========================================
+        modelBuilder.Entity<BankAccount>()
+            .Property(a => a.Currency)
+            .HasMaxLength(Currencies.CodeLength)
+            .HasDefaultValue(Currencies.Ars);
+
+        // Enrutamiento del OCR: el número normalizado identifica la cuenta DENTRO de la empresa
+        // (dos empresas de un mismo grupo pueden compartir CBU, por eso no es único global).
+        // NormalizedNumber es nullable y Postgres trata los NULL como distintos entre sí, así que
+        // varias cuentas todavía sin número (las del backfill) conviven bajo este índice único.
+        modelBuilder.Entity<BankAccount>()
+            .HasIndex(a => new { a.CompanyId, a.NormalizedNumber })
+            .IsUnique()
+            .HasDatabaseName("IX_BankAccounts_CompanyId_NormalizedNumber");
+
+        modelBuilder.Entity<BankAccount>()
+            .HasIndex(a => a.StudioTenantId)
+            .HasDatabaseName("IX_BankAccounts_StudioTenantId");
+
+        modelBuilder.Entity<BankAccount>()
+            .HasOne(a => a.Company)
+            .WithMany()
+            .HasForeignKey(a => a.CompanyId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Índices de los filtros por cuenta de ambas grillas (movimientos y libro diario).
+        modelBuilder.Entity<BankTransaction>()
+            .HasIndex(b => new { b.BankAccountId, b.Date })
+            .HasDatabaseName("IX_BankTransactions_BankAccountId_Date");
+
+        modelBuilder.Entity<JournalEntry>()
+            .HasIndex(j => new { j.CompanyId, j.BankAccountId })
+            .HasDatabaseName("IX_JournalEntries_CompanyId_BankAccountId");
 
         // ==========================================
         // AccountingRule
@@ -337,5 +374,10 @@ public class ContableAIDbContext : DbContext
             .HasQueryFilter(r => _tenantFilterDisabled
                               || (r.CompanyId == null && r.StudioTenantId == null)
                               || r.StudioTenantId == _currentTenantId);
+
+        // BankAccount: ancla por la columna desnormalizada, igual que BankTransaction. Se define
+        // desde el alta de la entidad para que ninguna consulta futura nazca sin aislamiento.
+        modelBuilder.Entity<BankAccount>()
+            .HasQueryFilter(a => _tenantFilterDisabled || a.StudioTenantId == _currentTenantId);
     }
 }

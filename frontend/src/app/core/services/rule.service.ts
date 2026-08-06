@@ -26,13 +26,6 @@ export interface SaveRuleRequest {
   requiresTaxMatching: boolean;
 }
 
-export interface ReapplyRuleResponse {
-  ruleId: string;
-  updatedCount: number;
-  transactionIds: string[];
-  appliedAccount: string;
-}
-
 /** Impacto de la reaplicación forzada, con el desglose por origen previo de la clasificación. */
 export interface ReapplyRuleReport {
   ruleId: string;
@@ -152,10 +145,6 @@ export class RuleService {
 
   deactivateRule(id: string): Observable<void> {
     return this.http.patch<void>(`${this.apiBase}/rules/${id}/deactivate`, {});
-  }
-
-  reapplyRule(id: string): Observable<ReapplyRuleResponse> {
-    return this.http.post<ReapplyRuleResponse>(`${this.apiBase}/rules/${id}/reapply`, {});
   }
 
   /** Preview de la reaplicación forzada: calcula el impacto sin escribir nada. */

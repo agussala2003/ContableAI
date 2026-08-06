@@ -68,6 +68,12 @@ internal static class StudioTenantPurger
         var suggestions = await DeleteAsync(db,
             db.RuleSuggestions.Where(s => s.CompanyId != null && companyIds.Contains(s.CompanyId.Value)), ct);
 
+        // Antes que Companies: BankAccount tiene FK a Company. La cascada de la BD lo cubriría en
+        // Postgres, pero borrarlas acá mantiene el orden explícito de la purga y hace que el
+        // proveedor InMemory de los tests se comporte igual.
+        await DeleteAsync(db,
+            db.BankAccounts.IgnoreQueryFilters().Where(a => companyIds.Contains(a.CompanyId)), ct);
+
         var companies = await DeleteAsync(db,
             db.Companies.IgnoreQueryFilters().Where(c => companyIds.Contains(c.Id)), ct);
 

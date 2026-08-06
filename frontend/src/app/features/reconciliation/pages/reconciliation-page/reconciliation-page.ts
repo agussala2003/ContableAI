@@ -311,20 +311,12 @@ export class ReconciliationPage implements OnInit {
     this.ruleService.createRule(companyId, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (rule) => {
         this.bulkRules.update(list => [rule, ...list]);
-        this.ruleService.reapplyRule(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-          next: (result) => {
-            this.isSavingQuickRule.set(false);
-            this.closeQuickRuleModal();
-            this.svc.loadData();
-            this.toast.success(`Regla creada y aplicada a ${result.updatedCount} movimiento(s) pendiente(s).`);
-          },
-          error: () => {
-            this.isSavingQuickRule.set(false);
-            this.closeQuickRuleModal();
-            this.svc.loadData();
-            this.toast.warning('Regla creada, pero no se pudo completar la reaplicación automática.');
-          },
-        });
+        this.isSavingQuickRule.set(false);
+        this.closeQuickRuleModal();
+        this.svc.loadData();
+        // Crear la regla ya no reaplica nada sobre lo cargado: el override retroactivo es una
+        // acción explícita y con preview ("Históricos", en la pantalla de Reglas).
+        this.toast.success('Regla creada. Se aplicará a los movimientos que importes de ahora en más.');
       },
       error: () => {
         this.isSavingQuickRule.set(false);

@@ -22,5 +22,13 @@ public class JournalEntry
     /// </summary>
     public string Currency { get; init; } = Currencies.Ars;
 
+    /// <summary>
+    /// Cuenta bancaria del movimiento que originó el asiento (F1: multi-cuenta). Se DESNORMALIZA
+    /// desde la <see cref="BankTransaction"/> por el mismo motivo que <see cref="Currency"/>: el
+    /// libro diario se filtra y exporta por cuenta sin joinear al movimiento, y este asiento solo
+    /// guarda el <see cref="BankTransactionId"/> suelto, sin navegación.
+    /// </summary>
+    public Guid? BankAccountId { get; set; }
+
     public List<JournalEntryLine> Lines { get; init; } = [];
 }

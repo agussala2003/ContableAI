@@ -57,12 +57,10 @@
     [form]="form()"
     [isSaving]="isSaving()"
     [isEditing]="!!editingRule()"
-    [applyRetroactive]="applyRetroactive()"
     [accounts]="chartOfAccountService.accountNames()"
     (closeRequested)="closePanel()"
     (saveRequested)="saveRule()"
     (formFieldChanged)="onFormFieldChange($event)"
-    (applyRetroactiveChange)="onApplyRetroactiveChange($event)"
   />
 
   @if (showCompanyModal()) {

@@ -44,7 +44,6 @@ export class RulesPage {
   panelOpen     = signal(false);
   editingRule   = signal<AccountingRule | null>(null);
   form          = signal<RuleForm>(EMPTY_FORM());
-  applyRetroactive = signal(true);
 
   searchQuery   = signal('');
   filterType    = signal<RuleFilterType>('all');
@@ -188,7 +187,6 @@ export class RulesPage {
   closePanel() {
     this.panelOpen.set(false);
     this.editingRule.set(null);
-    this.applyRetroactive.set(true);
   }
 
   saveRule() {
@@ -224,7 +222,7 @@ export class RulesPage {
           this.rules.update(list =>
             list.map(r => r.id === editing.id ? { ...r, ...req, direction: this.directionStrToNum(req.direction) } : r)
           );
-          this.afterRuleSaved(editing.id, 'Regla actualizada.');
+          this.afterRuleSaved('Regla actualizada.');
         },
         error: () => {
           this.isSaving.set(false);
@@ -235,7 +233,7 @@ export class RulesPage {
       this.ruleService.createRule(companyId, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: rule => {
           this.rules.update(list => [...list, rule].sort((a, b) => a.priority - b.priority));
-          this.afterRuleSaved(rule.id, 'Regla creada.');
+          this.afterRuleSaved('Regla creada.');
         },
         error: () => {
           this.isSaving.set(false);
@@ -489,10 +487,6 @@ export class RulesPage {
     this.updateFormField(change.field, change.value as RuleForm[typeof change.field]);
   }
 
-  onApplyRetroactiveChange(value: boolean): void {
-    this.applyRetroactive.set(value);
-  }
-
   directionNumToStr(d: RuleDirection): Direction {
     if (d === 'DEBIT' || d === 'Debit') return 'DEBIT';
     if (d === 'CREDIT' || d === 'Credit') return 'CREDIT';
@@ -535,25 +529,14 @@ export class RulesPage {
     return left === right;
   }
 
-  private afterRuleSaved(ruleId: string, successMessage: string): void {
-    if (!this.applyRetroactive()) {
-      this.isSaving.set(false);
-      this.closePanel();
-      this.toast.success(successMessage);
-      return;
-    }
-
-    this.ruleService.reapplyRule(ruleId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (result) => {
-        this.isSaving.set(false);
-        this.closePanel();
-        this.toast.success(`${successMessage} Reaplicada en ${result.updatedCount} movimiento(s) pendiente(s).`);
-      },
-      error: () => {
-        this.isSaving.set(false);
-        this.closePanel();
-        this.toast.warning(`${successMessage} No se pudo completar la reaplicación automática.`);
-      },
-    });
+  /**
+   * Guardar una regla ya no dispara ninguna reaplicación: la regla rige para lo que se importe
+   * de ahora en más. El override sobre lo ya cargado es una acción aparte y explícita
+   * ("Históricos" en la fila), porque sobrescribe trabajo manual y necesita confirmación.
+   */
+  private afterRuleSaved(successMessage: string): void {
+    this.isSaving.set(false);
+    this.closePanel();
+    this.toast.success(successMessage);
   }
 }

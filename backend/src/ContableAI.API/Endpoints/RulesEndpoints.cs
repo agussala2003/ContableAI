@@ -101,93 +101,10 @@ public static class RulesEndpoints
         .Produces(204)
         .Produces(404);
 
-        app.MapPost("/api/rules/{id:guid}/reapply", async (Guid id, ContableAIDbContext dbContext) =>
-        {
-            var rule = await dbContext.AccountingRules
-                .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.Id == id);
-
-            if (rule is null)
-                return Results.NotFound("Regla no encontrada.");
-
-            if (rule.CompanyId is null)
-                return Results.BadRequest("Las reglas globales no se pueden reaplicar desde este endpoint.");
-
-            var company = await dbContext.Companies
-                .AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Id == rule.CompanyId.Value);
-
-            if (company is null)
-                return Results.NotFound("Empresa de la regla no encontrada.");
-
-            // Collect IDs of all global (company-agnostic) rules so we can identify
-            // transactions that were classified by a general rule and should now be
-            // superseded by this new own rule.
-            var globalRuleIds = await dbContext.AccountingRules
-                .Where(r => r.CompanyId == null)
-                .Select(r => r.Id)
-                .ToListAsync();
-
-            // El criterio de coincidencia es el MISMO que aplica el motor de clasificación
-            // (KeywordMatcher): palabra por palabra, en orden, sin distinguir mayúsculas. Antes acá
-            // se usaba Description.Contains(keyword), que en Postgres es case-sensitive y exige la
-            // frase completa y literal — reaplicar alcanzaba a menos movimientos de los que la regla
-            // realmente clasifica, sin ninguna razón visible para el usuario.
-            //
-            // El patrón ILIKE filtra en la base (no trae la tabla entera a memoria) y el
-            // KeywordMatcher.Matches posterior confirma la coincidencia exacta: ILIKE resuelve
-            // mayúsculas según la collation de la base, así que se usa como prefiltro y la decisión
-            // final la toma el mismo código que corre en la clasificación.
-            var keywordPattern = KeywordMatcher.ToLikePattern(rule.Keyword);
-
-            var candidates = (await dbContext.BankTransactions
-                .Where(t => t.CompanyId == company.Id
-                            && t.JournalEntryId == null
-                            && EF.Functions.ILike(t.Description, keywordPattern, KeywordMatcher.LikeEscapeChar)
-                            && (rule.Direction == null || t.Type == rule.Direction)
-                            && (
-                                t.AssignedAccount == null
-                                || t.ClassificationSource == ClassificationSources.Pending
-                                || (t.ClassificationSource == ClassificationSources.HardRule
-                                    && t.AppliedRuleId != null
-                                    && globalRuleIds.Contains(t.AppliedRuleId.Value))
-                            ))
-                .ToListAsync())
-                .Where(t => KeywordMatcher.Matches(t.Description, rule.Keyword))
-                .ToList();
-
-            bool isChequeTaxRule = rule.TargetAccount.Equals("IMPUESTO AL CHEQUE", StringComparison.OrdinalIgnoreCase);
-            string source = (isChequeTaxRule && company.SplitChequeTax)
-                ? ClassificationSources.ChequeTaxSplit
-                : ClassificationSources.HardRule;
-
-            float confidence = rule.RequiresTaxMatching ? 0.75f : 1.0f;
-
-            foreach (var tx in candidates)
-            {
-                tx.Assign(rule.TargetAccount, rule.Id, rule.RequiresTaxMatching, source, confidence);
-            }
-
-            if (candidates.Count > 0)
-                await dbContext.SaveChangesAsync();
-
-            return Results.Ok(new
-            {
-                RuleId = rule.Id,
-                UpdatedCount = candidates.Count,
-                TransactionIds = candidates.Select(t => t.Id).ToList(),
-                AppliedAccount = rule.TargetAccount,
-            });
-        })
-        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
-        .WithName("ReapplyRule")
-        .WithTags("Reglas")
-        .WithSummary("Reaplicar una regla sobre movimientos sin clasificar ya cargados.")
-        .WithDescription("Actualiza transacciones de la empresa de la regla con AssignedAccount null/Pending y sin asiento generado.")
-        .Produces(200)
-        .Produces(400)
-        .Produces(404);
-
+        // El POST /api/rules/{id}/reapply sincrónico se retiró en la v1.1: corría al guardar la
+        // regla, alcanzaba solo a los movimientos sin clasificar y convivía con este endpoint con
+        // semántica distinta. La reaplicación retroactiva tiene ahora un único camino, explícito y
+        // con preview: /reapply-async.
         app.MapPost("/api/rules/{id:guid}/reapply-async", async (
             Guid                  id,
             HttpContext           httpContext,
