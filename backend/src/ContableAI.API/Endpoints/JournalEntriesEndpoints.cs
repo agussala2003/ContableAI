@@ -28,42 +28,60 @@ public static class JournalEntriesEndpoints
             if (req.TransactionIds == null || req.TransactionIds.Count == 0)
                 return Results.BadRequest("Se requiere al menos una transacción.");
 
-            // Fix fallo silencioso USD: el job de Hangfire omite (con solo un warning en el log)
-            // todo movimiento cuya empresa no tenga configurada la cuenta bancaria de su moneda,
-            // así que el usuario veía "éxito" y el asiento nunca aparecía. Se valida acá, ANTES
-            // de encolar, para devolver un 422 accionable en lugar de un job que "triunfa" vacío.
+            // Fix fallo silencioso: el job de Hangfire omite (con solo un warning en el log) todo
+            // movimiento cuya cuenta bancaria no tenga contrapartida contable, así que el usuario
+            // veía "éxito" y el asiento nunca aparecía. Se valida acá, ANTES de encolar, para
+            // devolver un 422 accionable en lugar de un job que "triunfa" vacío.
+            //
+            // F1.c: la contrapartida es un dato de la cuenta bancaria, no de la empresa.
             var affected = await dbContext.BankTransactions
                 .AsNoTracking()
                 .Where(t => req.TransactionIds.Contains(t.Id)
                          && t.CompanyId.HasValue
                          && t.JournalEntryId == null)
-                .Select(t => new { CompanyId = t.CompanyId!.Value, t.Currency })
+                .Select(t => new { CompanyId = t.CompanyId!.Value, t.BankAccountId })
                 .Distinct()
                 .ToListAsync();
 
             var companyIds = affected.Select(a => a.CompanyId).Distinct().ToList();
-            var companies = await dbContext.Companies
+            var companyNames = await dbContext.Companies
                 .AsNoTracking()
                 .Where(c => companyIds.Contains(c.Id) && c.StudioTenantId == currentTenant.StudioTenantId)
-                .Select(c => new { c.Id, c.Name, c.BankAccountName, c.UsdBankAccountName })
-                .ToDictionaryAsync(c => c.Id, c => c);
+                .ToDictionaryAsync(c => c.Id, c => c.Name);
 
-            var missingAccounts = affected
-                .Where(a => companies.TryGetValue(a.CompanyId, out var co)
-                         && string.IsNullOrWhiteSpace(a.Currency == Currencies.Usd ? co.UsdBankAccountName : co.BankAccountName))
-                .Select(a => new { companies[a.CompanyId].Name, a.Currency })
+            // Movimientos sin cuenta asignada: legacy anteriores al alta de cuentas bancarias.
+            var withoutAccount = affected
+                .Where(a => a.BankAccountId is null && companyNames.ContainsKey(a.CompanyId))
+                .Select(a => companyNames[a.CompanyId])
                 .Distinct()
                 .ToList();
 
-            if (missingAccounts.Count > 0)
+            // Cuentas provisionales: existen y reciben movimientos, pero sin contrapartida cargada.
+            var referencedAccountIds = affected
+                .Where(a => a.BankAccountId.HasValue)
+                .Select(a => a.BankAccountId!.Value)
+                .Distinct()
+                .ToList();
+
+            var provisionalAccounts = await dbContext.BankAccounts
+                .AsNoTracking()
+                .Where(a => referencedAccountIds.Contains(a.Id) && a.ContraAccountName == string.Empty)
+                .Select(a => a.Alias)
+                .ToListAsync();
+
+            if (withoutAccount.Count > 0 || provisionalAccounts.Count > 0)
             {
-                var detail = string.Join(" ", missingAccounts.Select(m => m.Currency == Currencies.Usd
-                    ? $"La empresa \"{m.Name}\" no tiene configurada la cuenta bancaria en dólares (USD)."
-                    : $"La empresa \"{m.Name}\" no tiene configurada la cuenta bancaria en pesos."));
+                var parts = new List<string>();
+
+                if (provisionalAccounts.Count > 0)
+                    parts.Add($"Estas cuentas bancarias no tienen contrapartida contable configurada: {string.Join(", ", provisionalAccounts)}.");
+
+                if (withoutAccount.Count > 0)
+                    parts.Add($"Hay movimientos sin cuenta bancaria asignada en: {string.Join(", ", withoutAccount)}.");
 
                 return Results.Problem(
-                    title:      "Cuenta bancaria no configurada",
-                    detail:     $"{detail} Completala en la ficha de la empresa (Editar empresa) y reintentá.",
+                    title:      "Cuenta bancaria sin contrapartida",
+                    detail:     $"{string.Join(" ", parts)} Completala en la ficha de la empresa, pestaña Cuentas Bancarias, y reintentá.",
                     statusCode: 422);
             }
 

@@ -86,7 +86,6 @@ public static class BankAccountsEndpoints
 
             dbContext.BankAccounts.Add(account);
             await dbContext.SaveChangesAsync();
-            await SyncLegacyCompanyFieldsAsync(dbContext, companyId);
 
             return Results.Created($"/api/bank-accounts/{account.Id}", ToResponse(account));
         })
@@ -128,7 +127,6 @@ public static class BankAccountsEndpoints
             account.ChartOfAccountId  = req.ChartOfAccountId;
 
             await dbContext.SaveChangesAsync();
-            await SyncLegacyCompanyFieldsAsync(dbContext, account.CompanyId);
 
             return Results.Ok(ToResponse(account));
         })
@@ -150,7 +148,6 @@ public static class BankAccountsEndpoints
 
             account.IsActive = false;
             await dbContext.SaveChangesAsync();
-            await SyncLegacyCompanyFieldsAsync(dbContext, account.CompanyId);
 
             return Results.Ok(ToResponse(account));
         })
@@ -170,7 +167,6 @@ public static class BankAccountsEndpoints
 
             account.IsActive = true;
             await dbContext.SaveChangesAsync();
-            await SyncLegacyCompanyFieldsAsync(dbContext, account.CompanyId);
 
             return Results.Ok(ToResponse(account));
         })
@@ -224,39 +220,6 @@ public static class BankAccountsEndpoints
             .AnyAsync(a => a.CompanyId == companyId
                         && a.NormalizedNumber == normalized
                         && (excludingId == null || a.Id != excludingId));
-    }
-
-    /// <summary>
-    /// PUENTE TEMPORAL (fase 1.b → se elimina en 1.c).
-    ///
-    /// El generador de asientos todavía resuelve la contrapartida leyendo
-    /// <c>Company.BankAccountName</c> / <c>UsdBankAccountName</c>. Como la ficha de empresa ya no
-    /// expone esos campos —los reemplazó el ABM de cuentas—, hay que mantenerlos al día o el
-    /// contador se quedaría sin forma de configurar la contrapartida hasta que la fase 1.c cambie
-    /// el generador.
-    ///
-    /// Solo escribe cuando hay una cuenta activa de esa moneda con contrapartida cargada: nunca
-    /// borra un valor legacy existente. Con varias cuentas de la misma moneda toma la primera por
-    /// alias, que es todo lo que el modelo viejo puede representar.
-    /// </summary>
-    private static async Task SyncLegacyCompanyFieldsAsync(ContableAIDbContext db, Guid companyId)
-    {
-        var company = await db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
-        if (company is null) return;
-
-        var accounts = await db.BankAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.IsActive && a.ContraAccountName != string.Empty)
-            .OrderBy(a => a.Alias)
-            .ThenBy(a => a.Id)
-            .ToListAsync();
-
-        var ars = accounts.FirstOrDefault(a => a.Currency == Currencies.Ars);
-        if (ars is not null) company.BankAccountName = ars.ContraAccountName;
-
-        var usd = accounts.FirstOrDefault(a => a.Currency == Currencies.Usd);
-        if (usd is not null) company.UsdBankAccountName = usd.ContraAccountName;
-
-        await db.SaveChangesAsync();
     }
 
     private static BankAccountResponse ToResponse(BankAccount a) => new(
