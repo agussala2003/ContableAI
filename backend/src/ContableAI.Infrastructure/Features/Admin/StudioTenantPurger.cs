@@ -62,7 +62,8 @@ internal static class StudioTenantPurger
             db.AfipVouchers.Where(v => companyIds.Contains(v.CompanyId)), ct);
 
         var rules = await DeleteAsync(db,
-            db.AccountingRules.Where(r => r.CompanyId != null && companyIds.Contains(r.CompanyId.Value)), ct);
+            db.AccountingRules.IgnoreQueryFilters()
+                .Where(r => r.CompanyId != null && companyIds.Contains(r.CompanyId.Value)), ct);
 
         var suggestions = await DeleteAsync(db,
             db.RuleSuggestions.Where(s => s.CompanyId != null && companyIds.Contains(s.CompanyId.Value)), ct);
@@ -92,7 +93,8 @@ internal static class StudioTenantPurger
             .Select(u => u.Id)
             .ToListAsync(ct);
 
-        // Las reglas/plan de cuentas a nivel estudio guardan el tenant como Guid.
+        // El plan de cuentas a nivel estudio guarda el tenant como Guid (AccountingRule ya no:
+        // desde el hardening de reglas lo guarda como string, igual que Company).
         Guid? studioGuid = Guid.TryParse(studioTenantId, out var g) ? g : null;
 
         // ── Datos por empresa (hijos → padres) — cascada compartida ──────────
@@ -106,9 +108,11 @@ internal static class StudioTenantPurger
 
         // ── Datos a nivel estudio ─────────────────────────────────────────────
         // Reglas de estudio (CompanyId null + StudioTenantId del tenant) — P-3.
+        // IgnoreQueryFilters: la purga corre desde el cierre de cuenta y desde el job de retención,
+        // que no tienen el tenant del contexto seteado; no debe depender del filtro global.
         var studioRules = await DeleteAsync(db,
-            db.AccountingRules.Where(r =>
-                r.CompanyId == null && studioGuid != null && r.StudioTenantId == studioGuid), ct);
+            db.AccountingRules.IgnoreQueryFilters().Where(r =>
+                r.CompanyId == null && r.StudioTenantId == studioTenantId), ct);
 
         // Sugerencias residuales ancladas solo por TenantId (las de empresa ya cayeron arriba).
         var tenantSuggestions = await DeleteAsync(db,

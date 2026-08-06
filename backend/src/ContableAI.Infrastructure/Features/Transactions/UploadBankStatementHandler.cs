@@ -278,11 +278,11 @@ public sealed class UploadBankStatementHandler
                 .ToListAsync(ct)
             : new List<AccountingRule>();
 
-        Guid? studioGuid = company != null && Guid.TryParse(company.StudioTenantId, out var sg) ? sg : null;
+        var studioId = company?.StudioTenantId;
 
-        var studioRules = studioGuid.HasValue
+        var studioRules = !string.IsNullOrWhiteSpace(studioId)
             ? await _db.AccountingRules.AsNoTracking()
-                .Where(r => r.CompanyId == null && r.StudioTenantId == studioGuid)
+                .Where(r => r.CompanyId == null && r.StudioTenantId == studioId)
                 .OrderBy(r => r.Priority)
                 .ToListAsync(ct)
             : new List<AccountingRule>();

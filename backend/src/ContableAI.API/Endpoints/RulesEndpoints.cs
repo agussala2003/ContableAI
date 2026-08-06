@@ -3,6 +3,7 @@ using ContableAI.Application.Features.Companies.Commands;
 using ContableAI.Application.Features.Companies.Queries;
 using ContableAI.Application.Features.Rules.Commands;
 using ContableAI.Application.Features.Rules.Queries;
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Enums;
 using ContableAI.Domain.Constants;
 using ContableAI.Infrastructure.Persistence;
@@ -125,10 +126,22 @@ public static class RulesEndpoints
                 .Select(r => r.Id)
                 .ToListAsync();
 
-            var candidates = await dbContext.BankTransactions
+            // El criterio de coincidencia es el MISMO que aplica el motor de clasificación
+            // (KeywordMatcher): palabra por palabra, en orden, sin distinguir mayúsculas. Antes acá
+            // se usaba Description.Contains(keyword), que en Postgres es case-sensitive y exige la
+            // frase completa y literal — reaplicar alcanzaba a menos movimientos de los que la regla
+            // realmente clasifica, sin ninguna razón visible para el usuario.
+            //
+            // El patrón ILIKE filtra en la base (no trae la tabla entera a memoria) y el
+            // KeywordMatcher.Matches posterior confirma la coincidencia exacta: ILIKE resuelve
+            // mayúsculas según la collation de la base, así que se usa como prefiltro y la decisión
+            // final la toma el mismo código que corre en la clasificación.
+            var keywordPattern = KeywordMatcher.ToLikePattern(rule.Keyword);
+
+            var candidates = (await dbContext.BankTransactions
                 .Where(t => t.CompanyId == company.Id
                             && t.JournalEntryId == null
-                            && t.Description.Contains(rule.Keyword)
+                            && EF.Functions.ILike(t.Description, keywordPattern, KeywordMatcher.LikeEscapeChar)
                             && (rule.Direction == null || t.Type == rule.Direction)
                             && (
                                 t.AssignedAccount == null
@@ -137,7 +150,9 @@ public static class RulesEndpoints
                                     && t.AppliedRuleId != null
                                     && globalRuleIds.Contains(t.AppliedRuleId.Value))
                             ))
-                .ToListAsync();
+                .ToListAsync())
+                .Where(t => KeywordMatcher.Matches(t.Description, rule.Keyword))
+                .ToList();
 
             bool isChequeTaxRule = rule.TargetAccount.Equals("IMPUESTO AL CHEQUE", StringComparison.OrdinalIgnoreCase);
             string source = (isChequeTaxRule && company.SplitChequeTax)

@@ -2,6 +2,7 @@ using ContableAI.Application.Common;
 using ContableAI.Application.Features.Companies.Commands;
 using ContableAI.Application.Features.Rules.Commands;
 using ContableAI.Application.Features.Rules.Queries;
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Persistence;
@@ -59,9 +60,16 @@ public sealed class AcceptRuleSuggestionHandler
                 "QUOTA_EXCEEDED",
                 "Alcanzaste el límite de reglas automáticas de tu plan. Actualizá para aceptar más sugerencias.");
 
+        // Se resuelve antes de crear la regla: StudioTenantId se desnormaliza desde la empresa y es
+        // el ancla del filtro global de AccountingRule — una regla sin estudio estampado quedaría
+        // invisible para su propio dueño.
+        var company = await _db.Companies.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == cmd.CompanyId, ct);
+
         var rule = new AccountingRule
         {
             CompanyId           = cmd.CompanyId,
+            StudioTenantId      = company?.StudioTenantId ?? cmd.StudioTenantId,
             Keyword             = suggestion.Keyword,
             TargetAccount       = suggestion.SuggestedAccount,
             Priority            = 100,
@@ -71,27 +79,20 @@ public sealed class AcceptRuleSuggestionHandler
         _db.AccountingRules.Add(rule);
         suggestion.Status = SuggestionStatus.Accepted;
 
-        var company = await _db.Companies.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == cmd.CompanyId, ct);
-
         var globalRuleIds = await _db.AccountingRules
             .Where(r => r.CompanyId == null)
             .Select(r => r.Id)
             .ToListAsync(ct);
 
-        // Build ILIKE pattern "%WORD1%WORD2%..." so digit-words that sit between non-digit
-        // words in the original description don't break the match
-        // (e.g. keyword "COELSA EMPRESA SA" must match "COELSA 12345 EMPRESA SA")
-        var keywordPattern = "%" + string.Join("%",
-            suggestion.Keyword
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Select(w => w.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_")))
-            + "%";
+        // Patrón ILIKE equivalente al criterio del motor de clasificación (ver KeywordMatcher):
+        // los códigos numéricos variables que se intercalan entre las palabras no rompen el match
+        // (el keyword "COELSA EMPRESA SA" alcanza a "COELSA 12345 EMPRESA SA").
+        var keywordPattern = KeywordMatcher.ToLikePattern(suggestion.Keyword);
 
         var candidates = await _db.BankTransactions
             .Where(t => t.CompanyId == cmd.CompanyId
                      && t.JournalEntryId == null
-                     && EF.Functions.ILike(t.Description, keywordPattern, "\\")
+                     && EF.Functions.ILike(t.Description, keywordPattern, KeywordMatcher.LikeEscapeChar)
                      && (rule.Direction == null || t.Type == rule.Direction)
                      && (t.AssignedAccount == null
                          || t.ClassificationSource == ContableAI.Domain.Constants.ClassificationSources.Pending

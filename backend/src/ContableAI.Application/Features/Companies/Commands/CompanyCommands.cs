@@ -62,7 +62,7 @@ public record CompanyResponse(
 public record RuleResponse(
     Guid    Id,
     Guid?   CompanyId,
-    Guid?   StudioTenantId,
+    string? StudioTenantId,
     string  Keyword,
     string  TargetAccount,
     string? Direction,

@@ -322,5 +322,20 @@ public class ContableAIDbContext : DbContext
         // las de CompanyId null.
         modelBuilder.Entity<BankTransaction>()
             .HasQueryFilter(b => _tenantFilterDisabled || b.StudioTenantId == _currentTenantId);
+
+        // AccountingRule — cierra el IDOR que permitía leer, editar, desactivar o borrar una regla
+        // de otro estudio conociendo su Id (los endpoints de /api/rules la buscaban solo por Id).
+        //
+        // Ancla por la columna DESNORMALIZADA StudioTenantId, que ahora llevan TODAS las reglas
+        // (ver AccountingRule.StudioTenantId): una sola comparación de columna, sin joinear a
+        // Companies en la carga de reglas del pipeline de clasificación.
+        //
+        // La regla de sistema se reconoce por su forma completa (sin empresa Y sin estudio) y no
+        // solo por StudioTenantId == null: así, una fila anómala con empresa pero sin estudio queda
+        // invisible en lugar de quedar visible para todos los estudios (fail-closed).
+        modelBuilder.Entity<AccountingRule>()
+            .HasQueryFilter(r => _tenantFilterDisabled
+                              || (r.CompanyId == null && r.StudioTenantId == null)
+                              || r.StudioTenantId == _currentTenantId);
     }
 }
