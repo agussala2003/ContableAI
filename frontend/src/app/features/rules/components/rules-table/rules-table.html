@@ -38,8 +38,8 @@
     </div>
   } @else {
     <div class="flex-1 min-h-0 overflow-auto">
-      <div class="min-w-[1230px] divide-y divide-slate-100 dark:divide-slate-800">
-        <div class="sticky top-0 z-10 grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_320px] gap-3 px-5 py-3
+      <div class="min-w-[1350px] divide-y divide-slate-100 dark:divide-slate-800">
+        <div class="sticky top-0 z-10 grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_440px] gap-3 px-5 py-3
                     bg-slate-50 dark:bg-slate-800/90 backdrop-blur-sm
                     border-b border-slate-200 dark:border-slate-700 shadow-[0_1px_2px_0_rgba(0,0,0,0.02)]">
           <span class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Keyword</span>
@@ -52,7 +52,7 @@
         </div>
 
       @for (rule of displayedRules(); track rule.id) {
-        <div class="grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_320px] gap-3 items-center px-5 py-2.5
+        <div class="grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_440px] gap-3 items-center px-5 py-2.5
                     hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors duration-150"
              [class.opacity-50]="!rule.isActive">
 
@@ -108,6 +108,28 @@
               <lucide-icon name="pencil" class="w-3.5 h-3.5"></lucide-icon>
               Editar
             </button>
+
+            @if (canReapply(rule)) {
+              <button
+                (click)="onReapply(rule)"
+                [disabled]="reapplyingId() === rule.id"
+                class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
+                       text-slate-600 dark:text-slate-300
+                       bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
+                       hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200
+                       dark:hover:text-amber-400 dark:hover:bg-amber-500/10 dark:hover:border-amber-500/30
+                       disabled:opacity-50 disabled:cursor-not-allowed
+                       transition-all duration-150 shadow-sm"
+                title="Aplicar esta regla a los movimientos históricos que coincidan, sobrescribiendo su cuenta actual"
+              >
+                @if (reapplyingId() === rule.id) {
+                  <lucide-icon name="loader" class="w-3.5 h-3.5 animate-spin"></lucide-icon>
+                } @else {
+                  <lucide-icon name="clock" class="w-3.5 h-3.5"></lucide-icon>
+                }
+                Históricos
+              </button>
+            }
 
             @if (canPromote(rule)) {
               <button

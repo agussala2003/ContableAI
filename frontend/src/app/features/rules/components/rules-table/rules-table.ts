@@ -22,12 +22,14 @@ export class RulesTable {
   overrideMapByGlobalRule = input<Record<string, string[]>>({});
 
   promotingId = input<string | null>(null);
+  reapplyingId = input<string | null>(null);
 
   createRequested = output<void>();
   editRequested = output<AccountingRule>();
   deleteRequested = output<AccountingRule>();
   toggleStatusRequested = output<AccountingRule>();
   promoteRequested = output<AccountingRule>();
+  reapplyRequested = output<AccountingRule>();
 
   readonly displayedRules = computed(() => {
     const q = this.searchQuery().toLowerCase().trim();
@@ -67,9 +69,21 @@ export class RulesTable {
     this.promoteRequested.emit(rule);
   }
 
+  onReapply(rule: AccountingRule): void {
+    this.reapplyRequested.emit(rule);
+  }
+
   /** Solo las reglas propias de la empresa se pueden promover: las de estudio ya lo están. */
   canPromote(rule: AccountingRule): boolean {
     return rule.companyId != null;
+  }
+
+  /**
+   * La reaplicación retroactiva es solo para reglas de empresa (decisión de alcance v1.1) y no
+   * tiene sentido sobre una regla inactiva, que el motor ni siquiera evalúa.
+   */
+  canReapply(rule: AccountingRule): boolean {
+    return rule.companyId != null && rule.isActive;
   }
 
   ruleScope(rule: AccountingRule): 'company' | 'studio' | 'system' {

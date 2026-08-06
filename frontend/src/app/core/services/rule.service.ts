@@ -1,7 +1,8 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
+import { SKIP_LOADING } from '../interceptors/loading.interceptor';
 
 export type RuleDirection = 'DEBIT' | 'CREDIT' | 'Debit' | 'Credit' | null;
 
@@ -30,6 +31,33 @@ export interface ReapplyRuleResponse {
   updatedCount: number;
   transactionIds: string[];
   appliedAccount: string;
+}
+
+/** Impacto de la reaplicación forzada, con el desglose por origen previo de la clasificación. */
+export interface ReapplyRuleReport {
+  ruleId: string;
+  keyword: string;
+  targetAccount: string;
+  dryRun: boolean;
+  /** Movimientos que la operación va a modificar. */
+  totalToUpdate: number;
+  /** De esos: estaban sin categorizar. */
+  pending: number;
+  /** De esos: los había clasificado otra regla. */
+  byOtherRule: number;
+  /** De esos: los asignó el contador a mano. Es el que dispara la advertencia destructiva. */
+  manual: number;
+  skippedSettled: number;
+  skippedClosedPeriod: number;
+  skippedAfipCombo: number;
+  alreadyApplied: number;
+}
+
+export interface JobStatus {
+  jobId: string;
+  /** Estado de Hangfire: "Enqueued" | "Processing" | "Succeeded" | "Failed" | "Deleted". */
+  state: string;
+  createdAt: string;
 }
 
 /** Regla propia de otra empresa que le va a seguir ganando a la regla promovida. */
@@ -128,6 +156,31 @@ export class RuleService {
 
   reapplyRule(id: string): Observable<ReapplyRuleResponse> {
     return this.http.post<ReapplyRuleResponse>(`${this.apiBase}/rules/${id}/reapply`, {});
+  }
+
+  /** Preview de la reaplicación forzada: calcula el impacto sin escribir nada. */
+  reapplyPreview(id: string): Observable<ReapplyRuleReport> {
+    return this.http.post<ReapplyRuleReport>(
+      `${this.apiBase}/rules/${id}/reapply-async?dryRun=true`, {},
+    );
+  }
+
+  /** Encola la reaplicación forzada en Hangfire; el progreso se sigue con {@link getJobStatus}. */
+  reapplyAsync(id: string): Observable<{ jobId: string; message: string }> {
+    return this.http.post<{ jobId: string; message: string }>(
+      `${this.apiBase}/rules/${id}/reapply-async`, {},
+    );
+  }
+
+  /**
+   * Estado de un job de Hangfire. Endpoint genérico (no específico de reglas); se expone acá
+   * para que la página de reglas no tenga que depender de otra feature solo por el polling.
+   * SKIP_LOADING evita que cada ciclo dispare el overlay global bloqueante.
+   */
+  getJobStatus(jobId: string): Observable<JobStatus> {
+    return this.http.get<JobStatus>(`${this.apiBase}/jobs/${jobId}/status`, {
+      context: new HttpContext().set(SKIP_LOADING, true),
+    });
   }
 
   /**

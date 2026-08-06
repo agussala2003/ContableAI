@@ -8,9 +8,11 @@ using ContableAI.Domain.Enums;
 using ContableAI.Domain.Constants;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
+using Hangfire;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace ContableAI.API.Endpoints;
 
@@ -185,6 +187,62 @@ public static class RulesEndpoints
         .Produces(200)
         .Produces(400)
         .Produces(404);
+
+        app.MapPost("/api/rules/{id:guid}/reapply-async", async (
+            Guid                  id,
+            HttpContext           httpContext,
+            ICurrentTenantService tenant,
+            ISender               sender,
+            ContableAIDbContext   dbContext,
+            IBackgroundJobClient  backgroundJobClient,
+            [FromQuery] bool      dryRun = false) =>
+        {
+            var email = httpContext.User.FindFirst(ClaimTypes.Email)?.Value
+                     ?? httpContext.User.FindFirst("email")?.Value
+                     ?? "desconocido";
+
+            var command = new ReapplyRuleCommand(id, tenant.StudioTenantId!, email, dryRun);
+
+            // El preview corre síncrono: es solo lectura y su costo lo acota el prefiltro por
+            // keyword, así que el modal puede mostrar el impacto sin esperar a un job.
+            if (dryRun)
+            {
+                var preview = await sender.Send(command);
+                return preview.ToHttpResult();
+            }
+
+            // Validación barata ANTES de encolar (mismo criterio que /journal-entries/generate):
+            // sin esto, una regla inexistente o de estudio devolvería 202 y fallaría en silencio
+            // dentro del job. El filtro global de AccountingRule ya acota por estudio.
+            var rule = await dbContext.AccountingRules.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (rule is null)
+                return Results.NotFound("Regla no encontrada.");
+
+            if (rule.CompanyId is null)
+                return Results.Problem(
+                    title:      "La regla no es de empresa",
+                    detail:     "La reaplicación a movimientos históricos solo está disponible para reglas propias de una empresa.",
+                    statusCode: 422);
+
+            var jobId = backgroundJobClient.Enqueue<ISender>(s => s.Send(command, default));
+
+            return Results.Accepted(value: new
+            {
+                JobId   = jobId,
+                Message = "Reaplicación iniciada en segundo plano. Podés seguir trabajando mientras termina.",
+            });
+        })
+        .RequireAuthorization(AuthorizationPolicies.RequireStudioOwner)
+        .WithName("ReapplyRuleAsync")
+        .WithTags("Reglas")
+        .WithSummary("Reaplicar una regla sobre TODOS los movimientos históricos que coincidan (sobrescribe).")
+        .WithDescription("A diferencia de /reapply, sobrescribe la cuenta asignada aunque haya sido puesta a mano. Nunca toca movimientos ya asentados, de períodos cerrados ni provenientes de un cruce múltiple AFIP. Con dryRun=true devuelve 200 con el impacto sin escribir; sin él encola un job de Hangfire y devuelve 202 con el jobId para pollear en /api/jobs/{jobId}/status.")
+        .Produces(202)
+        .Produces(200)
+        .Produces(404)
+        .Produces(422);
 
         // No recibe ICurrentTenantService: el alcance por estudio lo resuelven íntegramente los
         // Global Query Filters de AccountingRule y Company (Epic D).
