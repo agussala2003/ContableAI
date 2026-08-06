@@ -8,12 +8,36 @@ using System.Globalization;
 
 namespace ContableAI.Infrastructure.Services;
 
+/// <summary>
+/// Resultado de leer un extracto: los movimientos más los datos que solo se pueden conocer a
+/// nivel DOCUMENTO, no por movimiento.
+///
+/// Existe porque el enrutamiento automático (F1.d) necesita saber a qué cuenta bancaria pertenece
+/// el archivo, y esa información vive en el encabezado del extracto, no en sus filas. Antes la
+/// moneda —el otro dato de documento— se resolvía con un post-pass que estampaba el valor en cada
+/// transacción; ahora ambos viajan explícitos.
+/// </summary>
+/// <param name="DetectedAccountNumber">Número de cuenta normalizado a dígitos, o <c>null</c> si no
+/// se pudo leer. Se compara contra <c>BankAccount.NormalizedNumber</c>.</param>
+/// <param name="DetectedCbu">CBU/CVU de 22 dígitos, o <c>null</c>.</param>
+public sealed record ParsedStatement(
+    IReadOnlyList<BankTransaction> Transactions,
+    string  Currency,
+    string  Bank,
+    string? DetectedAccountNumber,
+    string? DetectedCbu)
+{
+    /// <summary>Resultado sin metadata de documento (CSV/XLSX: no traen encabezado parseable).</summary>
+    public static ParsedStatement WithoutMetadata(IEnumerable<BankTransaction> transactions, string bankCode) =>
+        new([.. transactions], Currencies.Ars, bankCode, null, null);
+}
+
 public interface IBankParserService
 {
     /// <summary>
     /// Parses a bank file (CSV or XLSX). fileName is used to detect format.
     /// </summary>
-    IEnumerable<BankTransaction> Parse(Stream fileStream, string bankCode, string fileName);
+    ParsedStatement Parse(Stream fileStream, string bankCode, string fileName);
 
     // Legacy alias kept for backward compatibility
     IEnumerable<BankTransaction> ParseCsv(Stream fileStream, string bankCode);
@@ -30,12 +54,14 @@ public class CsvBankParserService : IBankParserService
     //  Public entry points
     // ──────────────────────────────────────────────────────────────────────────
 
-    public IEnumerable<BankTransaction> Parse(Stream fileStream, string bankCode, string fileName)
+    public ParsedStatement Parse(Stream fileStream, string bankCode, string fileName)
     {
         var ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
-        return (ext == ".xlsx" || ext == ".xls")
+        var transactions = (ext == ".xlsx" || ext == ".xls")
             ? ParseXlsx(fileStream, bankCode)
             : ParseCsv(fileStream, bankCode);
+
+        return ParsedStatement.WithoutMetadata(transactions, bankCode);
     }
 
     public IEnumerable<BankTransaction> ParseCsv(Stream fileStream, string bankCode)

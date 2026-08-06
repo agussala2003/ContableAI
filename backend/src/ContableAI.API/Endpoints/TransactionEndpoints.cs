@@ -31,7 +31,9 @@ public static class TransactionEndpoints
             ContableAIDbContext    dbContext,
             IBackgroundJobClient   backgroundJobClient,
             [FromForm] bool? withoutDateFilter = null,
-            [FromForm] bool? forceReapplyRules = null) =>
+            [FromForm] bool? forceReapplyRules = null,
+            // Cuenta elegida en la Dropzone. Cuando viene, gana sobre la detección automática.
+            [FromForm] string? bankAccountId = null) =>
         {
             var files = httpCtx.Request.Form.Files;
             if (files is null || files.Count == 0)
@@ -73,11 +75,12 @@ public static class TransactionEndpoints
             await dbContext.SaveChangesAsync();
 
             Guid? cId = Guid.TryParse(companyId, out var g) ? g : null;
+            Guid? baId = Guid.TryParse(bankAccountId, out var ba) ? ba : null;
             var uploadId = Guid.NewGuid();
             var command = new UploadBankStatementCommand(
                 uploadId, stagedRefs, cId, bankCode,
                 withoutDateFilter ?? false, forceReapplyRules ?? false,
-                tenant.StudioTenantId!);
+                tenant.StudioTenantId!, baId);
 
             backgroundJobClient.Enqueue<ISender>(sender => sender.Send(command, default));
 
