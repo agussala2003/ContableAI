@@ -1,7 +1,7 @@
 import { Component, computed, effect, inject, signal, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection } from '../../../../core/services/rule.service';
+import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection, PromoteRuleResponse } from '../../../../core/services/rule.service';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
@@ -48,6 +48,14 @@ export class RulesPage {
   filterType    = signal<RuleFilterType>('all');
   showInactiveRules = signal(false);
   private loadSeq = 0;
+
+  // ── Promoción a regla de estudio ────────────────────────────────────────
+  /** Regla en curso de promoción; abre el modal cuando no es null. */
+  promotingRule  = signal<AccountingRule | null>(null);
+  /** Preview devuelto por el dry-run; null mientras se está pidiendo. */
+  promotePreview = signal<PromoteRuleResponse | null>(null);
+  isLoadingPreview = signal(false);
+  isPromoting      = signal(false);
 
   constructor() {
     effect(() => {
@@ -259,6 +267,75 @@ export class RulesPage {
         this.toast.error(`Error al ${rule.isActive ? 'desactivar' : 'activar'} la regla.`);
       }
     });
+  }
+
+  // ── Promoción a regla de estudio ────────────────────────────────────────
+
+  /**
+   * Abre el modal y pide el preview con dryRun: el backend responde a cuántas empresas del
+   * estudio va a alcanzar la regla y cuáles ya tienen una propia con keyword solapado, sin
+   * escribir nada. Recién al confirmar se ejecuta la promoción real.
+   */
+  openPromote(rule: AccountingRule): void {
+    if (rule.companyId == null) {
+      this.toast.warning('La regla ya aplica a todo el estudio.');
+      return;
+    }
+
+    this.promotingRule.set(rule);
+    this.promotePreview.set(null);
+    this.isLoadingPreview.set(true);
+
+    this.ruleService.promoteToStudio(rule.id, true).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: preview => {
+        this.promotePreview.set(preview);
+        this.isLoadingPreview.set(false);
+      },
+      error: err => {
+        this.isLoadingPreview.set(false);
+        this.closePromote();
+        this.toast.error(this.promoteErrorMessage(err, 'No se pudo calcular el impacto de la promoción.'));
+      },
+    });
+  }
+
+  closePromote(): void {
+    this.promotingRule.set(null);
+    this.promotePreview.set(null);
+    this.isLoadingPreview.set(false);
+    this.isPromoting.set(false);
+  }
+
+  confirmPromote(): void {
+    const rule = this.promotingRule();
+    if (!rule) return;
+
+    this.isPromoting.set(true);
+    this.ruleService.promoteToStudio(rule.id, false).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: res => {
+        // La regla conserva su id: alcanza con vaciar companyId en la copia local para que
+        // rules-table la reclasifique como "Estudio" y la mueva de la pestaña Propias a Estudio.
+        // studioTenantId ya venía cargado y sigue siendo el correcto.
+        this.rules.update(list =>
+          list.map(r => r.id === rule.id ? { ...r, companyId: null } : r)
+        );
+
+        this.closePromote();
+        this.toast.success(
+          `"${rule.keyword}" ahora aplica a ${res.affectedCompanies} empresa${res.affectedCompanies !== 1 ? 's' : ''} del estudio.`
+        );
+      },
+      error: err => {
+        this.isPromoting.set(false);
+        this.toast.error(this.promoteErrorMessage(err, 'No se pudo promover la regla.'));
+      },
+    });
+  }
+
+  /** El backend devuelve ProblemDetails en los 422 (regla ya de estudio, regla sin estudio). */
+  private promoteErrorMessage(err: unknown, fallback: string): string {
+    const problem = (err as { error?: { detail?: string; title?: string } } | null)?.error;
+    return problem?.detail ?? problem?.title ?? fallback;
   }
 
   updateFormField<K extends keyof RuleForm>(field: K, value: RuleForm[K]): void {

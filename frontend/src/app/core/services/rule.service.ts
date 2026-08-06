@@ -32,6 +32,26 @@ export interface ReapplyRuleResponse {
   appliedAccount: string;
 }
 
+/** Regla propia de otra empresa que le va a seguir ganando a la regla promovida. */
+export interface PromoteRuleConflict {
+  companyId: string;
+  companyName: string;
+  keyword: string;
+  direction: RuleDirection;
+}
+
+export interface PromoteRuleResponse {
+  ruleId: string;
+  keyword: string;
+  targetAccount: string;
+  dryRun: boolean;
+  /** Empresas activas del estudio a las que pasa a aplicar la regla. */
+  affectedCompanies: number;
+  /** Cuántas de esas empresas ya tienen una regla propia con keyword solapado. */
+  conflictingCompanies: number;
+  conflicts: PromoteRuleConflict[];
+}
+
 export interface RuleSuggestion {
   id: string;
   keyword: string;
@@ -108,6 +128,16 @@ export class RuleService {
 
   reapplyRule(id: string): Observable<ReapplyRuleResponse> {
     return this.http.post<ReapplyRuleResponse>(`${this.apiBase}/rules/${id}/reapply`, {});
+  }
+
+  /**
+   * Cambia el alcance de una regla de empresa a nivel estudio, conservando su id.
+   * Con `dryRun` en true devuelve el preview (empresas alcanzadas y conflictos) sin escribir.
+   */
+  promoteToStudio(id: string, dryRun: boolean): Observable<PromoteRuleResponse> {
+    return this.http.post<PromoteRuleResponse>(
+      `${this.apiBase}/rules/${id}/promote-to-studio?dryRun=${dryRun}`, {},
+    );
   }
 
   getStudioRules(includeInactive: boolean = false): Observable<AccountingRule[]> {

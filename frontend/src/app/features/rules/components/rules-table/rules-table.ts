@@ -21,10 +21,13 @@ export class RulesTable {
   overrideMapByOwnRule = input<Record<string, string[]>>({});
   overrideMapByGlobalRule = input<Record<string, string[]>>({});
 
+  promotingId = input<string | null>(null);
+
   createRequested = output<void>();
   editRequested = output<AccountingRule>();
   deleteRequested = output<AccountingRule>();
   toggleStatusRequested = output<AccountingRule>();
+  promoteRequested = output<AccountingRule>();
 
   readonly displayedRules = computed(() => {
     const q = this.searchQuery().toLowerCase().trim();
@@ -58,6 +61,15 @@ export class RulesTable {
 
   onToggleStatus(rule: AccountingRule): void {
     this.toggleStatusRequested.emit(rule);
+  }
+
+  onPromote(rule: AccountingRule): void {
+    this.promoteRequested.emit(rule);
+  }
+
+  /** Solo las reglas propias de la empresa se pueden promover: las de estudio ya lo están. */
+  canPromote(rule: AccountingRule): boolean {
+    return rule.companyId != null;
   }
 
   ruleScope(rule: AccountingRule): 'company' | 'studio' | 'system' {

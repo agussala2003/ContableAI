@@ -286,6 +286,58 @@ public class TenantIsolationTests
     }
 
     [Fact]
+    public void Rule_PromotedToStudio_StaysInsideItsStudio()
+    {
+        // Epic F: promover = vaciar CompanyId conservando StudioTenantId. Esta es la forma final
+        // de una regla promovida; el invariante que se verifica es que sigue siendo privada del
+        // estudio y no se convierte en una regla visible para toda la plataforma.
+        var db = nameof(Rule_PromotedToStudio_StaysInsideItsStudio);
+        Seed(db);
+
+        using (var seedCtx = CtxFor(db, tenantId: null))
+        {
+            seedCtx.AccountingRules.Add(new AccountingRule
+            {
+                Keyword = "PROMOVIDA", TargetAccount = "X", CompanyId = null, StudioTenantId = StudioA,
+            });
+            seedCtx.SaveChanges();
+        }
+
+        using var ctxA = CtxFor(db, StudioA);
+        using var ctxB = CtxFor(db, StudioB);
+
+        ctxA.AccountingRules.Any(r => r.Keyword == "PROMOVIDA").Should().BeTrue();
+        ctxB.AccountingRules.Any(r => r.Keyword == "PROMOVIDA").Should()
+            .BeFalse("promover sube el alcance dentro del estudio, nunca fuera de él");
+    }
+
+    [Fact]
+    public void Rule_PromotedWithoutStudio_WouldLeakToEveryStudio()
+    {
+        // Contracara del test anterior: documenta POR QUÉ el endpoint de promoción rechaza con 422
+        // una regla sin StudioTenantId. Vaciar CompanyId sin estudio estampado produce exactamente
+        // la forma de una regla de SISTEMA, que por diseño alcanza a todos los estudios.
+        var db = nameof(Rule_PromotedWithoutStudio_WouldLeakToEveryStudio);
+        Seed(db);
+
+        using (var seedCtx = CtxFor(db, tenantId: null))
+        {
+            seedCtx.AccountingRules.Add(new AccountingRule
+            {
+                Keyword = "FUGADA", TargetAccount = "X", CompanyId = null, StudioTenantId = null,
+            });
+            seedCtx.SaveChanges();
+        }
+
+        using var ctxA = CtxFor(db, StudioA);
+        using var ctxB = CtxFor(db, StudioB);
+
+        ctxA.AccountingRules.Any(r => r.Keyword == "FUGADA").Should().BeTrue();
+        ctxB.AccountingRules.Any(r => r.Keyword == "FUGADA").Should()
+            .BeTrue("sin estudio, la regla es indistinguible de una de sistema — por eso la promoción lo valida antes de escribir");
+    }
+
+    [Fact]
     public void Rule_SystemAdmin_BypassesFilter_AndSeesAllStudios()
     {
         var db = nameof(Rule_SystemAdmin_BypassesFilter_AndSeesAllStudios);
