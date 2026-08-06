@@ -5,12 +5,16 @@ import { Company, CompanyService, CreateCompanyRequest, UpdateCompanyRequest } f
 import { ToastService } from '../../../../core/services/toast.service';
 import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.service';
 import { AuthService } from '../../../../core/services/auth.service';
+import { BankAccountsPanel } from '../bank-accounts-panel/bank-accounts-panel';
 import { LucideAngularModule } from 'lucide-angular';
+
+/** Pestañas de la ficha de empresa en edición. */
+export type CompanyEditTab = 'general' | 'accounts';
 
 @Component({
   selector: 'app-company-bar',
   standalone: true,
-  imports: [ReactiveFormsModule, NgClass, LucideAngularModule],
+  imports: [ReactiveFormsModule, NgClass, LucideAngularModule, BankAccountsPanel],
   templateUrl: './company-bar.html',
 })
 export class CompanyBar implements OnInit {
@@ -31,26 +35,25 @@ export class CompanyBar implements OnInit {
   showNewForm = signal(false);
   isSaving = signal(false);
   editingCompany = signal<Company | null>(null);
+  editTab = signal<CompanyEditTab>('general');
 
   createSubmitted = signal(false);
   editSubmitted = signal(false);
 
   readonly cuitRegex = /^\d{2}-\d{8}-\d{1}$/;
 
+  // Las contrapartidas bancarias ya no se editan acá: viven en la pestaña "Cuentas Bancarias"
+  // (BankAccountsPanel), que además soporta N cuentas por empresa.
   createForm = this.fb.group({
     name: ['', [Validators.required, Validators.maxLength(120)]],
     cuit: ['', [Validators.required, Validators.pattern(this.cuitRegex)]],
     businessType: ['GENERAL', [Validators.required]],
-    bankAccountName: ['', [Validators.maxLength(120)]],
-    usdBankAccountName: ['', [Validators.maxLength(120)]],
   });
 
   editForm = this.fb.group({
     name: ['', [Validators.required, Validators.maxLength(120)]],
     businessType: ['GENERAL', [Validators.required]],
     splitChequeTax: [false],
-    bankAccountName: ['', [Validators.maxLength(120)]],
-    usdBankAccountName: ['', [Validators.maxLength(120)]],
   });
 
   readonly businessTypes = ['GENERAL', 'RESTAURANTE', 'PELUQUERIA', 'COMERCIO', 'SERVICIO'];
@@ -81,20 +84,13 @@ export class CompanyBar implements OnInit {
       name: formValue.name!.trim(),
       cuit: formValue.cuit!.trim(),
       businessType: formValue.businessType ?? undefined,
-      bankAccountName: (formValue.bankAccountName ?? '').trim() || undefined,
-      usdBankAccountName: (formValue.usdBankAccountName ?? '').trim() || undefined,
     };
     this.companyService.createCompany(req).subscribe({
       next: (company) => {
         this.toast.success(`Empresa "${company.name}" creada y seleccionada.`);
         this.showNewForm.set(false);
         this.createSubmitted.set(false);
-        this.createForm.reset({
-          name: '',
-          cuit: '',
-          businessType: 'GENERAL',
-          bankAccountName: '',
-        });
+        this.createForm.reset({ name: '', cuit: '', businessType: 'GENERAL' });
         this.isSaving.set(false);
         this.created.emit();
       },
@@ -111,13 +107,7 @@ export class CompanyBar implements OnInit {
   cancelNew() {
     this.showNewForm.set(false);
     this.createSubmitted.set(false);
-    this.createForm.reset({
-      name: '',
-      cuit: '',
-      businessType: 'GENERAL',
-      bankAccountName: '',
-      usdBankAccountName: '',
-    });
+    this.createForm.reset({ name: '', cuit: '', businessType: 'GENERAL' });
   }
 
   // ── Edit ────────────────────────────────────────────────────────────────
@@ -126,12 +116,11 @@ export class CompanyBar implements OnInit {
     event.stopPropagation();
     this.showNewForm.set(false);
     this.editSubmitted.set(false);
+    this.editTab.set('general');
     this.editForm.reset({
       name: company.name,
       businessType: company.businessType,
       splitChequeTax: company.splitChequeTax ?? false,
-      bankAccountName: company.bankAccountName ?? '',
-      usdBankAccountName: company.usdBankAccountName ?? '',
     });
     this.editingCompany.set(company);
   }
@@ -153,12 +142,12 @@ export class CompanyBar implements OnInit {
 
     const formValue = this.editForm.getRawValue();
     this.isSaving.set(true);
+    // Sin bankAccountName / usdBankAccountName: los campos legacy los mantiene al día el backend
+    // a partir de las cuentas bancarias. Mandarlos vacíos desde acá los pisaría.
     const req: UpdateCompanyRequest = {
       name: formValue.name!.trim(),
       businessType: formValue.businessType ?? undefined,
       splitChequeTax: formValue.splitChequeTax ?? false,
-      bankAccountName: (formValue.bankAccountName ?? '').trim(),
-      usdBankAccountName: (formValue.usdBankAccountName ?? '').trim(),
     };
     this.companyService.updateCompany(company.id, req).subscribe({
       next: (updated) => {

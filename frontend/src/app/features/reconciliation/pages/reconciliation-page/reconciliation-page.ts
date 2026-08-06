@@ -15,6 +15,7 @@ import { AfipZone } from '../../components/afip-zone/afip-zone';
 import { CompanyModal } from '../../components/company-modal/company-modal';
 import { DuplicatesModal } from '../../components/duplicates-modal/duplicates-modal';
 import { OnboardingModal } from '../../../../core/components/onboarding-modal/onboarding-modal';
+import { ReapplyRuleModal } from '../../../rules/components/reapply-rule-modal/reapply-rule-modal';
 import { RuleService, SaveRuleRequest, AccountingRule } from '../../../../core/services/rule.service';
 import { SkippedDuplicate } from '../../../../core/services/transaction';
 import { CurrencySymbolPipe } from '../../../../shared/pipes/currency-amount.pipe';
@@ -60,6 +61,7 @@ const DEMO_CSV = `Fecha,Referencia,Descripcion,Numero,Importe
     CompanyModal,
     DuplicatesModal,
     OnboardingModal,
+    ReapplyRuleModal,
     LucideAngularModule,
     CurrencySymbolPipe,
     ModalA11yDirective,
@@ -89,6 +91,8 @@ export class ReconciliationPage implements OnInit {
   showQuickRuleModal = signal(false);
   showBulkRuleModal = signal(false);
   isSavingQuickRule = signal(false);
+  /** Regla recién creada por el modal rápido, a la espera de confirmar la aplicación retroactiva. */
+  reapplyingRule = signal<AccountingRule | null>(null);
   isApplyingBulkRule = signal(false);
   showOnboarding   = signal<boolean>(
     localStorage.getItem('contableai_onboarding_done') !== 'true'
@@ -313,16 +317,23 @@ export class ReconciliationPage implements OnInit {
         this.bulkRules.update(list => [rule, ...list]);
         this.isSavingQuickRule.set(false);
         this.closeQuickRuleModal();
-        this.svc.loadData();
-        // Crear la regla ya no reaplica nada sobre lo cargado: el override retroactivo es una
-        // acción explícita y con preview ("Históricos", en la pantalla de Reglas).
-        this.toast.success('Regla creada. Se aplicará a los movimientos que importes de ahora en más.');
+        this.toast.success('Regla creada.');
+        // Encadena el flujo retroactivo: el usuario acaba de crear la regla mirando un movimiento
+        // concreto, así que lo natural es ofrecerle aplicarla a lo ya cargado. Va con preview y
+        // confirmación porque sobrescribe asignaciones manuales.
+        this.reapplyingRule.set(rule);
       },
       error: () => {
         this.isSavingQuickRule.set(false);
         this.toast.error('No se pudo crear la regla rápida.');
       },
     });
+  }
+
+  onReapplyClosed(): void {
+    this.reapplyingRule.set(null);
+    // Se recarga igual si el usuario canceló: la regla nueva ya existe y la grilla la refleja.
+    this.svc.loadData();
   }
 
   /** Selects only the eligible (unbooked) transactions in the grid. */

@@ -542,6 +542,12 @@
   (skip)="onOnboardingSkip()" (loadDemo)="onOnboardingLoadDemo()" />
 }
 
+<!-- Se encadena al guardar una regla rápida: ofrece aplicarla a lo ya cargado. -->
+<app-reapply-rule-modal
+  [rule]="reapplyingRule()"
+  (closed)="onReapplyClosed()"
+/>
+
 @if (showQuickRuleModal()) {
 <div class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
   role="dialog" aria-modal="true" aria-labelledby="quick-rule-modal-title"

@@ -1,15 +1,14 @@
 import { Component, computed, effect, inject, signal, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { timer } from 'rxjs';
-import { switchMap, take, takeWhile, tap } from 'rxjs/operators';
-import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection, PromoteRuleResponse, ReapplyRuleReport } from '../../../../core/services/rule.service';
+import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection, PromoteRuleResponse } from '../../../../core/services/rule.service';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
 import { RuleFormSlideover, RuleFormFieldChange } from '../../components/rule-form-slideover/rule-form-slideover';
 import { RulesTable } from '../../components/rules-table/rules-table';
 import { RulesToolbar } from '../../components/rules-toolbar/rules-toolbar';
+import { ReapplyRuleModal } from '../../components/reapply-rule-modal/reapply-rule-modal';
 import { CompanyModal } from '../../../reconciliation/components/company-modal/company-modal';
 import { LucideAngularModule } from 'lucide-angular';
 import { Direction, RuleFilterType, RuleForm } from '../../components/rules.types';
@@ -25,7 +24,7 @@ const EMPTY_FORM = (): RuleForm => ({
 @Component({
   selector: 'app-rules-page',
   standalone: true,
-  imports: [FormsModule, LucideAngularModule, CompanyModal, RulesToolbar, RulesTable, RuleFormSlideover],
+  imports: [FormsModule, LucideAngularModule, CompanyModal, RulesToolbar, RulesTable, RuleFormSlideover, ReapplyRuleModal],
   templateUrl: './rules-page.html',
 })
 export class RulesPage {
@@ -58,25 +57,8 @@ export class RulesPage {
   isLoadingPreview = signal(false);
   isPromoting      = signal(false);
 
-  // ── Reaplicación a movimientos históricos ───────────────────────────────
-  /** Regla en curso de reaplicación; abre el modal cuando no es null. */
-  reapplyingRule  = signal<AccountingRule | null>(null);
-  reapplyPreview  = signal<ReapplyRuleReport | null>(null);
-  isLoadingReapplyPreview = signal(false);
-  /** true desde que se confirma hasta que el job de Hangfire termina. */
-  isReapplying    = signal(false);
-  /** Estado crudo del job mientras se pollea ("Enqueued" | "Processing" | ...). */
-  reapplyJobState = signal<string | null>(null);
-
-  /** Cuántas asignaciones manuales se van a perder — dispara el bloque de advertencia. */
-  reapplyManualCount = computed(() => this.reapplyPreview()?.manual ?? 0);
-
-  /** Total de coincidencias que quedan intactas por alguna de las exclusiones. */
-  reapplySkippedTotal = computed(() => {
-    const p = this.reapplyPreview();
-    if (!p) return 0;
-    return p.skippedSettled + p.skippedClosedPeriod + p.skippedAfipCombo;
-  });
+  /** Regla en curso de reaplicación; abre `app-reapply-rule-modal` cuando no es null. */
+  reapplyingRule = signal<AccountingRule | null>(null);
 
   constructor() {
     effect(() => {
@@ -290,124 +272,21 @@ export class RulesPage {
   }
 
   // ── Reaplicación a movimientos históricos ───────────────────────────────
+  // El flujo completo (preview, confirmación, job y polling) vive en ReapplyRuleModal, que
+  // comparte con la "regla rápida" de la grilla de conciliación.
 
-  /** Intervalo y tope del polling del job, mismos valores que el resto de los jobs de la app. */
-  private readonly REAPPLY_POLL_INTERVAL_MS = 2000;
-  private readonly REAPPLY_POLL_TIMEOUT_MS  = 5 * 60_000;
-
-  /** Abre el modal y pide el impacto con dryRun: cuenta cuántos movimientos se van a sobrescribir. */
   openReapply(rule: AccountingRule): void {
     if (rule.companyId == null) {
       this.toast.warning('Solo se pueden reaplicar reglas propias de la empresa.');
       return;
     }
-
     this.reapplyingRule.set(rule);
-    this.reapplyPreview.set(null);
-    this.reapplyJobState.set(null);
-    this.isLoadingReapplyPreview.set(true);
-
-    this.ruleService.reapplyPreview(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: preview => {
-        this.reapplyPreview.set(preview);
-        this.isLoadingReapplyPreview.set(false);
-      },
-      error: err => {
-        this.isLoadingReapplyPreview.set(false);
-        this.closeReapply();
-        this.toast.error(this.problemMessage(err, 'No se pudo calcular el impacto de la reaplicación.'));
-      },
-    });
   }
 
-  closeReapply(): void {
-    this.reapplyingRule.set(null);
-    this.reapplyPreview.set(null);
-    this.isLoadingReapplyPreview.set(false);
-    this.isReapplying.set(false);
-    this.reapplyJobState.set(null);
-  }
-
-  /**
-   * Encola el job y arranca el polling. El modal queda abierto mostrando el progreso: la
-   * operación puede tardar sobre años de historia y cerrar el modal dejaría al usuario sin saber
-   * si terminó.
-   */
-  confirmReapply(): void {
-    const rule = this.reapplyingRule();
-    if (!rule) return;
-
-    this.isReapplying.set(true);
-    this.reapplyJobState.set('Enqueued');
-
-    this.ruleService.reapplyAsync(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: ({ jobId }) => this.pollReapplyJob(jobId, rule),
-      error: err => {
-        this.isReapplying.set(false);
-        this.reapplyJobState.set(null);
-        this.toast.error(this.problemMessage(err, 'No se pudo iniciar la reaplicación.'));
-      },
-    });
-  }
-
-  /**
-   * Polling del estado del job de Hangfire. Termina en "Succeeded" (recarga las reglas para que
-   * la grilla refleje el nuevo estado) o en "Failed"/"Deleted"; si se agota el tope de intentos
-   * se avisa sin dar el proceso por perdido, porque el job sigue corriendo del lado del servidor.
-   */
-  private pollReapplyJob(jobId: string, rule: AccountingRule): void {
-    const maxPolls = Math.ceil(this.REAPPLY_POLL_TIMEOUT_MS / this.REAPPLY_POLL_INTERVAL_MS);
-    let polls = 0;
-    let finished = false;
-
-    timer(this.REAPPLY_POLL_INTERVAL_MS, this.REAPPLY_POLL_INTERVAL_MS).pipe(
-      take(maxPolls),
-      tap(() => polls++),
-      switchMap(() => this.ruleService.getJobStatus(jobId)),
-      takeWhile(status => !this.isFinalJobState(status.state), true),
-      takeUntilDestroyed(this.destroyRef),
-    ).subscribe({
-      next: status => {
-        this.reapplyJobState.set(status.state);
-        if (!this.isFinalJobState(status.state)) return;
-
-        finished = true;
-        this.isReapplying.set(false);
-
-        if (status.state === 'Succeeded') {
-          const updated = this.reapplyPreview()?.totalToUpdate ?? 0;
-          this.closeReapply();
-          this.toast.success(
-            `"${rule.keyword}" se reaplicó a ${updated} movimiento${updated !== 1 ? 's' : ''}.`
-          );
-          // Los movimientos cambiaron: la grilla de conciliación tiene que releerlos.
-          this.ruleService.triggerTransactionRefresh();
-          const company = this.companyService.activeCompany();
-          if (company) this.loadRules(company.id);
-        } else {
-          this.closeReapply();
-          this.toast.error('La reaplicación falló. Revisá el estado del trabajo o reintentá.');
-        }
-      },
-      error: () => {
-        this.isReapplying.set(false);
-        this.reapplyJobState.set(null);
-        this.toast.error('Se perdió la conexión mientras se seguía el progreso. El proceso puede haber continuado.');
-      },
-      complete: () => {
-        // Solo se llega acá sin resultado si se agotaron los intentos (en destroy del componente
-        // polls < maxPolls, así que no hay toast espurio al navegar a otra pantalla).
-        if (!finished && polls >= maxPolls) {
-          this.isReapplying.set(false);
-          this.closeReapply();
-          this.toast.warning('La reaplicación está tardando más de lo normal. Sigue corriendo en segundo plano.');
-        }
-      },
-    });
-  }
-
-  private isFinalJobState(state: string): boolean {
-    return state === 'Succeeded' || state === 'Failed' || state === 'Deleted';
+  /** El job terminó bien: los movimientos cambiaron, así que se relee la grilla. */
+  onReapplyCompleted(): void {
+    const company = this.companyService.activeCompany();
+    if (company) this.loadRules(company.id);
   }
 
   // ── Promoción a regla de estudio ────────────────────────────────────────

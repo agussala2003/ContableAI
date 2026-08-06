@@ -10,6 +10,16 @@ record CreateRuleRequest(
     bool?  RequiresTaxMatching
 );
 record CreateChartOfAccountRequest(string Name, string? ExternalCode = null);
+
+/// <summary>Alta y edición de una cuenta bancaria de empresa (F1: multi-cuenta).</summary>
+record SaveBankAccountRequest(
+    string  Alias,
+    string? AccountNumber,
+    string? Cbu,
+    string? BankCode,
+    string  Currency,
+    string? ContraAccountName,
+    Guid?   ChartOfAccountId = null);
 record UpdateChartOfAccountRequest(string? ExternalCode);
 record GenerateJournalEntriesRequest(List<Guid> TransactionIds);
 record ApplyAfipCombinationRequest(Guid TransactionId, List<Guid> VoucherIds);
