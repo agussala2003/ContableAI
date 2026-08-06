@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { ToastService } from './toast.service';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
+import { saveResponseAsFile } from '../utils/file-download';
 
 export interface JournalEntryLine {
   account: string;
@@ -110,16 +111,14 @@ export class JournalEntryService {
       entryIds,
     };
 
-    this.http.post<Blob>(`${this.baseUrl}/export`, payload, { responseType: 'blob' as 'json' }).subscribe({
-      next: blob => {
-        const u      = URL.createObjectURL(blob);
-        const link   = document.createElement('a');
+    this.http.post(`${this.baseUrl}/export`, payload, {
+      observe: 'response',
+      responseType: 'blob',
+    }).subscribe({
+      next: response => {
         const mLabel = month ? String(month).padStart(2, '0') : 'todo';
         const yLabel = year ?? new Date().getFullYear();
-        link.href     = u;
-        link.download = `LibroDiario_${mLabel}-${yLabel}.xlsx`;
-        link.click();
-        URL.revokeObjectURL(u);
+        saveResponseAsFile(response, `LibroDiario_${mLabel}-${yLabel}.xlsx`);
       },
       error: err => {
         const status = err?.status;
@@ -165,16 +164,11 @@ export class JournalEntryService {
     if (currency)  p = p.set('currency', currency);
     if (entryIds?.length) p = p.set('entryIds', entryIds.join(','));
 
-    this.http.get<Blob>(url, { params: p, responseType: 'blob' as 'json' }).subscribe({
-      next: blob => {
-        const u      = URL.createObjectURL(blob);
-        const link   = document.createElement('a');
+    this.http.get(url, { params: p, observe: 'response', responseType: 'blob' }).subscribe({
+      next: response => {
         const mLabel = month ? String(month).padStart(2, '0') : 'todo';
         const yLabel = year ?? new Date().getFullYear();
-        link.href     = u;
-        link.download = `${prefix}_${mLabel}-${yLabel}.${ext}`;
-        link.click();
-        URL.revokeObjectURL(u);
+        saveResponseAsFile(response, `${prefix}_${mLabel}-${yLabel}.${ext}`);
       },
       error: err => {
         const status = err?.status;

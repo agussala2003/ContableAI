@@ -10,7 +10,7 @@ namespace ContableAI.Infrastructure.Services;
 public interface IExportService
 {
     byte[] ExportToExcel(IEnumerable<BankTransaction> transactions, string companyName, int month, int year);
-    byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null, IReadOnlyDictionary<string, string>? externalCodes = null);
+    byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IReadOnlyDictionary<string, string>? externalCodes = null);
 
     /// <summary>Genera archivo TXT tab-delimitado compatible con Holistor.</summary>
     byte[] ExportJournalEntriesToHolistor(IEnumerable<JournalEntry> entries, IReadOnlyDictionary<string, string>? externalCodes = null);
@@ -167,7 +167,7 @@ public class ExcelExportService : IExportService
     // =========================================================================
     // LIBRO DIARIO (Journal Entries)
     // =========================================================================
-    public byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null, IReadOnlyDictionary<string, string>? externalCodes = null)
+    public byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IReadOnlyDictionary<string, string>? externalCodes = null)
     {
         using var wb = new XLWorkbook();
 
@@ -175,10 +175,6 @@ public class ExcelExportService : IExportService
         var sheetLabel  = (month.HasValue && year.HasValue) ? $"{month:D2}-{year}" : year.HasValue ? $"{year}" : "todo";
         var periodLabel = (month.HasValue && year.HasValue) ? $"{GetMonthName(month.Value)} {year}"
                         : year.HasValue ? $"{year}" : "Todos los períodos";
-
-        var balanceSet = new HashSet<string>(
-            (balanceAccounts ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()),
-            StringComparer.OrdinalIgnoreCase);
 
         // Separar por moneda: los totales de ARS y USD nunca se suman en la misma hoja. Con una
         // sola moneda se conservan los nombres de hoja actuales (sin ruido para las cuentas que
@@ -193,7 +189,7 @@ public class ExcelExportService : IExportService
 
         if (byCurrency.Count == 0)
         {
-            BuildFormularioSheet(wb, "Formulario de Asiento", entryList, companyName, periodLabel, balanceSet, externalCodes);
+            BuildFormularioSheet(wb, "Formulario de Asiento", entryList, companyName, periodLabel, externalCodes);
             BuildDetalleSheet(wb, $"Detalle {sheetLabel}", entryList, companyName, periodLabel, externalCodes);
         }
         else
@@ -203,7 +199,7 @@ public class ExcelExportService : IExportService
                 var suffix       = multi ? $" {group.Key}" : string.Empty;
                 var groupEntries = group.OrderBy(e => e.Date).ToList();
                 var groupPeriod  = multi ? $"{periodLabel} — {group.Key}" : periodLabel;
-                BuildFormularioSheet(wb, $"Formulario de Asiento{suffix}", groupEntries, companyName, groupPeriod, balanceSet, externalCodes);
+                BuildFormularioSheet(wb, $"Formulario de Asiento{suffix}", groupEntries, companyName, groupPeriod, externalCodes);
                 BuildDetalleSheet(wb, $"Detalle {sheetLabel}{suffix}", groupEntries, companyName, groupPeriod, externalCodes);
             }
         }
@@ -213,10 +209,10 @@ public class ExcelExportService : IExportService
         return ms.ToArray();
     }
 
-    // ── Hoja "Formulario de Asiento" (consolidado por cuenta) para un conjunto de asientos ──
+    // ── Hoja "Formulario de Asiento" (consolidado por cuenta y lado) para un conjunto de asientos ──
     private static void BuildFormularioSheet(
         XLWorkbook wb, string sheetName, List<JournalEntry> entries, string companyName,
-        string periodLabel, HashSet<string> balanceSet, IReadOnlyDictionary<string, string>? externalCodes)
+        string periodLabel, IReadOnlyDictionary<string, string>? externalCodes)
     {
         var ws = wb.Worksheets.Add(sheetName);
 
@@ -250,40 +246,52 @@ public class ExcelExportService : IExportService
             c.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
         }
 
-        // Group by account, but split configured balance accounts into exclusive Debe/Haber rows.
+        // Consolidación: SIEMPRE una fila por (cuenta, lado). Una cuenta que recibe importes en el
+        // Debe y en el Haber nunca se netea ni se fusiona — se emiten dos filas independientes.
+        // Es lo que permite auditar cuentas puente como "VALORES EN TRANSITO": si el Debe no iguala
+        // al Haber, falta procesar el otro lado de una transferencia entre cuentas propias.
         var groups = entries
-            .SelectMany(e => e.Lines.Select(l =>
-            {
-                var account = l.Account.Trim();
-                var isBalance = balanceSet.Contains(account);
-                var key = isBalance ? $"{account}__{(l.IsDebit ? "D" : "H")}" : account;
-                var label = isBalance ? $"{account} ({(l.IsDebit ? "Debe" : "Haber")})" : account;
-                return new { Key = key, Label = label, l.Amount, l.IsDebit };
-            }))
-            .GroupBy(x => x.Key)
+            .SelectMany(e => e.Lines)
+            .GroupBy(l => new { Account = l.Account.Trim(), l.IsDebit })
             .Select(g => new
             {
-                Key     = g.Key,
-                Account = g.First().Label,
-                Debe    = g.Where(x => x.IsDebit).Sum(x => x.Amount),
-                Haber   = g.Where(x => !x.IsDebit).Sum(x => x.Amount),
+                g.Key.Account,
+                g.Key.IsDebit,
+                Amount = g.Sum(l => l.Amount),
             })
-            // Mismo orden que la UI: cuentas con Debe primero, luego las de solo Haber
-            .OrderBy(g => g.Debe > 0 ? 0 : 1)
-            .ThenBy(g => g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty), StringComparer.OrdinalIgnoreCase)
-            .ThenBy(g => g.Account.EndsWith("(Debe)", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ToList();
+
+        // El sufijo "(Debe)"/"(Haber)" solo se agrega cuando la cuenta tiene saldo en ambos lados;
+        // en el resto de las cuentas sería ruido en la mayoría de las filas.
+        var twoSided = groups
+            .GroupBy(g => g.Account, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Any(x => x.IsDebit) && g.Any(x => !x.IsDebit))
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var rows = groups
+            .Select(g => new
+            {
+                g.Account,
+                g.IsDebit,
+                Label = twoSided.Contains(g.Account)
+                    ? $"{g.Account} ({(g.IsDebit ? "Debe" : "Haber")})"
+                    : g.Account,
+                Debe  = g.IsDebit ? g.Amount : 0m,
+                Haber = g.IsDebit ? 0m : g.Amount,
+            })
+            // Mismo orden que la UI: primero las filas del Debe, luego las del Haber.
+            .OrderBy(g => g.IsDebit ? 0 : 1)
             .ThenBy(g => g.Account, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         int row1 = 7;
         bool alt1 = false;
-        foreach (var g in groups)
+        foreach (var g in rows)
         {
             var bg1 = alt1 ? XLColor.FromArgb(240, 253, 251) : XLColor.White;
-            // Strip balance suffixes to look up the base account name
-            var baseName = g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty).Trim();
-            var extCode  = externalCodes?.GetValueOrDefault(baseName) ?? string.Empty;
-            ws.Cell(row1, 1).Value = g.Account;
+            var extCode = externalCodes?.GetValueOrDefault(g.Account) ?? string.Empty;
+            ws.Cell(row1, 1).Value = g.Label;
             if (g.Debe  > 0) { ws.Cell(row1, 2).Value = g.Debe;  ws.Cell(row1, 2).Style.NumberFormat.Format = "#,##0.00"; ws.Cell(row1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
             if (g.Haber > 0) { ws.Cell(row1, 3).Value = g.Haber; ws.Cell(row1, 3).Style.NumberFormat.Format = "#,##0.00"; ws.Cell(row1, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
             if (!string.IsNullOrEmpty(extCode)) ws.Cell(row1, 4).Value = extCode;

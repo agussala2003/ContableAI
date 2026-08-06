@@ -9,6 +9,29 @@ namespace ContableAI.Infrastructure.Services;
 /// </summary>
 public static class GlobalRules
 {
+    /// <summary>
+    /// Cuenta puente para transferencias entre cuentas bancarias propias ("valores en tránsito").
+    /// La salida de una cuenta la debita y la entrada en la otra la acredita, así el saldo neto del
+    /// período es cero y el movimiento no se contabiliza como venta ni como gasto real. Si el Debe
+    /// no iguala al Haber en el libro diario, es señal de que falta procesar el otro extremo de una
+    /// transferencia (por ejemplo, un extracto sin subir).
+    /// </summary>
+    public const string BridgeAccount = "VALORES EN TRANSITO";
+
+    /// <summary>
+    /// Prioridad de las reglas de la cuenta puente. Por debajo de las reglas de "TRANSFER"
+    /// (11-15), que matchean el mismo prefijo: un movimiento entre cuentas propias nunca debe
+    /// clasificarse como cobro de cliente ni como pago a proveedor.
+    /// </summary>
+    public const int BridgePriority = 9;
+
+    /// <summary>
+    /// Keywords cuyo destino es <see cref="BridgeAccount"/>. Las usa el seeder para repuntar
+    /// reglas de sistema preexistentes que todavía apuntan a una cuenta distinta.
+    /// </summary>
+    public static IReadOnlyList<string> BridgeKeywords =>
+        [.. GetDefaults().Where(r => r.TargetAccount == BridgeAccount).Select(r => r.Keyword)];
+
     public static IReadOnlyList<AccountingRule> GetDefaults() =>
     [
         // ── AFIP / ARCA (prioridad máxima) ───────────────────────────────────
@@ -66,8 +89,18 @@ public static class GlobalRules
         new() { Keyword = "TRANSFER",                     Direction = TransactionType.Debit,  TargetAccount = "PROVEEDORES",                  Priority = 15 },
         new() { Keyword = "PAGO CHEQUE",                  Direction = TransactionType.Debit,  TargetAccount = "PROVEEDORES",                  Priority = 50 },
 
-        // ── Transferencias entre cuentas propias ──────────────────────────────
-        new() { Keyword = "MISMA TITULARIDAD",            Direction = null,                  TargetAccount = "CAJA Y BANCOS",                Priority = 12 },
+        // ── Transferencias entre cuentas propias (cuenta puente) ──────────────
+        // Van contra "VALORES EN TRANSITO", no contra una cuenta de resultado: la salida de una
+        // cuenta propia debita el puente y la entrada en la otra lo acredita, de modo que el neto
+        // del período es cero y la transferencia no infla ni ventas ni gastos.
+        //
+        // Ver BridgePriority: van por encima de las reglas de "TRANSFER" (11-15), que matchean el
+        // mismo prefijo, para que una transferencia propia no se clasifique como cobro ni como pago.
+        new() { Keyword = "MISMA TITULARIDAD",                   Direction = null, TargetAccount = BridgeAccount, Priority = BridgePriority },
+        new() { Keyword = "MISMO TITULAR",                       Direction = null, TargetAccount = BridgeAccount, Priority = BridgePriority },
+        new() { Keyword = "CTA PROPIA",                          Direction = null, TargetAccount = BridgeAccount, Priority = BridgePriority },
+        new() { Keyword = "TRANSFERENCIA ENTRE CUENTAS PROPIAS", Direction = null, TargetAccount = BridgeAccount, Priority = BridgePriority },
+        new() { Keyword = "TRASPASO",                            Direction = null, TargetAccount = BridgeAccount, Priority = BridgePriority },
 
         // ── Sueldos ───────────────────────────────────────────────────────────
         new() { Keyword = "HABERES",                      Direction = TransactionType.Debit,  TargetAccount = "SUELDOS",                      Priority = 20 },
@@ -109,6 +142,8 @@ public static class GlobalRules
         // Activo / Caja
         "CAJA Y BANCOS",
         "CUENTAS A COBRAR",
+        // Cuenta puente de transferencias entre cuentas propias (ver BridgeAccount).
+        BridgeAccount,
         // Ventas
         "VENTAS EFECTIVO/MOSTRADOR",
         "VENTAS CON TARJETA / MARKETPLACE",

@@ -3,6 +3,7 @@ import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
+import { saveResponseAsFile } from '../utils/file-download';
 
 export type Currency = 'ARS' | 'USD';
 
@@ -215,18 +216,11 @@ export class Transaction {
     if (year)      params = params.set('year',  year);
 
     return new Observable<void>(observer => {
-      this.http.get<Blob>(`${this.apiUrl}/export`, { params, responseType: 'blob' as 'json' }).subscribe({
-        next: blob => {
-          const url  = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          const m    = month ? String(month).padStart(2, '0') : 'todo';
-          const y    = year ?? new Date().getFullYear();
-          link.href  = url;
-          link.setAttribute('download', `Banco_${m}-${y}.csv`);
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
+      this.http.get(`${this.apiUrl}/export`, { params, observe: 'response', responseType: 'blob' }).subscribe({
+        next: response => {
+          const m = month ? String(month).padStart(2, '0') : 'todo';
+          const y = year ?? new Date().getFullYear();
+          saveResponseAsFile(response, `Banco_${m}-${y}.csv`);
           observer.next();
           observer.complete();
         },

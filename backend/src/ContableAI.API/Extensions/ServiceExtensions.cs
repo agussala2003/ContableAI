@@ -45,6 +45,10 @@ public static class ServiceExtensions
                 policy.WithOrigins(frontendUrl)
                       .AllowAnyHeader()
                       .AllowAnyMethod()
+                      // AllowAnyHeader() cubre los headers de REQUEST; para que el JS pueda LEER un
+                      // header de response hace falta declararlo acá. Sin esto el frontend no ve el
+                      // nombre de archivo que ya manda Results.File() y cae siempre al fallback.
+                      .WithExposedHeaders("Content-Disposition")
                       // A-3: necesario para que el navegador envíe/reciba la cookie HttpOnly del
                       // refresh token. Requiere un origen explícito (no comodín), que ya es el caso.
                       .AllowCredentials()));

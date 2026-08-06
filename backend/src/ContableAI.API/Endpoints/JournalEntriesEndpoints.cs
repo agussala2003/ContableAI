@@ -249,12 +249,10 @@ public static class JournalEntriesEndpoints
                 if (co != null) companyName = co.Name;
             }
 
-            var studioCompanies = await dbContext.Companies
+            var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
-                .Select(c => new { c.Id, c.BankAccountName })
+                .Select(c => c.Id)
                 .ToListAsync();
-
-            var studioCompanyIds = studioCompanies.Select(c => c.Id).ToList();
 
             var query = dbContext.JournalEntries
                 .Include(j => j.Lines)
@@ -307,19 +305,13 @@ public static class JournalEntriesEndpoints
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
 
-            var balanceAccounts = studioCompanies
-                .Where(c => !string.IsNullOrWhiteSpace(c.BankAccountName))
-                .Select(c => c.BankAccountName!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
             Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidPost);
             var externalCodesPost = await dbContext.ChartOfAccounts
                 .AsNoTracking()
                 .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidPost))
                 .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, balanceAccounts, externalCodesPost);
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, externalCodesPost);
             var dateLabel = req.Month.HasValue && req.Year.HasValue
                 ? $"{req.Month:D2}-{req.Year}"
                 : req.Year.HasValue ? $"{req.Year}" : "todo";
@@ -360,12 +352,10 @@ public static class JournalEntriesEndpoints
                 if (co != null) companyName = co.Name;
             }
 
-            var studioCompanies = await dbContext.Companies
+            var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
-                .Select(c => new { c.Id, c.BankAccountName })
+                .Select(c => c.Id)
                 .ToListAsync();
-
-            var studioCompanyIds = studioCompanies.Select(c => c.Id).ToList();
 
             var query = dbContext.JournalEntries
                 .Include(j => j.Lines)
@@ -419,19 +409,13 @@ public static class JournalEntriesEndpoints
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
 
-            var balanceAccounts = studioCompanies
-                .Where(c => !string.IsNullOrWhiteSpace(c.BankAccountName))
-                .Select(c => c.BankAccountName!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
             Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidGet);
             var externalCodesGet = await dbContext.ChartOfAccounts
                 .AsNoTracking()
                 .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidGet))
                 .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, balanceAccounts, externalCodesGet);
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, externalCodesGet);
             var dateLabel = month.HasValue && year.HasValue
                 ? $"{month:D2}-{year}"
                 : year.HasValue ? $"{year}" : "todo";

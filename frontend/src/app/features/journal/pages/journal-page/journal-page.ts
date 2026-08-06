@@ -13,8 +13,12 @@ import { TransactionSkeleton } from '../../../../shared/components/transaction-s
 import { LucideAngularModule } from 'lucide-angular';
 
 export interface AccountGroup {
+  /** Clave única del grupo: `cuenta__debit` | `cuenta__credit`. */
   key: string;
+  /** Etiqueta a mostrar; lleva sufijo "(Debe)"/"(Haber)" solo si la cuenta tiene ambos lados. */
   account: string;
+  /** Lado del grupo. Es la fuente de verdad del lado, no `debit > 0` (un grupo puede sumar 0). */
+  isDebit: boolean;
   debit: number;
   credit: number;
   lines: Array<{ entry: JournalEntry; line: JournalEntryLine }>;
@@ -129,33 +133,28 @@ export class JournalPage {
     return Array.from(months).sort((a, b) => a - b);
   });
 
-  /** Groups all lines by account for the Ledger (Mayor) view. */
+  /**
+   * Agrupa las líneas para la vista Mayor. La consolidación es SIEMPRE por (cuenta, lado):
+   * una cuenta que recibe importes en el Debe y en el Haber nunca se netea ni se fusiona, se
+   * muestran dos filas independientes. Es lo que permite auditar cuentas puente como
+   * "VALORES EN TRANSITO" — si el Debe no iguala al Haber, falta procesar el otro lado de una
+   * transferencia entre cuentas propias.
+   *
+   * Debe mantenerse en sintonía con `BuildFormularioSheet` del backend (ExcelExportService):
+   * si divergen, la pantalla y el Excel muestran números distintos para el mismo período.
+   */
   accountGroups = computed((): AccountGroup[] => {
     const map = new Map<string, AccountGroup>();
     const accFilter = this.searchAccount();
-    const balanceAccount = this.companyService.activeCompany()?.bankAccountName?.trim().toLowerCase() ?? null;
-
-    const groupKeyFor = (line: JournalEntryLine): string => {
-      const baseAccount = line.account.trim();
-      const isBalanceAccount = !!balanceAccount && baseAccount.toLowerCase() === balanceAccount;
-      if (!isBalanceAccount) return baseAccount;
-      return line.isDebit ? `${baseAccount}__debit` : `${baseAccount}__credit`;
-    };
-
-    const groupLabelFor = (line: JournalEntryLine): string => {
-      const baseAccount = line.account.trim();
-      const isBalanceAccount = !!balanceAccount && baseAccount.toLowerCase() === balanceAccount;
-      if (!isBalanceAccount) return baseAccount;
-      return line.isDebit ? `${baseAccount} (Debe)` : `${baseAccount} (Haber)`;
-    };
 
     for (const entry of this.filteredEntries()) {
       for (const line of entry.lines) {
         if (accFilter && line.account !== accFilter) continue;
 
-        const key = groupKeyFor(line);
+        const account = line.account.trim();
+        const key = `${account}__${line.isDebit ? 'debit' : 'credit'}`;
         if (!map.has(key)) {
-          map.set(key, { key, account: groupLabelFor(line), debit: 0, credit: 0, lines: [] });
+          map.set(key, { key, account, isDebit: line.isDebit, debit: 0, credit: 0, lines: [] });
         }
 
         const grp = map.get(key)!;
@@ -165,19 +164,29 @@ export class JournalPage {
       }
     }
 
-    return Array.from(map.values()).sort((a, b) => {
-      // Cuentas con Debe primero, luego las que solo tienen Haber
-      const sectionA = a.debit > 0 ? 0 : 1;
-      const sectionB = b.debit > 0 ? 0 : 1;
-      if (sectionA !== sectionB) return sectionA - sectionB;
+    const groups = Array.from(map.values());
 
-      // Dentro de la misma sección: alfabético, con (Debe) antes que (Haber) para la cuenta bancaria
-      const baseA = a.account.replace(/ \((Debe|Haber)\)$/i, '');
-      const baseB = b.account.replace(/ \((Debe|Haber)\)$/i, '');
-      const baseCompare = baseA.localeCompare(baseB);
-      if (baseCompare !== 0) return baseCompare;
-      if (a.account.endsWith('(Debe)')) return -1;
-      if (b.account.endsWith('(Debe)')) return 1;
+    // El sufijo "(Debe)"/"(Haber)" solo se agrega cuando la cuenta tiene saldo en ambos lados;
+    // en el resto de las cuentas sería ruido en la mayoría de las filas.
+    const sides = new Map<string, { debit: boolean; credit: boolean }>();
+    for (const g of groups) {
+      const base = g.account.toLowerCase();
+      const seen = sides.get(base) ?? { debit: false, credit: false };
+      if (g.isDebit) seen.debit = true;
+      else           seen.credit = true;
+      sides.set(base, seen);
+    }
+
+    for (const g of groups) {
+      const seen = sides.get(g.account.toLowerCase());
+      if (seen?.debit && seen?.credit) {
+        g.account = `${g.account} (${g.isDebit ? 'Debe' : 'Haber'})`;
+      }
+    }
+
+    return groups.sort((a, b) => {
+      // Primero las filas del Debe, luego las del Haber; dentro de cada bloque, alfabético.
+      if (a.isDebit !== b.isDebit) return a.isDebit ? -1 : 1;
       return a.account.localeCompare(b.account);
     });
   });
@@ -257,17 +266,19 @@ export class JournalPage {
     });
   }
 
-  toggleAccount(account: string): void {
+  /** Expande/colapsa un grupo del Mayor. Se indexa por `AccountGroup.key`, no por la etiqueta:
+   *  una misma cuenta puede tener dos grupos (Debe y Haber) y deben plegarse por separado. */
+  toggleAccount(groupKey: string): void {
     this.expandedAccounts.update(set => {
       const next = new Set(set);
-      if (next.has(account)) next.delete(account);
-      else next.add(account);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
       return next;
     });
   }
 
-  isExpanded(account: string): boolean {
-    return this.expandedAccounts().has(account);
+  isExpanded(groupKey: string): boolean {
+    return this.expandedAccounts().has(groupKey);
   }
 
   load(companyId?: string): void {
