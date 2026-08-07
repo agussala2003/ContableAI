@@ -66,6 +66,13 @@ public class BankTransaction : ITenantEntity
     public Guid? CompanyId { get; set; }
     public Company? Company { get; set; }
 
+    /// <summary>
+    /// Cuenta bancaria de origen del movimiento (F1: multi-cuenta). Determina la contrapartida
+    /// del asiento. <c>null</c> = movimiento legacy anterior al alta de cuentas, o de una empresa
+    /// que nunca configuró ninguna: no se puede asentar hasta asignarle una.
+    /// </summary>
+    public Guid? BankAccountId { get; set; }
+
     // FK al asiento contable generado (null = aún no asentado)
     public Guid? JournalEntryId { get; set; }
 

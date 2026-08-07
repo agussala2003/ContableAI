@@ -72,8 +72,9 @@ public class DeleteStudioTenantHandlerTests
         ctx.JournalEntries.Add(je);
         ctx.JournalEntryLines.Add(new JournalEntryLine { JournalEntryId = je.Id, Account = "Proveedores", Amount = 100m, IsDebit = true });
 
-        ctx.AccountingRules.Add(new AccountingRule { Keyword = "PROVEEDOR", TargetAccount = "Proveedores", CompanyId = company.Id });
-        ctx.AccountingRules.Add(new AccountingRule { Keyword = "BANCO", TargetAccount = "Bancos", CompanyId = null, StudioTenantId = Guid.Parse(tenantId) });
+        // Toda regla lleva su estudio desnormalizado (ancla del filtro global), también las de empresa.
+        ctx.AccountingRules.Add(new AccountingRule { Keyword = "PROVEEDOR", TargetAccount = "Proveedores", CompanyId = company.Id, StudioTenantId = tenantId });
+        ctx.AccountingRules.Add(new AccountingRule { Keyword = "BANCO", TargetAccount = "Bancos", CompanyId = null, StudioTenantId = tenantId });
 
         ctx.RuleSuggestions.Add(new RuleSuggestion { TenantId = tenantId, CompanyId = company.Id, SuggestedAccount = "Proveedores", Frequency = 3 });
         ctx.AfipVouchers.Add(new AfipVoucher { CompanyId = company.Id, TenantId = tenantId, Date = new DateOnly(2026, 1, 15), Amount = 500m, TaxName = "IVA A Pagar" });
@@ -129,7 +130,7 @@ public class DeleteStudioTenantHandlerTests
         (await check.BankTransactions.CountAsync(t => t.TenantId == tenantA)).Should().Be(0);
         (await check.JournalEntries.CountAsync()).Should().Be(1);      // solo el de B
         (await check.JournalEntryLines.CountAsync()).Should().Be(1);   // solo la de B
-        (await check.AccountingRules.CountAsync(r => r.StudioTenantId == Guid.Parse(tenantA))).Should().Be(0);
+        (await check.AccountingRules.CountAsync(r => r.StudioTenantId == tenantA)).Should().Be(0);
         (await check.RuleSuggestions.CountAsync(s => s.TenantId == tenantA)).Should().Be(0);
         (await check.ChartOfAccounts.CountAsync(a => a.StudioTenantId == Guid.Parse(tenantA))).Should().Be(0);
         (await check.ClosedPeriods.CountAsync(p => p.StudioTenantId == tenantA)).Should().Be(0);
@@ -139,7 +140,8 @@ public class DeleteStudioTenantHandlerTests
         // Tenant B: intacto.
         (await check.Users.CountAsync(u => u.StudioTenantId == tenantB)).Should().Be(1);
         (await check.Companies.CountAsync(c => c.StudioTenantId == tenantB)).Should().Be(1);
-        (await check.AccountingRules.CountAsync(r => r.StudioTenantId == Guid.Parse(tenantB))).Should().Be(1);
+        // 2 = regla de empresa + regla de estudio: ambas llevan el estudio desnormalizado.
+        (await check.AccountingRules.CountAsync(r => r.StudioTenantId == tenantB)).Should().Be(2);
         (await check.AuditLogs.CountAsync(a => a.TenantId == tenantB && a.UserEmail == "vivo@estudio.com"))
             .Should().Be(1, "la auditoría de otros tenants no debe anonimizarse");
     }

@@ -61,20 +61,18 @@ public sealed class GetCompanyRulesHandler
 
     public async Task<Result<List<RuleResponse>>> Handle(GetCompanyRulesQuery q, CancellationToken ct)
     {
-        // Global Query Filter: empresa de otro estudio → null → NotFound. Sin esta guarda,
-        // la query de reglas de abajo (AccountingRule no lleva filtro global) filtraría por
-        // r.CompanyId == q.CompanyId y expondría las reglas de la empresa ajena (IDOR).
+        // Global Query Filter: empresa de otro estudio → null → NotFound. AccountingRule ya lleva
+        // su propio filtro global, pero esta guarda se mantiene para no confirmar la existencia de
+        // una empresa ajena (404 en vez de una lista vacía).
         var company = await _db.Companies.AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == q.CompanyId, ct);
 
         if (company is null)
             return Result<List<RuleResponse>>.NotFound("Company not found.");
 
-        Guid? studioGuid = Guid.TryParse(company.StudioTenantId, out var g) ? g : null;
-
         var query = _db.AccountingRules.AsNoTracking()
             .Where(r => r.CompanyId == q.CompanyId
-                        || (r.CompanyId == null && r.StudioTenantId == studioGuid)
+                        || (r.CompanyId == null && r.StudioTenantId == company.StudioTenantId)
                         || (r.CompanyId == null && r.StudioTenantId == null));
 
         if (!q.IncludeInactive)
@@ -98,11 +96,11 @@ public sealed class GetStudioRulesHandler
 
     public async Task<Result<List<RuleResponse>>> Handle(GetStudioRulesQuery q, CancellationToken ct)
     {
-        if (!Guid.TryParse(q.StudioTenantId, out var studioGuid))
+        if (string.IsNullOrWhiteSpace(q.StudioTenantId))
             return Result<List<RuleResponse>>.Success([]);
 
         var query = _db.AccountingRules.AsNoTracking()
-            .Where(r => r.CompanyId == null && r.StudioTenantId == studioGuid);
+            .Where(r => r.CompanyId == null && r.StudioTenantId == q.StudioTenantId);
 
         if (!q.IncludeInactive)
             query = query.Where(r => r.IsActive);
@@ -216,7 +214,10 @@ public sealed class CreateStudioRuleHandler
 
     public async Task<Result<RuleResponse>> Handle(CreateStudioRuleCommand cmd, CancellationToken ct)
     {
-        if (!Guid.TryParse(cmd.StudioTenantId, out var studioGuid))
+        // StudioTenantId es el identificador del estudio tal cual (string): ya no se exige que
+        // parsee como GUID, porque los estudios legacy (ESTUDIO_DEFAULT) tienen un id que no lo es
+        // y quedaban sin poder crear reglas de estudio.
+        if (string.IsNullOrWhiteSpace(cmd.StudioTenantId))
             return Result<RuleResponse>.Failure("StudioTenantId inválido.");
 
         TransactionType? direction = cmd.Direction?.ToUpper() switch
@@ -234,7 +235,7 @@ public sealed class CreateStudioRuleHandler
             Priority            = cmd.Priority ?? 100,
             RequiresTaxMatching = cmd.RequiresTaxMatching ?? false,
             CompanyId           = null,
-            StudioTenantId      = studioGuid,
+            StudioTenantId      = cmd.StudioTenantId,
         };
 
         _db.AccountingRules.Add(rule);
@@ -284,6 +285,8 @@ public sealed class CreateCompanyRuleHandler
             Priority            = cmd.Priority ?? 100,
             RequiresTaxMatching = cmd.RequiresTaxMatching ?? false,
             CompanyId           = cmd.CompanyId,
+            // Desnormalizado desde la empresa (no desde el comando): es el ancla del filtro global.
+            StudioTenantId      = company.StudioTenantId,
         };
 
         _db.AccountingRules.Add(rule);

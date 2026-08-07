@@ -19,6 +19,18 @@ public interface IBankParser
     string DisplayName { get; }
 
     IEnumerable<BankTransaction> Parse(Stream stream, string fileName);
+
+    /// <summary>
+    /// Lectura con la metadata de documento que necesita el enrutamiento automático (moneda,
+    /// banco, número de cuenta, CBU).
+    ///
+    /// La implementación por defecto envuelve <see cref="Parse"/> sin metadata: los formatos
+    /// CSV/XLSX que exportan los bancos no traen un encabezado del que se pueda leer la cuenta.
+    /// Solo <see cref="PdfBankParser"/> la sobrescribe, porque es el único que ve el documento
+    /// completo con su encabezado.
+    /// </summary>
+    ParsedStatement ParseStatement(Stream stream, string fileName) =>
+        ParsedStatement.WithoutMetadata(Parse(stream, fileName), BankCode);
 }
 
 // BankParserHelpers — métodos de utilidad compartidos por todos los parsers.
@@ -856,21 +868,21 @@ public class BankParserFactory : IBankParserService
                    .OrderBy(b => b.DisplayName)
                    .ToList();
 
-    public IEnumerable<BankTransaction> Parse(Stream fileStream, string bankCode, string fileName)
+    public ParsedStatement Parse(Stream fileStream, string bankCode, string fileName)
     {
         // PDF files always use the generic PdfBankParser regardless of bankCode
         var ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
         if (ext == ".pdf")
-            return _parsers["PDF"].Parse(fileStream, fileName!);
+            return _parsers["PDF"].ParseStatement(fileStream, fileName!);
 
         var key = bankCode.Trim().ToUpperInvariant();
         if (_parsers.TryGetValue(key, out var parser))
-            return parser.Parse(fileStream, fileName!);
+            return parser.ParseStatement(fileStream, fileName!);
 
         // Fallback: intentar BBVA simple — bankCode no registrado
-        return _parsers["BBVA"].Parse(fileStream, fileName!);
+        return _parsers["BBVA"].ParseStatement(fileStream, fileName!);
     }
 
     public IEnumerable<BankTransaction> ParseCsv(Stream fileStream, string bankCode)
-        => Parse(fileStream, bankCode, ".csv");
+        => Parse(fileStream, bankCode, ".csv").Transactions;
 }

@@ -115,6 +115,45 @@ public static class SeedExtensions
             await db.SaveChangesAsync();
             logger.LogInformation("[Seed] {Count} nuevas reglas globales insertadas.", toAdd.Count);
         }
+
+        await RepointBridgeRulesAsync(db, logger);
+    }
+
+    /// <summary>
+    /// Repunta a la cuenta puente las reglas de sistema de transferencias entre cuentas propias que
+    /// quedaron apuntando a otra cuenta (históricamente "CAJA Y BANCOS", que además se usa como
+    /// cuenta genérica de disponibilidades y por eso contaminaba el neteo).
+    ///
+    /// Hace falta porque el upsert de arriba es solo-inserción: una regla ya existente conserva su
+    /// <c>TargetAccount</c> para siempre, así que cambiar el valor en <see cref="GlobalRules"/> no
+    /// alcanza para las bases que ya tienen la regla sembrada.
+    ///
+    /// Es idempotente y acotado: solo toca reglas de SISTEMA (sin empresa ni estudio) cuyo keyword
+    /// esté en <see cref="GlobalRules.BridgeKeywords"/> y que todavía no apunten al puente — nunca
+    /// pisa reglas de empresa/estudio ni ediciones hechas por un admin sobre otras reglas.
+    /// </summary>
+    private static async Task RepointBridgeRulesAsync(ContableAIDbContext db, ILogger logger)
+    {
+        var bridgeKeywords = GlobalRules.BridgeKeywords.ToList();
+
+        // También se corrige la prioridad: sin eso, "MISMA TITULARIDAD" seguiría empatada en 12 con
+        // la regla "TRANSFER" → TARJETAS DE CREDITO y el desempate quedaría librado al orden de la
+        // lista. Al ir a 9, una transferencia entre cuentas propias le gana siempre.
+        // La condición sobre TargetAccount hace que esto corra una sola vez por regla: una vez
+        // repuntada, un ajuste posterior del admin no se vuelve a pisar.
+        var repointed = await db.AccountingRules
+            .Where(r => r.CompanyId == null
+                     && r.StudioTenantId == null
+                     && bridgeKeywords.Contains(r.Keyword)
+                     && r.TargetAccount != GlobalRules.BridgeAccount)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.TargetAccount, GlobalRules.BridgeAccount)
+                .SetProperty(r => r.Priority,      GlobalRules.BridgePriority));
+
+        if (repointed > 0)
+            logger.LogInformation(
+                "[Seed] {Count} regla(s) de transferencias entre cuentas propias repuntadas a '{Account}'.",
+                repointed, GlobalRules.BridgeAccount);
     }
 
     private static async Task SeedChartOfAccountsAsync(ContableAIDbContext db, ILogger logger)

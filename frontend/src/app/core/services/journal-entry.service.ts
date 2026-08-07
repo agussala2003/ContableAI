@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 import { ToastService } from './toast.service';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
+import { saveResponseAsFile } from '../utils/file-download';
+import { BankAccountOption } from './transaction';
 
 export interface JournalEntryLine {
   account: string;
@@ -20,7 +22,15 @@ export interface JournalEntry {
   generatedAt: string;
   /** Moneda del asiento (ISO 4217: "ARS" | "USD"). */
   currency: string;
+  /** Cuenta bancaria que originó el asiento; null en asientos previos a la multi-cuenta. */
+  bankAccountId: string | null;
   lines: JournalEntryLine[];
+}
+
+/** Respuesta del listado: los asientos más las opciones del filtro por cuenta bancaria. */
+export interface JournalEntriesResponse {
+  entries: JournalEntry[];
+  availableBankAccounts: BankAccountOption[];
 }
 
 export interface LinkedTransaction {
@@ -61,13 +71,16 @@ export class JournalEntryService {
     );
   }
 
-  getEntries(params?: { companyId?: string; month?: number; year?: number; currency?: string }): Observable<JournalEntry[]> {
+  getEntries(params?: {
+    companyId?: string; month?: number; year?: number; currency?: string; bankAccountId?: string;
+  }): Observable<JournalEntriesResponse> {
     let p = new HttpParams();
     if (params?.companyId) p = p.set('companyId', params.companyId);
     if (params?.month)     p = p.set('month',     params.month);
     if (params?.year)      p = p.set('year',       params.year);
     if (params?.currency)  p = p.set('currency',   params.currency);
-    return this.http.get<JournalEntry[]>(this.baseUrl, { params: p });
+    if (params?.bankAccountId) p = p.set('bankAccountId', params.bankAccountId);
+    return this.http.get<JournalEntriesResponse>(this.baseUrl, { params: p });
   }
 
   deleteEntry(id: string): Observable<void> {
@@ -110,16 +123,14 @@ export class JournalEntryService {
       entryIds,
     };
 
-    this.http.post<Blob>(`${this.baseUrl}/export`, payload, { responseType: 'blob' as 'json' }).subscribe({
-      next: blob => {
-        const u      = URL.createObjectURL(blob);
-        const link   = document.createElement('a');
+    this.http.post(`${this.baseUrl}/export`, payload, {
+      observe: 'response',
+      responseType: 'blob',
+    }).subscribe({
+      next: response => {
         const mLabel = month ? String(month).padStart(2, '0') : 'todo';
         const yLabel = year ?? new Date().getFullYear();
-        link.href     = u;
-        link.download = `LibroDiario_${mLabel}-${yLabel}.xlsx`;
-        link.click();
-        URL.revokeObjectURL(u);
+        saveResponseAsFile(response, `LibroDiario_${mLabel}-${yLabel}.xlsx`);
       },
       error: err => {
         const status = err?.status;
@@ -165,16 +176,11 @@ export class JournalEntryService {
     if (currency)  p = p.set('currency', currency);
     if (entryIds?.length) p = p.set('entryIds', entryIds.join(','));
 
-    this.http.get<Blob>(url, { params: p, responseType: 'blob' as 'json' }).subscribe({
-      next: blob => {
-        const u      = URL.createObjectURL(blob);
-        const link   = document.createElement('a');
+    this.http.get(url, { params: p, observe: 'response', responseType: 'blob' }).subscribe({
+      next: response => {
         const mLabel = month ? String(month).padStart(2, '0') : 'todo';
         const yLabel = year ?? new Date().getFullYear();
-        link.href     = u;
-        link.download = `${prefix}_${mLabel}-${yLabel}.${ext}`;
-        link.click();
-        URL.revokeObjectURL(u);
+        saveResponseAsFile(response, `${prefix}_${mLabel}-${yLabel}.${ext}`);
       },
       error: err => {
         const status = err?.status;

@@ -37,9 +37,11 @@
       }
     </div>
   } @else {
-    <div class="flex-1 min-h-0 overflow-auto">
-      <div class="min-w-[1120px] divide-y divide-slate-100 dark:divide-slate-800">
-        <div class="sticky top-0 z-10 grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_210px] gap-3 px-5 py-3
+    <!-- El menú está anclado a coordenadas de viewport: al scrollear quedaría flotando lejos de
+         su fila, así que se cierra. -->
+    <div class="flex-1 min-h-0 overflow-auto" (scroll)="closeMenu()">
+      <div class="min-w-[1000px] divide-y divide-slate-100 dark:divide-slate-800">
+        <div class="sticky top-0 z-10 grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_120px] gap-3 px-5 py-3
                     bg-slate-50 dark:bg-slate-800/90 backdrop-blur-sm
                     border-b border-slate-200 dark:border-slate-700 shadow-[0_1px_2px_0_rgba(0,0,0,0.02)]">
           <span class="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Keyword</span>
@@ -52,7 +54,7 @@
         </div>
 
       @for (rule of displayedRules(); track rule.id) {
-        <div class="grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_210px] gap-3 items-center px-5 py-2.5
+        <div class="grid grid-cols-[minmax(220px,2.1fr)_minmax(220px,2fr)_160px_110px_60px_60px_120px] gap-3 items-center px-5 py-2.5
                     hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors duration-150"
              [class.opacity-50]="!rule.isActive">
 
@@ -110,40 +112,26 @@
             </button>
 
             <button
-              (click)="onToggleStatus(rule)"
-              class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
+              type="button"
+              (click)="toggleMenu(rule, $event)"
+              [attr.aria-expanded]="openMenuRuleId() === rule.id"
+              [attr.aria-label]="'Más acciones para la regla ' + rule.keyword"
+              aria-haspopup="menu"
+              class="inline-flex items-center justify-center w-7 h-7 rounded-md
                      text-slate-500 dark:text-slate-400
                      bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
-                     hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200
-                     dark:hover:text-amber-400 dark:hover:bg-amber-500/10 dark:hover:border-amber-500/30
-                     disabled:opacity-50 disabled:cursor-not-allowed
+                     hover:text-slate-700 hover:bg-slate-50 hover:border-slate-300
+                     dark:hover:text-slate-200 dark:hover:bg-slate-700 dark:hover:border-slate-600
                      transition-all duration-150 shadow-sm"
-              [attr.title]="rule.isActive ? 'Desactivar regla' : 'Activar regla'"
+              [class.ring-1]="openMenuRuleId() === rule.id"
+              [class.ring-indigo-400]="openMenuRuleId() === rule.id"
+              title="Más acciones"
             >
-              @if (rule.isActive) {
-                <lucide-icon name="eye-off" class="w-3.5 h-3.5"></lucide-icon> Desactivar
-              } @else {
-                <lucide-icon name="eye" class="w-3.5 h-3.5"></lucide-icon> Activar
-              }
-            </button>
-            <button
-              (click)="onDelete(rule)"
-              [disabled]="deletingId() === rule.id || rule.companyId == null"
-              class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
-                     text-slate-500 dark:text-slate-400
-                     bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
-                     hover:text-red-600 hover:bg-red-50 hover:border-red-200
-                     dark:hover:text-red-400 dark:hover:bg-red-500/10 dark:hover:border-red-500/30
-                     disabled:opacity-50 disabled:cursor-not-allowed
-                     transition-all duration-150 shadow-sm"
-              [attr.title]="rule.companyId == null ? 'Las reglas generales se eliminan por administracion' : 'Eliminar regla'"
-            >
-              @if (deletingId() === rule.id) {
+              @if (isBusy(rule)) {
                 <lucide-icon name="loader" class="w-3.5 h-3.5 animate-spin"></lucide-icon>
               } @else {
-                <lucide-icon name="trash-2" class="w-3.5 h-3.5"></lucide-icon>
+                <lucide-icon name="more-vertical" class="w-4 h-4"></lucide-icon>
               }
-              Borrar
             </button>
           </div>
         </div>
@@ -166,5 +154,80 @@
       }
       </div>
     </div>
+  }
+
+  <!-- Menú kebab. Se renderiza acá, fuera del contenedor con overflow-auto, y con posición fija:
+       dentro de la fila quedaría recortado justo en las últimas filas de la tabla. -->
+  @if (openMenuRule(); as menuRule) {
+    @if (menuPosition(); as pos) {
+      <div
+        role="menu"
+        (click)="$event.stopPropagation()"
+        [style.top.px]="pos.top"
+        [style.right.px]="pos.right"
+        class="fixed z-50 min-w-[190px] py-1 rounded-lg animate-fade-in
+               bg-white dark:bg-slate-800
+               border border-slate-200 dark:border-slate-700
+               shadow-lg shadow-slate-900/10 dark:shadow-black/40"
+      >
+        @if (canReapply(menuRule)) {
+          <button type="button" role="menuitem"
+            (click)="closeMenu(); onReapply(menuRule)"
+            class="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium text-left
+                   text-slate-600 dark:text-slate-300
+                   hover:text-amber-600 hover:bg-amber-50 dark:hover:text-amber-400 dark:hover:bg-amber-500/10
+                   transition-colors"
+            title="Aplicar esta regla a los movimientos históricos que coincidan, sobrescribiendo su cuenta actual"
+          >
+            <lucide-icon name="clock" class="w-3.5 h-3.5 shrink-0"></lucide-icon>
+            Aplicar a históricos
+          </button>
+        }
+
+        @if (canPromote(menuRule)) {
+          <button type="button" role="menuitem"
+            (click)="closeMenu(); onPromote(menuRule)"
+            class="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium text-left
+                   text-slate-600 dark:text-slate-300
+                   hover:text-violet-600 hover:bg-violet-50 dark:hover:text-violet-400 dark:hover:bg-violet-500/10
+                   transition-colors"
+            title="Promover a regla de estudio: pasa a aplicar a todas las empresas del estudio"
+          >
+            <lucide-icon name="arrow-up" class="w-3.5 h-3.5 shrink-0"></lucide-icon>
+            Promover a Estudio
+          </button>
+        }
+
+        <button type="button" role="menuitem"
+          (click)="closeMenu(); onToggleStatus(menuRule)"
+          class="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium text-left
+                 text-slate-600 dark:text-slate-300
+                 hover:text-amber-600 hover:bg-amber-50 dark:hover:text-amber-400 dark:hover:bg-amber-500/10
+                 transition-colors"
+          [attr.title]="menuRule.isActive ? 'Desactivar regla' : 'Activar regla'"
+        >
+          @if (menuRule.isActive) {
+            <lucide-icon name="eye-off" class="w-3.5 h-3.5 shrink-0"></lucide-icon> Desactivar
+          } @else {
+            <lucide-icon name="eye" class="w-3.5 h-3.5 shrink-0"></lucide-icon> Activar
+          }
+        </button>
+
+        @if (canDelete(menuRule)) {
+          <div class="my-1 border-t border-slate-100 dark:border-slate-700"></div>
+          <button type="button" role="menuitem"
+            (click)="closeMenu(); onDelete(menuRule)"
+            class="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium text-left
+                   text-red-600 dark:text-red-400
+                   hover:bg-red-50 dark:hover:bg-red-500/10
+                   transition-colors"
+            title="Eliminar regla"
+          >
+            <lucide-icon name="trash-2" class="w-3.5 h-3.5 shrink-0"></lucide-icon>
+            Borrar
+          </button>
+        }
+      </div>
+    }
   }
 </div>

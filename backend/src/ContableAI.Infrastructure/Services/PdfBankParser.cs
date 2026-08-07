@@ -53,6 +53,9 @@ public class PdfBankParser : IBankParser
     public string DisplayName => "PDF (extracto bancario)";
 
     public IEnumerable<BankTransaction> Parse(Stream stream, string fileName)
+        => ParseStatement(stream, fileName).Transactions;
+
+    public ParsedStatement ParseStatement(Stream stream, string fileName)
     {
         try
         {
@@ -71,7 +74,16 @@ public class PdfBankParser : IBankParser
             var currency = DetectCurrency(rows);
             _logger.LogDebug("[PDF] Moneda detectada: {Currency}", currency);
 
-            // 4. Despacho a la estrategia del banco (o la genérica si no hay una específica).
+            // 4. Identificación de la cuenta a nivel documento, para el enrutamiento automático.
+            var ids = DetectAccountIdentifiers(rows);
+            _logger.LogDebug("[PDF] Cuenta detectada: {Account} — CBU: {Cbu}", ids.AccountNumber, ids.Cbu);
+
+            if (ids.HasMultipleAccounts)
+                _logger.LogWarning(
+                    "[PDF] El encabezado identifica más de una cuenta ({Identifiers}): no se puede enrutar automáticamente",
+                    string.Join(", ", ids.LabeledCbus));
+
+            // 5. Despacho a la estrategia del banco (o la genérica si no hay una específica).
             var parser = _bankParsers.GetValueOrDefault(doc.Bank) ?? _genericParser;
             var txs = parser.Parse(rows, fileName).ToList();
 
@@ -79,7 +91,10 @@ public class PdfBankParser : IBankParser
             foreach (var tx in txs)
                 tx.Currency = currency;
 
-            return txs;
+            return new ParsedStatement(txs, currency, doc.Bank, ids.AccountNumber, ids.Cbu)
+            {
+                ConflictingAccountIdentifiers = ids.HasMultipleAccounts ? ids.LabeledCbus : [],
+            };
         }
         catch (InvalidOperationException)
         {
@@ -89,7 +104,7 @@ public class PdfBankParser : IBankParser
         catch
         {
             // PDF corrupto/ilegible u otro fallo inesperado: sin transacciones (igual que antes).
-            return Enumerable.Empty<BankTransaction>();
+            return new ParsedStatement([], Currencies.Ars, BankCodes.Generic, null, null);
         }
     }
 
@@ -225,4 +240,156 @@ public class PdfBankParser : IBankParser
 
         return usdAmountTokens >= UsdTokenThreshold ? Currencies.Usd : Currencies.Ars;
     }
+
+    // ── Identificación de la cuenta (a nivel documento, bank-agnóstica) ─────────
+    //
+    // Se resuelve acá y no en cada estrategia de banco por el mismo motivo que la moneda: es un
+    // dato del ENCABEZADO del documento, no de sus filas, y el criterio (buscar un número junto a
+    // una etiqueta de cuenta, descartando CUIT/fechas/importes) es idéntico en todos los bancos.
+    // Un banco nuevo hereda la detección sin escribir una línea.
+
+    /// <summary>Solo el encabezado: pasada esa altura ya empiezan los movimientos.</summary>
+    private const int HeaderLinesToScan = 40;
+
+    /// <summary>CUIT: el falso positivo más común, porque convive con la cuenta en el encabezado.</summary>
+    private static readonly Regex RxCuit = new(@"\b\d{2}-\d{8}-\d\b", RegexOptions.Compiled);
+
+    // OJO con el nombre: esta clase hace `using static BankParsingHelpers`, que ya expone un
+    // RxDate (dd/MM, sin año, el que usan las filas de movimientos). Un campo llamado igual acá lo
+    // shadowearía y rompería StartsWithDate — y con él, el merge de filas partidas.
+    private static readonly Regex RxFullDate = new(@"\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b", RegexOptions.Compiled);
+
+    /// <summary>Importe con decimales: nunca es un número de cuenta.</summary>
+    private static readonly Regex RxDecimalAmount = new(@"\d+,\d{2}\b", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Corrida larga de dígitos con separadores internos, candidata a CBU/CVU. No incluye "/"
+    /// a propósito: así una fecha corta la corrida en lugar de fusionarse con ella.
+    /// </summary>
+    private static readonly Regex RxLongDigitRun = new(@"\d[\d\s.\-]{18,34}\d", RegexOptions.Compiled);
+
+    /// <summary>Cuenta agrupada: 123-456789/0, 3-029-0012345-6, 4210-9, 191-123-456789/0.</summary>
+    private static readonly Regex RxGroupedAccount = new(@"\d{1,5}(?:[-/]\d{1,9}){1,3}", RegexOptions.Compiled);
+
+    /// <summary>Cuenta escrita de corrido, sin separadores.</summary>
+    private static readonly Regex RxPlainAccount = new(@"\b\d{7,20}\b", RegexOptions.Compiled);
+
+    private static readonly string[] AccountLabels =
+        ["CUENTA", "CTA", "CC ", "CA ", "NRO", "N°", "NUMERO"];
+
+    /// <summary>
+    /// Mensaje de rechazo cuando el encabezado identifica más de una cuenta (resumen consolidado).
+    /// </summary>
+    public const string MultipleAccountsDetectedError =
+        "El extracto parece ser un resumen consolidado: su encabezado identifica más de una cuenta " +
+        "bancaria. Subí el extracto de cada cuenta por separado, o elegí la cuenta en la pantalla " +
+        "de carga si sabés que todos los movimientos del archivo pertenecen a una sola.";
+
+    /// <summary>
+    /// Identificadores leídos del encabezado: el primero de cada tipo (con el que se enruta) más
+    /// TODOS los CBU/CVU etiquetados distintos, que son la señal de resumen consolidado.
+    /// </summary>
+    internal sealed record HeaderIdentifiers(
+        string? AccountNumber,
+        string? Cbu,
+        IReadOnlyList<string> LabeledCbus)
+    {
+        /// <summary>
+        /// Más de un CBU/CVU <b>etiquetado</b> distinto en el encabezado: el documento identifica
+        /// varias cuentas.
+        ///
+        /// Solo cuentan los etiquetados, y solo los CBU —nunca los números de cuenta— porque son la
+        /// única señal de bajo ruido que dio el corpus real. Medido sobre 47 extractos:
+        ///   · corridas de 22 dígitos SIN etiqueta son números de referencia de movimientos
+        ///     (Credicoop imprime "FEDERACION PATRO-0432243677000000250325" dentro del encabezado);
+        ///   · los números de cuenta capturan teléfonos (el 0810-444-6500 de Galicia aparece en una
+        ///     línea de prosa que contiene la palabra "cuentas") y CUIT escritos sin guiones.
+        /// Con cualquiera de esas dos señales la guarda rechazaba 15 de 47 extractos legítimos.
+        /// </summary>
+        public bool HasMultipleAccounts => LabeledCbus.Count > 1;
+    }
+
+    /// <summary>
+    /// Extrae del encabezado el número de cuenta y el CBU/CVU, normalizados a dígitos para poder
+    /// compararlos contra <c>BankAccount.NormalizedNumber</c>. No detectar nada es un resultado
+    /// válido: es preferible que el usuario elija la cuenta a mano antes que enrutar un extracto a
+    /// la cuenta equivocada.
+    /// </summary>
+    internal static HeaderIdentifiers DetectAccountIdentifiers(IReadOnlyList<StatementLine> rows)
+    {
+        string? cbu     = null;
+        string? account = null;
+        var labeledCbus = new List<string>();
+
+        foreach (var row in rows.Take(HeaderLinesToScan))
+        {
+            var line = RemoveDiacritics(JoinCells(row)).ToUpperInvariant();
+            if (line.Length == 0) continue;
+
+            // Los CUIT se borran antes de mirar nada más: 11 dígitos junto a una etiqueta de
+            // cuenta son indistinguibles de un número de cuenta para cualquier heurística.
+            var sanitized = RxCuit.Replace(line, " ");
+
+            var found = FindCbu(sanitized);
+            if (found is not null)
+            {
+                cbu ??= found;
+                if (HasCbuLabel(sanitized) && !labeledCbus.Contains(found))
+                    labeledCbus.Add(found);
+            }
+
+            account ??= FindAccountNumber(sanitized);
+        }
+
+        // No se corta al encontrar el primero de cada tipo: hay que recorrer todo el encabezado
+        // para poder ver si nombra una segunda cuenta.
+        return new HeaderIdentifiers(account, cbu, labeledCbus);
+    }
+
+    private static bool HasCbuLabel(string line) =>
+        line.Contains("CBU") || line.Contains("CVU");
+
+    private static string? FindCbu(string line)
+    {
+        bool labeled = HasCbuLabel(line);
+
+        foreach (Match m in RxLongDigitRun.Matches(line))
+        {
+            // Sin la etiqueta explícita solo se acepta una corrida contigua: una fila de totales
+            // con varios importes separados por espacios puede sumar 22 dígitos por casualidad.
+            if (!labeled && m.Value.Any(char.IsWhiteSpace)) continue;
+
+            var digits = OnlyDigits(m.Value);
+            if (digits.Length == 22) return digits;
+        }
+
+        return null;
+    }
+
+    private static string? FindAccountNumber(string line)
+    {
+        if (!AccountLabels.Any(line.Contains)) return null;
+
+        // Fechas e importes se descartan antes de buscar: comparten forma con una cuenta.
+        var cleaned = RxDecimalAmount.Replace(RxFullDate.Replace(line, " "), " ");
+
+        // Primero el formato agrupado, que es el que usan los bancos para el número de cuenta.
+        foreach (Match m in RxGroupedAccount.Matches(cleaned))
+        {
+            var digits = OnlyDigits(m.Value);
+            if (digits.Length is >= 6 and <= 20) return digits;
+        }
+
+        foreach (Match m in RxPlainAccount.Matches(cleaned))
+        {
+            // Una corrida de 22 es el CBU, no el número corto de cuenta.
+            if (m.Value.Length == 22) continue;
+            return m.Value;
+        }
+
+        return null;
+    }
+
+    private static string OnlyDigits(string value) =>
+        new([.. value.Where(char.IsDigit)]);
 }

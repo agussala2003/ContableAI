@@ -182,4 +182,170 @@ public class TenantIsolationTests
         jobCtx.Companies.Count().Should().Be(2);
         jobCtx.BankTransactions.Count().Should().Be(2);
     }
+
+    // ── AccountingRule ────────────────────────────────────────────────────────
+    // Epic D: hasta el hardening, AccountingRule NO tenía filtro global y los endpoints de
+    // /api/rules buscaban la regla solo por Id — con el Id de una regla ajena se podía leerla,
+    // editarla, desactivarla o borrarla desde otro estudio.
+
+    private sealed record SeededRules(Guid ACompanyRule, Guid AStudioRule, Guid BCompanyRule, Guid BStudioRule, Guid SystemRule);
+
+    /// <summary>
+    /// Siembra el juego completo de niveles de regla para ambos estudios. Toda regla lleva su
+    /// estudio desnormalizado, incluidas las de empresa: es el ancla del filtro.
+    /// </summary>
+    private static SeededRules SeedRules(string dbName)
+    {
+        var (bCompanyId, _, aCompanyId, _) = Seed(dbName);
+
+        using var seedCtx = CtxFor(dbName, tenantId: null); // sin tenant → filtro OFF
+
+        var aCompanyRule = new AccountingRule { Keyword = "A-EMPRESA", TargetAccount = "X", CompanyId = aCompanyId, StudioTenantId = StudioA };
+        var aStudioRule  = new AccountingRule { Keyword = "A-ESTUDIO", TargetAccount = "X", CompanyId = null,       StudioTenantId = StudioA };
+        var bCompanyRule = new AccountingRule { Keyword = "B-EMPRESA", TargetAccount = "X", CompanyId = bCompanyId, StudioTenantId = StudioB };
+        var bStudioRule  = new AccountingRule { Keyword = "B-ESTUDIO", TargetAccount = "X", CompanyId = null,       StudioTenantId = StudioB };
+        var systemRule   = new AccountingRule { Keyword = "SISTEMA",   TargetAccount = "X", CompanyId = null,       StudioTenantId = null };
+
+        seedCtx.AccountingRules.AddRange(aCompanyRule, aStudioRule, bCompanyRule, bStudioRule, systemRule);
+        seedCtx.SaveChanges();
+
+        return new SeededRules(aCompanyRule.Id, aStudioRule.Id, bCompanyRule.Id, bStudioRule.Id, systemRule.Id);
+    }
+
+    [Fact]
+    public void Rule_List_IsScopedToCurrentStudio_PlusSystemRules()
+    {
+        var db = nameof(Rule_List_IsScopedToCurrentStudio_PlusSystemRules);
+        SeedRules(db);
+
+        using var ctxA = CtxFor(db, StudioA);
+
+        ctxA.AccountingRules.AsNoTracking().Select(r => r.Keyword)
+            .Should().BeEquivalentTo(["A-EMPRESA", "A-ESTUDIO", "SISTEMA"]);
+    }
+
+    [Fact]
+    public void Rule_GetById_FromForeignStudio_ReturnsNull()
+    {
+        var db = nameof(Rule_GetById_FromForeignStudio_ReturnsNull);
+        var ids = SeedRules(db);
+
+        using var ctxA = CtxFor(db, StudioA);
+
+        // El IDOR concreto: conocer el Id de una regla ajena no alcanza para tocarla.
+        ctxA.AccountingRules.FirstOrDefault(r => r.Id == ids.BCompanyRule).Should().BeNull();
+        ctxA.AccountingRules.FirstOrDefault(r => r.Id == ids.BStudioRule).Should().BeNull();
+
+        // Sanity: las propias y las de sistema sí se ven.
+        ctxA.AccountingRules.FirstOrDefault(r => r.Id == ids.ACompanyRule).Should().NotBeNull();
+        ctxA.AccountingRules.FirstOrDefault(r => r.Id == ids.SystemRule).Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Rule_SystemRules_AreVisibleToEveryStudio()
+    {
+        var db = nameof(Rule_SystemRules_AreVisibleToEveryStudio);
+        var ids = SeedRules(db);
+
+        using var ctxA = CtxFor(db, StudioA);
+        using var ctxB = CtxFor(db, StudioB);
+
+        // La clasificación depende de que las reglas de sistema lleguen a todos los estudios.
+        ctxA.AccountingRules.Any(r => r.Id == ids.SystemRule).Should().BeTrue();
+        ctxB.AccountingRules.Any(r => r.Id == ids.SystemRule).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Rule_WithCompanyButNoStudio_IsInvisible_FailClosed()
+    {
+        var db = nameof(Rule_WithCompanyButNoStudio_IsInvisible_FailClosed);
+        var (bCompanyId, _, _, _) = Seed(db);
+
+        using (var seedCtx = CtxFor(db, tenantId: null))
+        {
+            // Fila anómala: regla de empresa sin estudio estampado (backfill incompleto, o una
+            // ruta de escritura que se olvide de estamparlo). El filtro reconoce la regla de
+            // sistema por su forma COMPLETA (sin empresa Y sin estudio), así que esta queda
+            // invisible en vez de quedar expuesta a todos los estudios.
+            seedCtx.AccountingRules.Add(new AccountingRule
+            {
+                Keyword = "HUERFANA", TargetAccount = "X", CompanyId = bCompanyId, StudioTenantId = null,
+            });
+            seedCtx.SaveChanges();
+        }
+
+        using var ctxA = CtxFor(db, StudioA);
+        using var ctxB = CtxFor(db, StudioB);
+
+        ctxA.AccountingRules.Any(r => r.Keyword == "HUERFANA").Should().BeFalse();
+        ctxB.AccountingRules.Any(r => r.Keyword == "HUERFANA").Should().BeFalse();
+
+        // Sigue siendo alcanzable para reparar el dato (purga, backfill, soporte).
+        using var jobCtx = CtxFor(db, tenantId: null);
+        jobCtx.AccountingRules.Any(r => r.Keyword == "HUERFANA").Should().BeTrue();
+    }
+
+    [Fact]
+    public void Rule_PromotedToStudio_StaysInsideItsStudio()
+    {
+        // Epic F: promover = vaciar CompanyId conservando StudioTenantId. Esta es la forma final
+        // de una regla promovida; el invariante que se verifica es que sigue siendo privada del
+        // estudio y no se convierte en una regla visible para toda la plataforma.
+        var db = nameof(Rule_PromotedToStudio_StaysInsideItsStudio);
+        Seed(db);
+
+        using (var seedCtx = CtxFor(db, tenantId: null))
+        {
+            seedCtx.AccountingRules.Add(new AccountingRule
+            {
+                Keyword = "PROMOVIDA", TargetAccount = "X", CompanyId = null, StudioTenantId = StudioA,
+            });
+            seedCtx.SaveChanges();
+        }
+
+        using var ctxA = CtxFor(db, StudioA);
+        using var ctxB = CtxFor(db, StudioB);
+
+        ctxA.AccountingRules.Any(r => r.Keyword == "PROMOVIDA").Should().BeTrue();
+        ctxB.AccountingRules.Any(r => r.Keyword == "PROMOVIDA").Should()
+            .BeFalse("promover sube el alcance dentro del estudio, nunca fuera de él");
+    }
+
+    [Fact]
+    public void Rule_PromotedWithoutStudio_WouldLeakToEveryStudio()
+    {
+        // Contracara del test anterior: documenta POR QUÉ el endpoint de promoción rechaza con 422
+        // una regla sin StudioTenantId. Vaciar CompanyId sin estudio estampado produce exactamente
+        // la forma de una regla de SISTEMA, que por diseño alcanza a todos los estudios.
+        var db = nameof(Rule_PromotedWithoutStudio_WouldLeakToEveryStudio);
+        Seed(db);
+
+        using (var seedCtx = CtxFor(db, tenantId: null))
+        {
+            seedCtx.AccountingRules.Add(new AccountingRule
+            {
+                Keyword = "FUGADA", TargetAccount = "X", CompanyId = null, StudioTenantId = null,
+            });
+            seedCtx.SaveChanges();
+        }
+
+        using var ctxA = CtxFor(db, StudioA);
+        using var ctxB = CtxFor(db, StudioB);
+
+        ctxA.AccountingRules.Any(r => r.Keyword == "FUGADA").Should().BeTrue();
+        ctxB.AccountingRules.Any(r => r.Keyword == "FUGADA").Should()
+            .BeTrue("sin estudio, la regla es indistinguible de una de sistema — por eso la promoción lo valida antes de escribir");
+    }
+
+    [Fact]
+    public void Rule_SystemAdmin_BypassesFilter_AndSeesAllStudios()
+    {
+        var db = nameof(Rule_SystemAdmin_BypassesFilter_AndSeesAllStudios);
+        SeedRules(db);
+
+        using var admin = CtxFor(db, tenantId: "system", isSystemAdmin: true);
+
+        // El ABM de reglas globales del panel de administración depende de este bypass.
+        admin.AccountingRules.Count().Should().Be(5);
+    }
 }

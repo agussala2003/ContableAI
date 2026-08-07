@@ -47,8 +47,8 @@ namespace ContableAI.Infrastructure.Migrations
                     b.Property<bool>("RequiresTaxMatching")
                         .HasColumnType("boolean");
 
-                    b.Property<Guid?>("StudioTenantId")
-                        .HasColumnType("uuid");
+                    b.Property<string>("StudioTenantId")
+                        .HasColumnType("text");
 
                     b.Property<string>("TargetAccount")
                         .IsRequired()
@@ -160,6 +160,64 @@ namespace ContableAI.Infrastructure.Migrations
                     b.ToTable("AuditLogs");
                 });
 
+            modelBuilder.Entity("ContableAI.Domain.Entities.BankAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountNumber")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Alias")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("BankCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Cbu")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ChartOfAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContraAccountName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("ARS");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("NormalizedNumber")
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudioTenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StudioTenantId")
+                        .HasDatabaseName("IX_BankAccounts_StudioTenantId");
+
+                    b.HasIndex("CompanyId", "NormalizedNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_BankAccounts_CompanyId_NormalizedNumber");
+
+                    b.ToTable("BankAccounts");
+                });
+
             modelBuilder.Entity("ContableAI.Domain.Entities.BankTransaction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -179,6 +237,9 @@ namespace ContableAI.Infrastructure.Migrations
                     b.Property<decimal>("BalanceAfter")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("BankAccountId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ClassificationSource")
                         .IsRequired()
@@ -252,6 +313,9 @@ namespace ContableAI.Infrastructure.Migrations
                         .HasDatabaseName("IX_BankTransactions_StudioTenantId");
 
                     b.HasIndex("TenantId");
+
+                    b.HasIndex("BankAccountId", "Date")
+                        .HasDatabaseName("IX_BankTransactions_BankAccountId_Date");
 
                     b.HasIndex("CompanyId", "Amount")
                         .HasDatabaseName("IX_BankTransactions_CompanyId_Amount");
@@ -390,6 +454,9 @@ namespace ContableAI.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("BankAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("BankTransactionId")
                         .HasColumnType("uuid");
 
@@ -425,6 +492,9 @@ namespace ContableAI.Infrastructure.Migrations
                         .IsUnique();
 
                     b.HasIndex("CompanyId");
+
+                    b.HasIndex("CompanyId", "BankAccountId")
+                        .HasDatabaseName("IX_JournalEntries_CompanyId_BankAccountId");
 
                     b.ToTable("JournalEntries");
                 });
@@ -636,6 +706,17 @@ namespace ContableAI.Infrastructure.Migrations
                 });
 
             modelBuilder.Entity("ContableAI.Domain.Entities.AfipVoucher", b =>
+                {
+                    b.HasOne("ContableAI.Domain.Entities.Company", "Company")
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Company");
+                });
+
+            modelBuilder.Entity("ContableAI.Domain.Entities.BankAccount", b =>
                 {
                     b.HasOne("ContableAI.Domain.Entities.Company", "Company")
                         .WithMany()

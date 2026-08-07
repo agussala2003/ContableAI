@@ -1,10 +1,19 @@
 import { Currency } from '../../../core/services/transaction';
 
+/** Opción del filtro por cuenta bancaria. `id` es un GUID, o 'none' para las sin cuenta. */
+export interface BankAccountFilterOption {
+  id: string;
+  alias: string;
+  currency: string;
+}
+
 export interface ReconciliationFilters {
   month: number | null;
   year: number | null;
   search: string;
   account: string;
+  /** GUID, 'none' (movimientos sin cuenta) o null (todas). */
+  bankAccountId: string | null;
   direction: 'debit' | 'credit' | null;
   currency: Currency | null;
   sortBy: string | null;

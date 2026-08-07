@@ -1,0 +1,161 @@
+<div class="space-y-3">
+  @if (isLoading()) {
+    <div class="flex items-center gap-2 py-6 justify-center text-xs text-slate-500 dark:text-slate-400">
+      <lucide-icon name="loader" class="w-4 h-4 animate-spin"></lucide-icon>
+      Cargando cuentas...
+    </div>
+  } @else {
+    @if (accounts().length === 0 && !formOpen()) {
+      <div class="flex flex-col items-center gap-2 py-6 text-center">
+        <p class="text-xs font-medium text-slate-600 dark:text-slate-300">Esta empresa no tiene cuentas bancarias cargadas</p>
+        <p class="text-[11px] text-slate-500 dark:text-slate-400 max-w-xs">
+          Cargá una por cada cuenta que el cliente tenga. La contrapartida es la cuenta contable
+          que va a usar el asiento.
+        </p>
+      </div>
+    } @else {
+      <div class="divide-y divide-slate-100 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+        @for (account of accounts(); track account.id) {
+          <div class="flex items-center gap-3 px-3 py-2.5 bg-white dark:bg-slate-900"
+               [class.opacity-55]="!account.isActive">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">{{ account.alias }}</span>
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold border whitespace-nowrap"
+                      [class]="account.currency === 'USD'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30'
+                        : 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/30'">
+                  {{ account.currency }}
+                </span>
+                @if (!account.isActive) {
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">DE BAJA</span>
+                }
+              </div>
+              <p class="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                @if (account.accountNumber) { {{ account.accountNumber }} · }
+                @if (isProvisional(account)) {
+                  <span class="text-amber-600 dark:text-amber-400 font-medium">Sin contrapartida — no puede asentar</span>
+                } @else {
+                  {{ account.contraAccountName }}
+                }
+              </p>
+            </div>
+
+            <button type="button" (click)="openEdit(account)"
+              class="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
+                     text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800
+                     border border-slate-200 dark:border-slate-700
+                     hover:text-indigo-600 hover:bg-indigo-50 hover:border-indigo-200
+                     dark:hover:text-indigo-400 dark:hover:bg-indigo-500/10
+                     transition-colors shadow-sm">
+              <lucide-icon name="pencil" class="w-3 h-3"></lucide-icon> Editar
+            </button>
+
+            <button type="button" (click)="toggleStatus(account)" [disabled]="busyId() === account.id"
+              class="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
+                     text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800
+                     border border-slate-200 dark:border-slate-700
+                     hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200
+                     dark:hover:text-amber-400 dark:hover:bg-amber-500/10
+                     disabled:opacity-50 transition-colors shadow-sm">
+              @if (busyId() === account.id) {
+                <lucide-icon name="loader" class="w-3 h-3 animate-spin"></lucide-icon>
+              } @else if (account.isActive) {
+                <lucide-icon name="eye-off" class="w-3 h-3"></lucide-icon>
+              } @else {
+                <lucide-icon name="eye" class="w-3 h-3"></lucide-icon>
+              }
+              {{ account.isActive ? 'Baja' : 'Activar' }}
+            </button>
+          </div>
+        }
+      </div>
+    }
+
+    @if (formOpen()) {
+      <form [formGroup]="form" (ngSubmit)="save()"
+            class="rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/40 dark:bg-indigo-500/5 p-3 space-y-3 animate-fade-in">
+        <p class="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
+          {{ editingId() ? 'Editar cuenta' : 'Nueva cuenta bancaria' }}
+        </p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div class="sm:col-span-2">
+            <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Alias *</label>
+            <input formControlName="alias" type="text" placeholder="Ej: Galicia CC $ — Operativa"
+              class="w-full h-8 px-2.5 rounded-md text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors" />
+          </div>
+
+          <div>
+            <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Número de cuenta</label>
+            <input formControlName="accountNumber" type="text" placeholder="Ej: 4210-9/1"
+              class="w-full h-8 px-2.5 rounded-md text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors" />
+            <p class="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Se usa para reconocer la cuenta al subir extractos.</p>
+          </div>
+
+          <div>
+            <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">CBU / CVU</label>
+            <input formControlName="cbu" type="text" placeholder="22 dígitos"
+              class="w-full h-8 px-2.5 rounded-md text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors" />
+          </div>
+
+          <div>
+            <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Banco</label>
+            <select formControlName="bankCode"
+              class="w-full h-8 px-2 rounded-md text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors">
+              <option value="">Sin especificar</option>
+              @for (code of bankCodes; track code) {
+                <option [value]="code">{{ code }}</option>
+              }
+            </select>
+          </div>
+
+          <div>
+            <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Moneda *</label>
+            <select formControlName="currency"
+              class="w-full h-8 px-2 rounded-md text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors">
+              @for (c of currencies; track c) {
+                <option [value]="c">{{ c }}</option>
+              }
+            </select>
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 block">Contrapartida contable</label>
+            <app-account-combobox
+              [accounts]="chartOfAccountService.accountNames()"
+              [value]="form.value.contraAccountName ?? ''"
+              placeholder="Ej: Banco Galicia CC $"
+              (valueChange)="onContraAccountSelected($event)"
+            ></app-account-combobox>
+            <p class="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+              Cuenta que usa el asiento como contrapartida. Si la dejás vacía, la cuenta queda
+              provisional: recibe movimientos pero todavía no puede asentarlos.
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button type="submit" [disabled]="isSaving() || form.invalid"
+            class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm">
+            @if (isSaving()) { <lucide-icon name="loader" class="w-3.5 h-3.5 animate-spin"></lucide-icon> Guardando }
+            @else { Guardar }
+          </button>
+          <button type="button" (click)="closeForm()"
+            class="px-3 h-8 rounded-md text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+            Cancelar
+          </button>
+        </div>
+      </form>
+    } @else {
+      <button type="button" (click)="openCreate()"
+        class="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-xs font-semibold
+               text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-900
+               border border-indigo-200 dark:border-indigo-500/30
+               hover:bg-indigo-50 dark:hover:bg-indigo-500/10 transition-colors shadow-sm">
+        <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>
+        Agregar cuenta bancaria
+      </button>
+    }
+  }
+</div>

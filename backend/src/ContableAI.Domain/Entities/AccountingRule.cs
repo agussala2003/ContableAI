@@ -33,11 +33,24 @@ public class AccountingRule
     public Guid? CompanyId { get; init; } = null;
 
     /// <summary>
-    /// <c>null</c> = regla del sistema (aplica a todos los estudios).
-    /// <c>Guid</c> = regla de estudio (sobreescribe las del sistema para empresas de ese estudio, pero cede ante reglas de empresa).
-    /// Solo aplica cuando <see cref="CompanyId"/> es <c>null</c>.
+    /// Estudio propietario de la regla, DESNORMALIZADO desde <see cref="Company.StudioTenantId"/>
+    /// (mismo patrón que <see cref="BankTransaction.StudioTenantId"/>): lo usa el Global Query
+    /// Filter para aislar por tenant sin joinear a Companies en cada query de reglas — incluida la
+    /// carga de reglas del pipeline de clasificación, que corre por cada archivo subido.
+    ///
+    /// Se estampa en TODA regla, no solo en las de estudio:
+    ///   · regla de empresa  → <see cref="CompanyId"/> != null y el estudio de esa empresa;
+    ///   · regla de estudio  → <see cref="CompanyId"/> == null y el estudio;
+    ///   · regla de sistema  → ambos <c>null</c> (aplica a todos los estudios).
+    /// El nivel (empresa / estudio / sistema) se sigue discriminando por <see cref="CompanyId"/>,
+    /// así que estampar el estudio en las reglas de empresa no altera la precedencia.
+    ///
+    /// Es <c>string</c> y no <c>Guid?</c> para poder comparar directamente contra el tenant del
+    /// usuario en el filtro global (evita un cast no traducible a SQL) y porque hay estudios
+    /// legacy cuyo identificador no es un GUID (<c>ESTUDIO_DEFAULT</c>): parsearlo daba
+    /// <c>null</c>, que es justamente el valor reservado para "regla de sistema".
     /// </summary>
-    public Guid? StudioTenantId { get; init; } = null;
+    public string? StudioTenantId { get; set; } = null;
 
     /// <summary>Si es <c>true</c>, la regla está activa y se aplica. Si es <c>false</c>, se ignora.</summary>
     public bool IsActive { get; set; } = true;

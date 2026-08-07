@@ -41,14 +41,11 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         if (await HasClosedPeriodConflictAsync(request, transactions, cancellationToken))
             return;
 
-        var companiesMap = await LoadCompanyAccountsAsync(transactions, cancellationToken);
-        if (!await EnsureArsAccountsConfiguredAsync(transactions, companiesMap, cancellationToken))
-            return;
-
+        var contraAccounts      = await LoadContraAccountsAsync(transactions, cancellationToken);
         var signatureToEntryIds = await LoadExistingSignatureMapAsync(transactions, cancellationToken);
         var comboVouchersByTx   = await LoadComboVouchersAsync(transactions, cancellationToken);
 
-        await GenerateEntriesAsync(transactions, companiesMap, signatureToEntryIds, comboVouchersByTx, cancellationToken);
+        await GenerateEntriesAsync(transactions, contraAccounts, signatureToEntryIds, comboVouchersByTx, cancellationToken);
     }
 
     // ── Carga de datos ──────────────────────────────────────────────────────────
@@ -70,17 +67,32 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
                      && t.JournalEntryId == null)
             .ToListAsync(ct);
 
-    private async Task<Dictionary<Guid, CompanyBankAccounts>> LoadCompanyAccountsAsync(
+    /// <summary>
+    /// Contrapartida contable de cada cuenta bancaria presente en el lote, indexada por su id.
+    ///
+    /// F1.c: la contrapartida dejó de depender de la moneda del movimiento y pasó a ser un dato de
+    /// la CUENTA. Una empresa puede tener varias cuentas en la misma moneda y cada una asienta
+    /// contra la suya; antes, todas las de pesos compartían el único string de la empresa.
+    /// </summary>
+    private async Task<Dictionary<Guid, string>> LoadContraAccountsAsync(
         List<BankTransaction> transactions, CancellationToken ct)
     {
-        var companyIds = transactions.Select(t => t.CompanyId!.Value).Distinct().ToList();
-        return await _dbContext.Companies
+        var bankAccountIds = transactions
+            .Where(t => t.BankAccountId.HasValue)
+            .Select(t => t.BankAccountId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (bankAccountIds.Count == 0)
+            return [];
+
+        // IgnoreQueryFilters: corre como job de Hangfire (sin HttpContext), y el alcance ya lo
+        // acotan las empresas del estudio resueltas más arriba.
+        return await _dbContext.BankAccounts
+            .IgnoreQueryFilters()
             .AsNoTracking()
-            .Where(c => companyIds.Contains(c.Id))
-            .ToDictionaryAsync(
-                c => c.Id,
-                c => new CompanyBankAccounts(c.BankAccountName, c.UsdBankAccountName),
-                ct);
+            .Where(a => bankAccountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.ContraAccountName, ct);
     }
 
     /// <summary>Asientos ya existentes en el rango del lote, agrupados por firma para deduplicar.</summary>
@@ -155,44 +167,11 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         return false;
     }
 
-    /// <summary>
-    /// La cuenta en pesos es requisito para asentar cualquier movimiento ARS. Devuelve false (y
-    /// corta el lote) si falta, acotado a las empresas que efectivamente tienen movimientos en
-    /// pesos en este lote (una empresa que solo opera en USD no debe frenar por no tener cuenta
-    /// en pesos configurada).
-    /// </summary>
-    private async Task<bool> EnsureArsAccountsConfiguredAsync(
-        List<BankTransaction> transactions, Dictionary<Guid, CompanyBankAccounts> companiesMap, CancellationToken ct)
-    {
-        var arsCompanyIds = transactions
-            .Where(t => t.Currency == Currencies.Ars)
-            .Select(t => t.CompanyId!.Value)
-            .Distinct()
-            .ToList();
-
-        var missingBank = arsCompanyIds
-            .Where(id => !companiesMap.TryGetValue(id, out var acc) || string.IsNullOrWhiteSpace(acc.Ars))
-            .ToList();
-
-        if (missingBank.Count == 0)
-            return true;
-
-        var names = await _dbContext.Companies
-            .AsNoTracking()
-            .Where(c => missingBank.Contains(c.Id))
-            .Select(c => c.Name)
-            .ToListAsync(ct);
-        _logger.LogWarning(
-            "Cuenta bancaria en pesos no configurada para: {Companies}. Editá la empresa y completá el campo 'Nombre de cuenta bancaria' antes de asentar.",
-            string.Join(", ", names));
-        return false;
-    }
-
     // ── Generación ──────────────────────────────────────────────────────────────
 
     private async Task GenerateEntriesAsync(
         List<BankTransaction> transactions,
-        Dictionary<Guid, CompanyBankAccounts> companiesMap,
+        Dictionary<Guid, string> contraAccounts,
         Dictionary<string, Queue<Guid>> signatureToEntryIds,
         Dictionary<Guid, List<AfipVoucher>> comboVouchersByTx,
         CancellationToken ct)
@@ -200,22 +179,22 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         var pendingEntries = new List<JournalEntry>(BatchSize);
         var totalGenerated = 0;
         var duplicatesSkipped = 0;
-        var skippedMissingUsdAccount = 0;
+        var skippedMissingContraAccount = 0;
 
         foreach (var tx in transactions)
         {
-            var accounts = companiesMap[tx.CompanyId!.Value];
-
-            // Contrapartida por moneda: USD → cuenta en dólares; ARS → cuenta en pesos. Si el
-            // movimiento es en dólares y la empresa no configuró su cuenta USD, se omite este
-            // movimiento (warning claro) sin frenar el resto del lote.
-            if (!TryResolveBankAccount(tx.Currency, accounts.Ars, accounts.Usd, out var bankAccount))
+            // La contrapartida es la de la CUENTA BANCARIA del movimiento. Se omite el movimiento
+            // (sin frenar el resto del lote) cuando no tiene cuenta asignada —movimiento legacy
+            // anterior al alta de cuentas— o cuando la cuenta es provisional, es decir todavía sin
+            // contrapartida cargada. El endpoint de generación corta antes con un 422 accionable;
+            // esto es la red de seguridad del lado del job, que no puede responder HTTP.
+            if (!TryResolveContraAccount(tx.BankAccountId, contraAccounts, out var bankAccount))
             {
                 _logger.LogWarning(
-                    "Movimiento {TxId} en {Currency} omitido: la empresa {CompanyId} no tiene configurada la cuenta bancaria en esa moneda. " +
-                    "Completá la cuenta bancaria en dólares en la ficha de la empresa y reintentá.",
-                    tx.Id, tx.Currency, tx.CompanyId);
-                skippedMissingUsdAccount++;
+                    "Movimiento {TxId} omitido: su cuenta bancaria ({BankAccountId}) no tiene contrapartida contable configurada. " +
+                    "Completala en la ficha de la empresa, pestaña Cuentas Bancarias, y reintentá.",
+                    tx.Id, tx.BankAccountId);
+                skippedMissingContraAccount++;
                 continue;
             }
 
@@ -256,8 +235,8 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         await _dbContext.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "Background job finished: Generated {Generated}, Skipped {Skipped}, MissingUsdAccount {MissingUsd}",
-            totalGenerated, duplicatesSkipped, skippedMissingUsdAccount);
+            "Background job finished: Generated {Generated}, Skipped {Skipped}, MissingContraAccount {MissingContra}",
+            totalGenerated, duplicatesSkipped, skippedMissingContraAccount);
     }
 
     /// <summary>
@@ -315,23 +294,40 @@ public sealed class GenerateJournalEntriesCommandHandler : IRequestHandler<Gener
         CompanyId         = tx.CompanyId,
         BankTransactionId = tx.Id,
         Currency          = tx.Currency,
+        // Desnormalizado desde el movimiento: el libro diario se filtra y exporta por cuenta sin
+        // joinear a BankTransactions (mismo criterio que Currency).
+        BankAccountId     = tx.BankAccountId,
         Lines             = lines,
     };
 
-    /// <summary>Cuentas bancarias de una empresa por moneda (pesos y dólares).</summary>
-    private sealed record CompanyBankAccounts(string? Ars, string? Usd);
-
     /// <summary>
-    /// Resuelve la cuenta bancaria de contrapartida según la moneda del movimiento: USD usa la
-    /// cuenta en dólares de la empresa; cualquier otra moneda usa la cuenta en pesos. Devuelve
-    /// <c>false</c> si la cuenta correspondiente no está configurada (para omitir el movimiento
-    /// sin frenar el lote). Método puro para poder testear la selección sin base de datos.
+    /// Resuelve la contrapartida contable a partir de la cuenta bancaria del movimiento.
+    ///
+    /// Devuelve <c>false</c> en los tres casos que impiden asentar, para que el llamador omita el
+    /// movimiento sin frenar el lote:
+    ///   · el movimiento no tiene cuenta bancaria asignada (legacy previo al alta de cuentas);
+    ///   · la cuenta no está en el mapa (fue borrada, o no pertenece al lote cargado);
+    ///   · la cuenta es provisional: existe y recibe movimientos, pero todavía no tiene
+    ///     contrapartida contable cargada.
+    ///
+    /// Método puro para poder testear la resolución sin base de datos.
     /// </summary>
-    internal static bool TryResolveBankAccount(string currency, string? arsAccount, string? usdAccount, out string account)
+    internal static bool TryResolveContraAccount(
+        Guid? bankAccountId, IReadOnlyDictionary<Guid, string> contraAccounts, out string account)
     {
-        var resolved = currency == Currencies.Usd ? usdAccount : arsAccount;
-        account = string.IsNullOrWhiteSpace(resolved) ? string.Empty : resolved;
-        return account.Length > 0;
+        account = string.Empty;
+
+        if (bankAccountId is null)
+            return false;
+
+        if (!contraAccounts.TryGetValue(bankAccountId.Value, out var resolved))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(resolved))
+            return false;
+
+        account = resolved.Trim();
+        return true;
     }
 
     private static string BuildEntrySignature(JournalEntry entry)

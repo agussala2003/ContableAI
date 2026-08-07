@@ -7,7 +7,19 @@ namespace ContableAI.Application.Features.Transactions.Commands;
 public sealed record StagedFileRef(Guid StagedFileId, string FileName, long Length);
 
 /// <summary>Per-file result included in the upload response.</summary>
-public sealed record FileUploadResult(string FileName, int Processed, int DuplicatesSkipped);
+public sealed record FileUploadResult(
+    string  FileName,
+    int     Processed,
+    int     DuplicatesSkipped,
+    string? BankAccountAlias = null);
+
+/// <summary>
+/// Cuenta bancaria que el enrutamiento creó sola, a partir de un número detectado en el extracto
+/// que no correspondía a ninguna cuenta existente. Nace provisional (sin contrapartida contable):
+/// recibe los movimientos, pero no los puede asentar hasta que el usuario la complete. La UI la
+/// usa para ofrecer justamente eso.
+/// </summary>
+public sealed record CreatedBankAccountItem(Guid Id, string Alias, string? AccountNumber, string Currency);
 
 /// <summary>Details of a single transaction that was skipped as a duplicate.</summary>
 public sealed record SkippedDuplicateItem(DateOnly Date, decimal Amount, string Description, string Currency);
@@ -18,6 +30,11 @@ public sealed record SkippedDuplicateItem(DateOnly Date, decimal Amount, string 
 /// por eso no depende de <c>ICurrentTenantService</c> (no hay HttpContext dentro del job): el
 /// tenant y el correlation id del job viajan explícitos en el propio command.
 /// </summary>
+/// <param name="BankAccountId">
+/// Cuenta elegida explícitamente en la Dropzone. Cuando viene, gana sobre la detección automática:
+/// el usuario sabe mejor que el OCR a qué cuenta pertenece el archivo que está subiendo.
+/// <c>null</c> = modo automático, se enruta por el número detectado en cada extracto.
+/// </param>
 public sealed record UploadBankStatementCommand(
     Guid    UploadId,
     IReadOnlyList<StagedFileRef> Files,
@@ -25,7 +42,8 @@ public sealed record UploadBankStatementCommand(
     string? BankCode,
     bool    WithoutDateFilter,
     bool    ForceReapplyRules,
-    string  StudioTenantId
+    string  StudioTenantId,
+    Guid?   BankAccountId = null
 ) : IRequest<Result<UploadBankStatementResponse>>;
 
 public sealed record UploadBankStatementResponse(
@@ -36,5 +54,6 @@ public sealed record UploadBankStatementResponse(
     string CompanyName,
     IReadOnlyList<FileUploadResult> PerFile,
     IReadOnlyList<SkippedDuplicateItem> SkippedDuplicates,
-    IReadOnlyList<string> ParseErrors
+    IReadOnlyList<string> ParseErrors,
+    IReadOnlyList<CreatedBankAccountItem> CreatedBankAccounts
 );

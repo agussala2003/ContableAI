@@ -2,7 +2,7 @@ import { Component, ChangeDetectionStrategy, input, output, signal, computed, ef
 import { NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { BankTransaction } from '../../../../core/services/transaction';
+import { BankAccountOption, BankTransaction } from '../../../../core/services/transaction';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { LucideAngularModule } from 'lucide-angular';
@@ -22,6 +22,47 @@ export class TransactionGrid {
   transactions = input.required<BankTransaction[]>();
   sortBy       = input<string | null>(null);
   sortDir      = input<'asc' | 'desc' | null>(null);
+
+  /**
+   * Muestra la columna "Cuenta bancaria". Lo decide la página, no la grilla: depende del filtro
+   * activo, que vive en el estado de la página. Con el filtro puesto en una sola cuenta la columna
+   * repetiría el mismo valor en todas las filas.
+   */
+  showBankAccountColumn = input<boolean>(false);
+  /** Cuentas presentes en los datos, para resolver el alias de cada movimiento. */
+  bankAccounts = input<BankAccountOption[]>([]);
+
+  /**
+   * Columnas ordenables del encabezado. Vive acá y no en el template porque la de cuenta bancaria
+   * es condicional: dejar el array literal en el HTML obligaba a duplicar el bloque entero.
+   */
+  // `sortable: false` en cuenta bancaria: el backend ordena por columnas de BankTransaction y la
+  // cuenta solo está ahí como FK. Ordenar por GUID no significa nada para el usuario y ordenar por
+  // alias pediría un join; una cabecera con flechitas que no ordenan es peor que una sin ellas.
+  columns = computed(() => [
+    { id: 'date',        label: 'Fecha',           align: 'left',  sortable: true  },
+    { id: 'description', label: 'Descripción',     align: 'left',  sortable: true  },
+    ...(this.showBankAccountColumn()
+      ? [{ id: 'bankAccount', label: 'Cuenta bancaria', align: 'left', sortable: false }]
+      : []),
+    { id: 'amount',      label: 'Debe',            align: 'right', sortable: true  },
+    { id: 'credit',      label: 'Haber',           align: 'right', sortable: true  },
+    { id: 'account',     label: 'Cuenta contable', align: 'left',  sortable: true  },
+    { id: 'source',      label: 'Origen',          align: 'left',  sortable: true  },
+  ]);
+
+  private bankAccountAliases = computed(() =>
+    new Map(this.bankAccounts().map(a => [a.id, a.alias]))
+  );
+
+  /**
+   * Alias de la cuenta del movimiento; los previos a la multi-cuenta no tienen ninguna. El texto
+   * del caso nulo repite el del filtro a propósito: es el mismo bucket visto desde dos lugares.
+   */
+  bankAccountLabel(tx: BankTransaction): string {
+    if (!tx.bankAccountId) return 'Sin cuenta asignada';
+    return this.bankAccountAliases().get(tx.bankAccountId) ?? 'Cuenta desconocida';
+  }
 
   accountChanged   = output<{ id: string; newAccount: string }>();
   bulkAssigned     = output<{ ids: string[]; account: string }>();

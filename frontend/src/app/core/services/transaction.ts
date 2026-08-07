@@ -3,6 +3,7 @@ import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
+import { saveResponseAsFile } from '../utils/file-download';
 
 export type Currency = 'ARS' | 'USD';
 
@@ -22,6 +23,8 @@ export interface BankTransaction {
   isPossibleDuplicate: boolean; // F3-2: posible duplicado sindical
   tenantId: string;
   companyId: string | null;
+  /** Cuenta bancaria de origen; null en importaciones previas a la multi-cuenta. */
+  bankAccountId: string | null;
   journalEntryId: string | null;
 }
 
@@ -43,8 +46,16 @@ export interface PagedResult<T> {
   totalEgresosAll: number;
   currencyTotals?: CurrencyTotals[];
   availableAccounts?: string[];
+  availableBankAccounts?: BankAccountOption[];
   availableMonths?: number[];
   availableYears?: number[];
+}
+
+/** Cuenta bancaria presente en los datos consultados. `id` es un GUID o el sentinel 'none'. */
+export interface BankAccountOption {
+  id: string;
+  alias: string;
+  currency: string;
 }
 
 export interface TransactionQueryParams {
@@ -53,6 +64,7 @@ export interface TransactionQueryParams {
   year?:         number;
   search?:       string;
   account?:      string;
+  bankAccountId?: string;
   direction?:    'debit' | 'credit';
   sortBy?:       string;
   sortDir?:      'asc' | 'desc';
@@ -144,11 +156,20 @@ export class Transaction {
 
   /** Encola el procesamiento del extracto (parseo/OCR/clasificación) como job de Hangfire; el
    * resultado se consulta con `getUploadResult` (polling). */
-  uploadFiles(files: File[], bankCode: string, companyId?: string, withoutDateFilter = false, forceReapplyRules = false): Observable<EnqueueUploadResponse> {
+  uploadFiles(
+    files: File[],
+    bankCode: string,
+    companyId?: string,
+    withoutDateFilter = false,
+    forceReapplyRules = false,
+    bankAccountId?: string,
+  ): Observable<EnqueueUploadResponse> {
     const formData = new FormData();
     for (const file of files) formData.append('files', file, file.name);
     if (bankCode) formData.append('bankCode', bankCode);
     if (companyId) formData.append('companyId', companyId);
+    // Solo se manda si el usuario eligió una cuenta: ausente = "Automático" (detectar por OCR).
+    if (bankAccountId) formData.append('bankAccountId', bankAccountId);
     formData.append('withoutDateFilter', withoutDateFilter ? 'true' : 'false');
     formData.append('forceReapplyRules', forceReapplyRules ? 'true' : 'false');
     return this.http.post<EnqueueUploadResponse>(`${this.apiUrl}/upload`, formData);
@@ -168,6 +189,7 @@ export class Transaction {
     if (params.year)         httpParams = httpParams.set('year', params.year.toString());
     if (params.search)       httpParams = httpParams.set('search', params.search);
     if (params.account)      httpParams = httpParams.set('account', params.account);
+    if (params.bankAccountId) httpParams = httpParams.set('bankAccountId', params.bankAccountId);
     if (params.sortBy)                       httpParams = httpParams.set('sortBy', params.sortBy);
     if (params.sortDir)                      httpParams = httpParams.set('sortDir', params.sortDir);
     if (params.strictSearch)                 httpParams = httpParams.set('strictSearch', 'true');
@@ -215,18 +237,11 @@ export class Transaction {
     if (year)      params = params.set('year',  year);
 
     return new Observable<void>(observer => {
-      this.http.get<Blob>(`${this.apiUrl}/export`, { params, responseType: 'blob' as 'json' }).subscribe({
-        next: blob => {
-          const url  = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          const m    = month ? String(month).padStart(2, '0') : 'todo';
-          const y    = year ?? new Date().getFullYear();
-          link.href  = url;
-          link.setAttribute('download', `Banco_${m}-${y}.csv`);
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
+      this.http.get(`${this.apiUrl}/export`, { params, observe: 'response', responseType: 'blob' }).subscribe({
+        next: response => {
+          const m = month ? String(month).padStart(2, '0') : 'todo';
+          const y = year ?? new Date().getFullYear();
+          saveResponseAsFile(response, `Banco_${m}-${y}.csv`);
           observer.next();
           observer.complete();
         },

@@ -142,6 +142,7 @@ app.MapRulesEndpoints();
 app.MapTransactionEndpoints();
 app.MapAfipEndpoints();
 app.MapChartOfAccountsEndpoints();
+app.MapBankAccountsEndpoints();
 app.MapJournalEntriesEndpoints();
 app.MapAuditEndpoints();
 app.MapPeriodEndpoints();

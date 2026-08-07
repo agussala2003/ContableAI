@@ -1,13 +1,14 @@
 import { Component, computed, effect, inject, signal, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection } from '../../../../core/services/rule.service';
+import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection, PromoteRuleResponse } from '../../../../core/services/rule.service';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
 import { RuleFormSlideover, RuleFormFieldChange } from '../../components/rule-form-slideover/rule-form-slideover';
 import { RulesTable } from '../../components/rules-table/rules-table';
 import { RulesToolbar } from '../../components/rules-toolbar/rules-toolbar';
+import { ReapplyRuleModal } from '../../components/reapply-rule-modal/reapply-rule-modal';
 import { CompanyModal } from '../../../reconciliation/components/company-modal/company-modal';
 import { LucideAngularModule } from 'lucide-angular';
 import { Direction, RuleFilterType, RuleForm } from '../../components/rules.types';
@@ -23,7 +24,7 @@ const EMPTY_FORM = (): RuleForm => ({
 @Component({
   selector: 'app-rules-page',
   standalone: true,
-  imports: [FormsModule, LucideAngularModule, CompanyModal, RulesToolbar, RulesTable, RuleFormSlideover],
+  imports: [FormsModule, LucideAngularModule, CompanyModal, RulesToolbar, RulesTable, RuleFormSlideover, ReapplyRuleModal],
   templateUrl: './rules-page.html',
 })
 export class RulesPage {
@@ -42,12 +43,22 @@ export class RulesPage {
   panelOpen     = signal(false);
   editingRule   = signal<AccountingRule | null>(null);
   form          = signal<RuleForm>(EMPTY_FORM());
-  applyRetroactive = signal(true);
 
   searchQuery   = signal('');
   filterType    = signal<RuleFilterType>('all');
   showInactiveRules = signal(false);
   private loadSeq = 0;
+
+  // ── Promoción a regla de estudio ────────────────────────────────────────
+  /** Regla en curso de promoción; abre el modal cuando no es null. */
+  promotingRule  = signal<AccountingRule | null>(null);
+  /** Preview devuelto por el dry-run; null mientras se está pidiendo. */
+  promotePreview = signal<PromoteRuleResponse | null>(null);
+  isLoadingPreview = signal(false);
+  isPromoting      = signal(false);
+
+  /** Regla en curso de reaplicación; abre `app-reapply-rule-modal` cuando no es null. */
+  reapplyingRule = signal<AccountingRule | null>(null);
 
   constructor() {
     effect(() => {
@@ -158,7 +169,6 @@ export class RulesPage {
   closePanel() {
     this.panelOpen.set(false);
     this.editingRule.set(null);
-    this.applyRetroactive.set(true);
   }
 
   saveRule() {
@@ -194,7 +204,7 @@ export class RulesPage {
           this.rules.update(list =>
             list.map(r => r.id === editing.id ? { ...r, ...req, direction: this.directionStrToNum(req.direction) } : r)
           );
-          this.afterRuleSaved(editing.id, 'Regla actualizada.');
+          this.afterRuleSaved('Regla actualizada.');
         },
         error: () => {
           this.isSaving.set(false);
@@ -205,7 +215,7 @@ export class RulesPage {
       this.ruleService.createRule(companyId, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: rule => {
           this.rules.update(list => [...list, rule].sort((a, b) => a.priority - b.priority));
-          this.afterRuleSaved(rule.id, 'Regla creada.');
+          this.afterRuleSaved('Regla creada.');
         },
         error: () => {
           this.isSaving.set(false);
@@ -261,16 +271,99 @@ export class RulesPage {
     });
   }
 
+  // ── Reaplicación a movimientos históricos ───────────────────────────────
+  // El flujo completo (preview, confirmación, job y polling) vive en ReapplyRuleModal, que
+  // comparte con la "regla rápida" de la grilla de conciliación.
+
+  openReapply(rule: AccountingRule): void {
+    if (rule.companyId == null) {
+      this.toast.warning('Solo se pueden reaplicar reglas propias de la empresa.');
+      return;
+    }
+    this.reapplyingRule.set(rule);
+  }
+
+  /** El job terminó bien: los movimientos cambiaron, así que se relee la grilla. */
+  onReapplyCompleted(): void {
+    const company = this.companyService.activeCompany();
+    if (company) this.loadRules(company.id);
+  }
+
+  // ── Promoción a regla de estudio ────────────────────────────────────────
+
+  /**
+   * Abre el modal y pide el preview con dryRun: el backend responde a cuántas empresas del
+   * estudio va a alcanzar la regla y cuáles ya tienen una propia con keyword solapado, sin
+   * escribir nada. Recién al confirmar se ejecuta la promoción real.
+   */
+  openPromote(rule: AccountingRule): void {
+    if (rule.companyId == null) {
+      this.toast.warning('La regla ya aplica a todo el estudio.');
+      return;
+    }
+
+    this.promotingRule.set(rule);
+    this.promotePreview.set(null);
+    this.isLoadingPreview.set(true);
+
+    this.ruleService.promoteToStudio(rule.id, true).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: preview => {
+        this.promotePreview.set(preview);
+        this.isLoadingPreview.set(false);
+      },
+      error: err => {
+        this.isLoadingPreview.set(false);
+        this.closePromote();
+        this.toast.error(this.problemMessage(err, 'No se pudo calcular el impacto de la promoción.'));
+      },
+    });
+  }
+
+  closePromote(): void {
+    this.promotingRule.set(null);
+    this.promotePreview.set(null);
+    this.isLoadingPreview.set(false);
+    this.isPromoting.set(false);
+  }
+
+  confirmPromote(): void {
+    const rule = this.promotingRule();
+    if (!rule) return;
+
+    this.isPromoting.set(true);
+    this.ruleService.promoteToStudio(rule.id, false).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: res => {
+        // La regla conserva su id: alcanza con vaciar companyId en la copia local para que
+        // rules-table la reclasifique como "Estudio" y la mueva de la pestaña Propias a Estudio.
+        // studioTenantId ya venía cargado y sigue siendo el correcto.
+        this.rules.update(list =>
+          list.map(r => r.id === rule.id ? { ...r, companyId: null } : r)
+        );
+
+        this.closePromote();
+        this.toast.success(
+          `"${rule.keyword}" ahora aplica a ${res.affectedCompanies} empresa${res.affectedCompanies !== 1 ? 's' : ''} del estudio.`
+        );
+      },
+      error: err => {
+        this.isPromoting.set(false);
+        this.toast.error(this.problemMessage(err, 'No se pudo promover la regla.'));
+      },
+    });
+  }
+
+  /** El backend devuelve ProblemDetails en los 422 (regla ya de estudio, regla sin estudio). */
+  private problemMessage(err: unknown, fallback: string): string {
+    const problem = (err as { error?: { detail?: string; title?: string } } | null)?.error;
+    return problem?.detail ?? problem?.title ?? fallback;
+  }
+
   updateFormField<K extends keyof RuleForm>(field: K, value: RuleForm[K]): void {
     this.form.update(f => ({ ...f, [field]: value }));
   }
 
   onFormFieldChange(change: RuleFormFieldChange): void {
     this.updateFormField(change.field, change.value as RuleForm[typeof change.field]);
-  }
-
-  onApplyRetroactiveChange(value: boolean): void {
-    this.applyRetroactive.set(value);
   }
 
   directionNumToStr(d: RuleDirection): Direction {
@@ -315,25 +408,14 @@ export class RulesPage {
     return left === right;
   }
 
-  private afterRuleSaved(ruleId: string, successMessage: string): void {
-    if (!this.applyRetroactive()) {
-      this.isSaving.set(false);
-      this.closePanel();
-      this.toast.success(successMessage);
-      return;
-    }
-
-    this.ruleService.reapplyRule(ruleId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (result) => {
-        this.isSaving.set(false);
-        this.closePanel();
-        this.toast.success(`${successMessage} Reaplicada en ${result.updatedCount} movimiento(s) pendiente(s).`);
-      },
-      error: () => {
-        this.isSaving.set(false);
-        this.closePanel();
-        this.toast.warning(`${successMessage} No se pudo completar la reaplicación automática.`);
-      },
-    });
+  /**
+   * Guardar una regla ya no dispara ninguna reaplicación: la regla rige para lo que se importe
+   * de ahora en más. El override sobre lo ya cargado es una acción aparte y explícita
+   * ("Históricos" en la fila), porque sobrescribe trabajo manual y necesita confirmación.
+   */
+  private afterRuleSaved(successMessage: string): void {
+    this.isSaving.set(false);
+    this.closePanel();
+    this.toast.success(successMessage);
   }
 }

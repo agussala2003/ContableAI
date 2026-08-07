@@ -1,3 +1,4 @@
+using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
 
@@ -16,22 +17,12 @@ public sealed class HardRuleStrategy : IClassificationStrategy
         bool                          splitChequeTax,
         CancellationToken             ct = default)
     {
-        // Check that each keyword word appears in the description in order,
-        // so "COELSA EMPRESA SA" matches "COELSA 12345 EMPRESA SA" even with digit-words in between
-        static bool DescriptionMatchesKeyword(string description, string keyword)
-        {
-            int pos = 0;
-            foreach (var word in keyword.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            {
-                int idx = description.IndexOf(word, pos, StringComparison.OrdinalIgnoreCase);
-                if (idx < 0) return false;
-                pos = idx + word.Length;
-            }
-            return true;
-        }
-
-        bool Matches(BankTransaction transaction, AccountingRule rule) =>
-            DescriptionMatchesKeyword(transaction.Description, rule.Keyword)
+        // El criterio de coincidencia vive en KeywordMatcher (Domain): es el mismo que usan la
+        // reaplicación de reglas y la aceptación de sugerencias, que filtran por SQL con el
+        // patrón ILIKE equivalente. Tenerlo en un solo lugar evita que esos flujos alcancen un
+        // conjunto de movimientos distinto al que clasifica este motor.
+        static bool Matches(BankTransaction transaction, AccountingRule rule) =>
+            KeywordMatcher.Matches(transaction.Description, rule.Keyword)
             && (rule.Direction is null || rule.Direction == transaction.Type);
 
         // Precedence: Company > Studio > System

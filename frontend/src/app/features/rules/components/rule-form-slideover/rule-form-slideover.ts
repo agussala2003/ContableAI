@@ -26,13 +26,11 @@ export class RuleFormSlideover {
   });
   isSaving = input<boolean>(false);
   isEditing = input<boolean>(false);
-  applyRetroactive = input<boolean>(true);
   accounts = input<string[]>([]);
 
   closeRequested = output<void>();
   saveRequested = output<void>();
   formFieldChanged = output<RuleFormFieldChange>();
-  applyRetroactiveChange = output<boolean>();
 
   close(): void {
     this.closeRequested.emit();
@@ -64,10 +62,5 @@ export class RuleFormSlideover {
   onTaxMatchingChange(event: Event): void {
     const target = event.target as HTMLInputElement;
     this.formFieldChanged.emit({ field: 'requiresTaxMatching', value: target.checked });
-  }
-
-  onApplyRetroactiveChange(event: Event): void {
-    const target = event.target as HTMLInputElement;
-    this.applyRetroactiveChange.emit(target.checked);
   }
 }

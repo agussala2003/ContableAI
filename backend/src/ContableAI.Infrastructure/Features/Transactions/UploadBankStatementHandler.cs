@@ -113,7 +113,14 @@ public sealed class UploadBankStatementHandler
             if (forbidden)
                 return Result<UploadBankStatementResponse>.Forbidden();
 
-            var (allParsed, parseErrors) = ParseFiles(command, stagedFiles);
+            var (parsedFiles, parseErrors) = ParseFiles(command, stagedFiles);
+
+            // Enrutamiento: decide a qué cuenta bancaria va cada archivo y estampa BankAccountId en
+            // sus movimientos. Tiene que correr ANTES de deduplicar, porque la cuenta forma parte
+            // de la firma. Los archivos que no se pueden enrutar salen del lote con su error.
+            var (allParsed, createdAccounts) =
+                await RouteToBankAccountsAsync(command, company, parsedFiles, parseErrors, ct);
+
             if (allParsed.Count == 0 && parseErrors.Count > 0)
                 return Result<UploadBankStatementResponse>.Failure(
                     $"No se pudo procesar ningún archivo. {parseErrors[0]}");
@@ -134,10 +141,11 @@ public sealed class UploadBankStatementHandler
             EnqueueAfipMatchingIfNeeded(company, outcome);
 
             _logger.LogInformation(
-                "Upload completed: {FileCount} file(s), {TotalParsed} parsed, {Duplicates} duplicates, {Reapplied} reapplied",
-                stagedFiles.Count, outcome.Classified.Count + outcome.TotalDuplicates, outcome.TotalDuplicates, outcome.TotalReapplied);
+                "Upload completed: {FileCount} file(s), {TotalParsed} parsed, {Duplicates} duplicates, {Reapplied} reapplied, {NewAccounts} new bank account(s)",
+                stagedFiles.Count, outcome.Classified.Count + outcome.TotalDuplicates, outcome.TotalDuplicates,
+                outcome.TotalReapplied, createdAccounts.Count);
 
-            return BuildResponse(stagedFiles.Count, company, outcome, parseErrors);
+            return BuildResponse(stagedFiles.Count, company, outcome, parseErrors, createdAccounts);
         }
         finally
         {
@@ -183,10 +191,10 @@ public sealed class UploadBankStatementHandler
     }
 
     /// <summary>Parsea todos los archivos. Un archivo roto no aborta el lote: se acumula su error.</summary>
-    private (List<(LoadedFile File, List<BankTransaction> Txs)> parsed, List<string> errors) ParseFiles(
+    private (List<(LoadedFile File, ParsedStatement Statement)> parsed, List<string> errors) ParseFiles(
         UploadBankStatementCommand command, List<LoadedFile> stagedFiles)
     {
-        var allParsed   = new List<(LoadedFile File, List<BankTransaction> Txs)>();
+        var allParsed   = new List<(LoadedFile File, ParsedStatement Statement)>();
         var parseErrors = new List<string>();
 
         foreach (var file in stagedFiles)
@@ -196,8 +204,8 @@ public sealed class UploadBankStatementHandler
             var effectiveBankCode = (command.BankCode is null or "AUTO") ? "PDF" : command.BankCode;
             try
             {
-                var txs = _parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf").ToList();
-                allParsed.Add((file, txs));
+                var statement = _parser.Parse(stream, effectiveBankCode, file.FileName ?? "upload.pdf");
+                allParsed.Add((file, statement));
             }
             catch (Exception ex)
             {
@@ -208,6 +216,191 @@ public sealed class UploadBankStatementHandler
         }
 
         return (allParsed, parseErrors);
+    }
+
+    // ── Enrutamiento a cuenta bancaria (F1.d) ───────────────────────────────────
+
+    /// <summary>
+    /// Decide a qué cuenta bancaria pertenece cada archivo del lote y estampa el
+    /// <c>BankAccountId</c> en sus movimientos. Es lo que permite subir extractos de varias
+    /// cuentas mezclados en una sola carga.
+    ///
+    /// Cuatro caminos, en orden de precedencia:
+    ///   1. <b>Manual</b> — el usuario eligió la cuenta en la Dropzone: gana siempre, sin mirar el
+    ///      extracto. Sabe mejor que el OCR qué está subiendo.
+    ///   0. <b>Consolidado</b> — el encabezado identifica más de una cuenta: se rechaza (salvo que
+    ///      haya elección manual, ver arriba).
+    ///   2. <b>Match único</b> — el número detectado corresponde a exactamente una cuenta de la
+    ///      empresa (por número o por CBU): se enruta ahí.
+    ///   3. <b>Cuenta nueva</b> — se detectó un número que no existe en la empresa: se crea una
+    ///      cuenta provisional y se informa a la UI para que el usuario complete su contrapartida.
+    ///   4. <b>Error</b> — no se detectó nada, o el número matchea 2+ cuentas: el archivo se
+    ///      rechaza con un mensaje accionable. Enrutar a la cuenta equivocada sería peor que no
+    ///      importar: contaminaría el libro diario de una cuenta ajena.
+    /// </summary>
+    private async Task<(List<(LoadedFile File, List<BankTransaction> Txs)> Routed,
+                        List<CreatedBankAccountItem> Created)> RouteToBankAccountsAsync(
+        UploadBankStatementCommand command,
+        Company? company,
+        List<(LoadedFile File, ParsedStatement Statement)> parsedFiles,
+        List<string> parseErrors,
+        CancellationToken ct)
+    {
+        var routed  = new List<(LoadedFile File, List<BankTransaction> Txs)>();
+        var created = new List<CreatedBankAccountItem>();
+
+        if (parsedFiles.Count == 0)
+            return (routed, created);
+
+        // Sin empresa (bucket legacy ESTUDIO_DEFAULT) no hay cuentas contra las que enrutar:
+        // los movimientos entran sin cuenta, igual que antes de la multi-cuenta.
+        if (company is null)
+        {
+            routed.AddRange(parsedFiles.Select(p => (p.File, p.Statement.Transactions.ToList())));
+            return (routed, created);
+        }
+
+        var accounts = await _db.BankAccounts.IgnoreQueryFilters()
+            .Where(a => a.CompanyId == company.Id)
+            .ToListAsync(ct);
+
+        foreach (var (file, statement) in parsedFiles)
+        {
+            var txs = statement.Transactions.ToList();
+            var fileName = file.FileName ?? "extracto";
+
+            // ── Flujo 1: cuenta explícita de la Dropzone ──────────────────────
+            if (command.BankAccountId is { } explicitId)
+            {
+                if (accounts.All(a => a.Id != explicitId))
+                {
+                    parseErrors.Add($"{fileName}: la cuenta bancaria seleccionada no pertenece a esta empresa.");
+                    continue;
+                }
+
+                Stamp(txs, explicitId);
+                routed.Add((file, txs));
+                continue;
+            }
+
+            // ── Flujo 0: resumen consolidado (F1.e) ──────────────────────────
+            // El encabezado identifica más de una cuenta. Va DESPUÉS del flujo manual a propósito:
+            // el usuario puede saber que, pese al encabezado, todos los movimientos del archivo son
+            // de una sola cuenta —el consolidado de BBVA lista la cuenta gemela aunque no tenga
+            // movimientos— y esa afirmación suya vale más que la nuestra. Lo que no hacemos es
+            // elegir por él.
+            if (statement.HasMultipleAccounts)
+            {
+                parseErrors.Add(
+                    $"{fileName}: {PdfBankParser.MultipleAccountsDetectedError} " +
+                    $"(cuentas detectadas: {string.Join(", ", statement.ConflictingAccountIdentifiers)})");
+                continue;
+            }
+
+            var detected = statement.DetectedAccountNumber;
+            var cbu      = statement.DetectedCbu;
+
+            // ── Flujo 4a: no se detectó ningún identificador ──────────────────
+            if (detected is null && cbu is null)
+            {
+                // Sin cuentas cargadas no hay nada a lo que enrutar mal, así que el archivo entra
+                // sin cuenta: es el comportamiento previo a la multi-cuenta, y esos movimientos
+                // tampoco se podían asentar antes. Rechazarlos acá dejaría fuera todas las cargas
+                // de CSV/XLSX —que nunca traen encabezado— de las empresas que aún no configuraron
+                // sus cuentas.
+                if (accounts.Count == 0)
+                {
+                    routed.Add((file, txs));
+                    continue;
+                }
+
+                parseErrors.Add(
+                    $"{fileName}: no se pudo leer el número de cuenta del extracto. " +
+                    "Seleccioná la cuenta bancaria en la pantalla de carga y volvé a subirlo.");
+                continue;
+            }
+
+            var matches = accounts
+                .Where(a => Identifies(a, detected, cbu))
+                .ToList();
+
+            // ── Flujo 4b: ambigüedad ─────────────────────────────────────────
+            if (matches.Count > 1)
+            {
+                parseErrors.Add(
+                    $"{fileName}: el número detectado ({detected ?? cbu}) coincide con más de una cuenta " +
+                    $"de la empresa ({string.Join(", ", matches.Select(m => m.Alias))}). " +
+                    "Seleccioná la cuenta manualmente.");
+                continue;
+            }
+
+            // ── Flujo 2: match único ─────────────────────────────────────────
+            if (matches.Count == 1)
+            {
+                Stamp(txs, matches[0].Id);
+                routed.Add((file, txs));
+                continue;
+            }
+
+            // ── Flujo 3: cuenta desconocida → alta provisional ───────────────
+            var newAccount = new BankAccount
+            {
+                CompanyId         = company.Id,
+                Alias             = BuildProvisionalAlias(statement, detected, cbu),
+                AccountNumber     = detected,
+                NormalizedNumber  = detected ?? cbu,
+                Cbu               = cbu,
+                BankCode          = statement.Bank == BankCodes.Generic ? null : statement.Bank,
+                Currency          = statement.Currency,
+                // Provisional: sin contrapartida no puede asentar. El 422 del generador y la UI
+                // se encargan de pedirle al usuario que la complete.
+                ContraAccountName = string.Empty,
+                IsActive          = true,
+                StudioTenantId    = company.StudioTenantId,
+            };
+
+            _db.BankAccounts.Add(newAccount);
+            accounts.Add(newAccount); // visible para los archivos siguientes del mismo lote
+
+            Stamp(txs, newAccount.Id);
+            routed.Add((file, txs));
+            created.Add(new CreatedBankAccountItem(
+                newAccount.Id, newAccount.Alias, newAccount.AccountNumber, newAccount.Currency));
+
+            _logger.LogInformation(
+                "Cuenta bancaria provisional creada para la empresa {CompanyId} a partir de '{FileName}': {Alias} ({Number})",
+                company.Id, fileName, newAccount.Alias, newAccount.NormalizedNumber);
+        }
+
+        return (routed, created);
+    }
+
+    private static void Stamp(List<BankTransaction> txs, Guid bankAccountId)
+    {
+        foreach (var tx in txs)
+            tx.BankAccountId = bankAccountId;
+    }
+
+    /// <summary>
+    /// Una cuenta identifica al extracto si su número normalizado o su CBU coinciden con alguno de
+    /// los detectados. Se comparan ambos contra ambos porque los bancos no son consistentes: en
+    /// algunos extractos el número que figura en el encabezado ES el CBU.
+    /// </summary>
+    private static bool Identifies(BankAccount account, string? detectedNumber, string? detectedCbu)
+    {
+        var candidates = new[] { detectedNumber, detectedCbu }.Where(c => !string.IsNullOrEmpty(c));
+        var stored     = new[] { account.NormalizedNumber, account.Cbu }.Where(s => !string.IsNullOrEmpty(s));
+
+        return candidates.Any(c => stored.Any(s => string.Equals(s, c, StringComparison.Ordinal)));
+    }
+
+    private static string BuildProvisionalAlias(ParsedStatement statement, string? number, string? cbu)
+    {
+        var bank = statement.Bank == BankCodes.Generic ? "Cuenta" : statement.Bank;
+        var id   = number ?? cbu ?? string.Empty;
+        var tail = id.Length > 4 ? id[^4..] : id;
+
+        return $"{bank} ···{tail} ({statement.Currency})";
     }
 
     /// <summary>Chequea la cuota mensual del plan (solo cuentan los movimientos del mes en curso).</summary>
@@ -278,11 +471,11 @@ public sealed class UploadBankStatementHandler
                 .ToListAsync(ct)
             : new List<AccountingRule>();
 
-        Guid? studioGuid = company != null && Guid.TryParse(company.StudioTenantId, out var sg) ? sg : null;
+        var studioId = company?.StudioTenantId;
 
-        var studioRules = studioGuid.HasValue
+        var studioRules = !string.IsNullOrWhiteSpace(studioId)
             ? await _db.AccountingRules.AsNoTracking()
-                .Where(r => r.CompanyId == null && r.StudioTenantId == studioGuid)
+                .Where(r => r.CompanyId == null && r.StudioTenantId == studioId)
                 .OrderBy(r => r.Priority)
                 .ToListAsync(ct)
             : new List<AccountingRule>();
@@ -453,7 +646,8 @@ public sealed class UploadBankStatementHandler
 
     private static Result<UploadBankStatementResponse> BuildResponse(
         int totalFiles, Company? company,
-        ClassificationOutcome outcome, List<string> parseErrors)
+        ClassificationOutcome outcome, List<string> parseErrors,
+        List<CreatedBankAccountItem> createdAccounts)
         => Result<UploadBankStatementResponse>.Success(new UploadBankStatementResponse(
             TotalFiles:          totalFiles,
             TotalProcessed:      outcome.Classified.Count,
@@ -462,7 +656,8 @@ public sealed class UploadBankStatementHandler
             CompanyName:         company?.Name ?? "Sin empresa",
             PerFile:             outcome.PerFile,
             SkippedDuplicates:   outcome.SkippedDuplicates,
-            ParseErrors:         parseErrors
+            ParseErrors:         parseErrors,
+            CreatedBankAccounts: createdAccounts
         ));
 
     /// <summary>

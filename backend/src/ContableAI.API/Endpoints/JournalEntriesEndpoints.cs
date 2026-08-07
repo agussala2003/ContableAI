@@ -28,42 +28,60 @@ public static class JournalEntriesEndpoints
             if (req.TransactionIds == null || req.TransactionIds.Count == 0)
                 return Results.BadRequest("Se requiere al menos una transacción.");
 
-            // Fix fallo silencioso USD: el job de Hangfire omite (con solo un warning en el log)
-            // todo movimiento cuya empresa no tenga configurada la cuenta bancaria de su moneda,
-            // así que el usuario veía "éxito" y el asiento nunca aparecía. Se valida acá, ANTES
-            // de encolar, para devolver un 422 accionable en lugar de un job que "triunfa" vacío.
+            // Fix fallo silencioso: el job de Hangfire omite (con solo un warning en el log) todo
+            // movimiento cuya cuenta bancaria no tenga contrapartida contable, así que el usuario
+            // veía "éxito" y el asiento nunca aparecía. Se valida acá, ANTES de encolar, para
+            // devolver un 422 accionable en lugar de un job que "triunfa" vacío.
+            //
+            // F1.c: la contrapartida es un dato de la cuenta bancaria, no de la empresa.
             var affected = await dbContext.BankTransactions
                 .AsNoTracking()
                 .Where(t => req.TransactionIds.Contains(t.Id)
                          && t.CompanyId.HasValue
                          && t.JournalEntryId == null)
-                .Select(t => new { CompanyId = t.CompanyId!.Value, t.Currency })
+                .Select(t => new { CompanyId = t.CompanyId!.Value, t.BankAccountId })
                 .Distinct()
                 .ToListAsync();
 
             var companyIds = affected.Select(a => a.CompanyId).Distinct().ToList();
-            var companies = await dbContext.Companies
+            var companyNames = await dbContext.Companies
                 .AsNoTracking()
                 .Where(c => companyIds.Contains(c.Id) && c.StudioTenantId == currentTenant.StudioTenantId)
-                .Select(c => new { c.Id, c.Name, c.BankAccountName, c.UsdBankAccountName })
-                .ToDictionaryAsync(c => c.Id, c => c);
+                .ToDictionaryAsync(c => c.Id, c => c.Name);
 
-            var missingAccounts = affected
-                .Where(a => companies.TryGetValue(a.CompanyId, out var co)
-                         && string.IsNullOrWhiteSpace(a.Currency == Currencies.Usd ? co.UsdBankAccountName : co.BankAccountName))
-                .Select(a => new { companies[a.CompanyId].Name, a.Currency })
+            // Movimientos sin cuenta asignada: legacy anteriores al alta de cuentas bancarias.
+            var withoutAccount = affected
+                .Where(a => a.BankAccountId is null && companyNames.ContainsKey(a.CompanyId))
+                .Select(a => companyNames[a.CompanyId])
                 .Distinct()
                 .ToList();
 
-            if (missingAccounts.Count > 0)
+            // Cuentas provisionales: existen y reciben movimientos, pero sin contrapartida cargada.
+            var referencedAccountIds = affected
+                .Where(a => a.BankAccountId.HasValue)
+                .Select(a => a.BankAccountId!.Value)
+                .Distinct()
+                .ToList();
+
+            var provisionalAccounts = await dbContext.BankAccounts
+                .AsNoTracking()
+                .Where(a => referencedAccountIds.Contains(a.Id) && a.ContraAccountName == string.Empty)
+                .Select(a => a.Alias)
+                .ToListAsync();
+
+            if (withoutAccount.Count > 0 || provisionalAccounts.Count > 0)
             {
-                var detail = string.Join(" ", missingAccounts.Select(m => m.Currency == Currencies.Usd
-                    ? $"La empresa \"{m.Name}\" no tiene configurada la cuenta bancaria en dólares (USD)."
-                    : $"La empresa \"{m.Name}\" no tiene configurada la cuenta bancaria en pesos."));
+                var parts = new List<string>();
+
+                if (provisionalAccounts.Count > 0)
+                    parts.Add($"Estas cuentas bancarias no tienen contrapartida contable configurada: {string.Join(", ", provisionalAccounts)}.");
+
+                if (withoutAccount.Count > 0)
+                    parts.Add($"Hay movimientos sin cuenta bancaria asignada en: {string.Join(", ", withoutAccount)}.");
 
                 return Results.Problem(
-                    title:      "Cuenta bancaria no configurada",
-                    detail:     $"{detail} Completala en la ficha de la empresa (Editar empresa) y reintentá.",
+                    title:      "Cuenta bancaria sin contrapartida",
+                    detail:     $"{string.Join(" ", parts)} Completala en la ficha de la empresa, pestaña Cuentas Bancarias, y reintentá.",
                     statusCode: 422);
             }
 
@@ -92,10 +110,14 @@ public static class JournalEntriesEndpoints
             [FromQuery] string?   companyId,
             [FromQuery] int?      month,
             [FromQuery] int?      year,
-            [FromQuery] string?   currency) =>
+            [FromQuery] string?   currency,
+            [FromQuery] string?   bankAccountId = null) =>
         {
             if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
                 return Results.BadRequest(new { message = "currency inválida. Valores soportados: ARS, USD." });
+
+            if (!BankAccountFilter.TryParse(bankAccountId, out var baId, out var unassignedOnly))
+                return Results.BadRequest(new { message = "bankAccountId inválido." });
 
             var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
@@ -110,6 +132,16 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(currency))
                 query = query.Where(j => j.Currency == currency);
+
+            // Las opciones del dropdown salen del alcance SIN el filtro de cuenta aplicado: si no,
+            // al elegir una cuenta el resto desaparecería del selector y no habría cómo volver.
+            var usedBankAccountIds = await query
+                .Select(j => j.BankAccountId)
+                .Distinct()
+                .ToListAsync();
+
+            if (unassignedOnly)     query = query.Where(j => j.BankAccountId == null);
+            else if (baId.HasValue) query = query.Where(j => j.BankAccountId == baId.Value);
 
             if (month.HasValue && year.HasValue)
             {
@@ -135,16 +167,19 @@ public static class JournalEntriesEndpoints
                     j.BankTransactionId,
                     j.GeneratedAt,
                     j.Currency,
+                    j.BankAccountId,
                     Lines = j.Lines.OrderByDescending(l => l.IsDebit).ThenBy(l => l.Account).Select(l => new { l.Account, l.Amount, l.IsDebit }),
                 })
                 .ToListAsync();
 
-            return Results.Ok(entries);
+            var availableBankAccounts = await BankAccountFilter.BuildAsync(dbContext, usedBankAccountIds);
+
+            return Results.Ok(new { Entries = entries, AvailableBankAccounts = availableBankAccounts });
         })
         .WithName("GetJournalEntries")
         .WithTags("Libro Diario")
-        .WithSummary("Listar asientos del estudio, filtrable por empresa, período y moneda.")
-        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD). Devuelve asientos con su moneda y sus líneas (account, amount, isDebit). Sin filtros devuelve todos los asientos del estudio.")
+        .WithSummary("Listar asientos del estudio, filtrable por empresa, período, moneda y cuenta bancaria.")
+        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD), bankAccountId (guid | 'none' para los asientos sin cuenta). Devuelve { entries, availableBankAccounts }: cada asiento con su moneda, su cuenta bancaria y sus líneas (account, amount, isDebit).")
         .Produces(200)
         .Produces(400);
 
@@ -249,12 +284,10 @@ public static class JournalEntriesEndpoints
                 if (co != null) companyName = co.Name;
             }
 
-            var studioCompanies = await dbContext.Companies
+            var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
-                .Select(c => new { c.Id, c.BankAccountName })
+                .Select(c => c.Id)
                 .ToListAsync();
-
-            var studioCompanyIds = studioCompanies.Select(c => c.Id).ToList();
 
             var query = dbContext.JournalEntries
                 .Include(j => j.Lines)
@@ -307,19 +340,14 @@ public static class JournalEntriesEndpoints
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
 
-            var balanceAccounts = studioCompanies
-                .Where(c => !string.IsNullOrWhiteSpace(c.BankAccountName))
-                .Select(c => c.BankAccountName!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
             Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidPost);
             var externalCodesPost = await dbContext.ChartOfAccounts
                 .AsNoTracking()
                 .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidPost))
                 .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, balanceAccounts, externalCodesPost);
+            var aliasesPost = await LoadBankAccountAliasesAsync(dbContext, entries);
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, externalCodesPost, aliasesPost);
             var dateLabel = req.Month.HasValue && req.Year.HasValue
                 ? $"{req.Month:D2}-{req.Year}"
                 : req.Year.HasValue ? $"{req.Year}" : "todo";
@@ -348,10 +376,14 @@ public static class JournalEntriesEndpoints
             [FromQuery] string? search,
             [FromQuery] string? account,
             [FromQuery] string? currency,
-            [FromQuery] string? entryIds) =>
+            [FromQuery] string? entryIds,
+            [FromQuery] string? bankAccountId = null) =>
         {
             if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
                 return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
+            if (!BankAccountFilter.TryParse(bankAccountId, out var expBaId, out var expUnassigned))
+                return Results.BadRequest("bankAccountId inválido.");
 
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
@@ -360,12 +392,10 @@ public static class JournalEntriesEndpoints
                 if (co != null) companyName = co.Name;
             }
 
-            var studioCompanies = await dbContext.Companies
+            var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
-                .Select(c => new { c.Id, c.BankAccountName })
+                .Select(c => c.Id)
                 .ToListAsync();
-
-            var studioCompanyIds = studioCompanies.Select(c => c.Id).ToList();
 
             var query = dbContext.JournalEntries
                 .Include(j => j.Lines)
@@ -400,6 +430,9 @@ public static class JournalEntriesEndpoints
             if (!string.IsNullOrWhiteSpace(currency))
                 query = query.Where(j => j.Currency == currency);
 
+            if (expUnassigned)         query = query.Where(j => j.BankAccountId == null);
+            else if (expBaId.HasValue) query = query.Where(j => j.BankAccountId == expBaId.Value);
+
             if (!string.IsNullOrWhiteSpace(entryIds))
             {
                 var ids = entryIds
@@ -419,19 +452,14 @@ public static class JournalEntriesEndpoints
             if (!entries.Any())
                 return Results.NotFound("No hay asientos para el período seleccionado.");
 
-            var balanceAccounts = studioCompanies
-                .Where(c => !string.IsNullOrWhiteSpace(c.BankAccountName))
-                .Select(c => c.BankAccountName!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
             Guid.TryParse(currentTenant.StudioTenantId, out var studioGuidGet);
             var externalCodesGet = await dbContext.ChartOfAccounts
                 .AsNoTracking()
                 .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidGet))
                 .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, balanceAccounts, externalCodesGet);
+            var aliasesGet = await LoadBankAccountAliasesAsync(dbContext, entries);
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, externalCodesGet, aliasesGet);
             var dateLabel = month.HasValue && year.HasValue
                 ? $"{month:D2}-{year}"
                 : year.HasValue ? $"{year}" : "todo";
@@ -625,6 +653,27 @@ public static class JournalEntriesEndpoints
         .Produces(200, contentType: "text/csv")
         .Produces(400)
         .Produces(404);
+    }
+
+    /// <summary>
+    /// Alias de las cuentas bancarias que aparecen en los asientos exportados. Los necesita la hoja
+    /// "Formulario de Asiento" para nombrar sus filas cuando desagrega por cuenta.
+    /// </summary>
+    private static async Task<Dictionary<Guid, string>> LoadBankAccountAliasesAsync(
+        ContableAIDbContext dbContext, List<JournalEntry> entries)
+    {
+        var ids = entries
+            .Where(e => e.BankAccountId.HasValue)
+            .Select(e => e.BankAccountId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0) return [];
+
+        return await dbContext.BankAccounts
+            .AsNoTracking()
+            .Where(a => ids.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.Alias);
     }
 
     private static string BuildEntrySignature(JournalEntry entry)

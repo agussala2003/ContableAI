@@ -6,7 +6,7 @@ import { FormsModule } from '@angular/forms';
 import { CompanyService } from '../../../../core/services/company.service';
 import { AuthService } from '../../../../core/services/auth.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
-import { ReconciliationService } from '../../reconciliation.service';
+import { ReconciliationService, UploadEvent } from '../../reconciliation.service';
 import { UploadZone } from '../../components/upload-zone/upload-zone';
 import { TransactionGrid } from '../../components/transaction-grid/transaction-grid';
 import { TransactionSkeleton } from '../../../../shared/components/transaction-skeleton';
@@ -15,6 +15,7 @@ import { AfipZone } from '../../components/afip-zone/afip-zone';
 import { CompanyModal } from '../../components/company-modal/company-modal';
 import { DuplicatesModal } from '../../components/duplicates-modal/duplicates-modal';
 import { OnboardingModal } from '../../../../core/components/onboarding-modal/onboarding-modal';
+import { ReapplyRuleModal } from '../../../rules/components/reapply-rule-modal/reapply-rule-modal';
 import { RuleService, SaveRuleRequest, AccountingRule } from '../../../../core/services/rule.service';
 import { SkippedDuplicate } from '../../../../core/services/transaction';
 import { CurrencySymbolPipe } from '../../../../shared/pipes/currency-amount.pipe';
@@ -60,6 +61,7 @@ const DEMO_CSV = `Fecha,Referencia,Descripcion,Numero,Importe
     CompanyModal,
     DuplicatesModal,
     OnboardingModal,
+    ReapplyRuleModal,
     LucideAngularModule,
     CurrencySymbolPipe,
     ModalA11yDirective,
@@ -89,6 +91,8 @@ export class ReconciliationPage implements OnInit {
   showQuickRuleModal = signal(false);
   showBulkRuleModal = signal(false);
   isSavingQuickRule = signal(false);
+  /** Regla recién creada por el modal rápido, a la espera de confirmar la aplicación retroactiva. */
+  reapplyingRule = signal<AccountingRule | null>(null);
   isApplyingBulkRule = signal(false);
   showOnboarding   = signal<boolean>(
     localStorage.getItem('contableai_onboarding_done') !== 'true'
@@ -311,26 +315,25 @@ export class ReconciliationPage implements OnInit {
     this.ruleService.createRule(companyId, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (rule) => {
         this.bulkRules.update(list => [rule, ...list]);
-        this.ruleService.reapplyRule(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-          next: (result) => {
-            this.isSavingQuickRule.set(false);
-            this.closeQuickRuleModal();
-            this.svc.loadData();
-            this.toast.success(`Regla creada y aplicada a ${result.updatedCount} movimiento(s) pendiente(s).`);
-          },
-          error: () => {
-            this.isSavingQuickRule.set(false);
-            this.closeQuickRuleModal();
-            this.svc.loadData();
-            this.toast.warning('Regla creada, pero no se pudo completar la reaplicación automática.');
-          },
-        });
+        this.isSavingQuickRule.set(false);
+        this.closeQuickRuleModal();
+        this.toast.success('Regla creada.');
+        // Encadena el flujo retroactivo: el usuario acaba de crear la regla mirando un movimiento
+        // concreto, así que lo natural es ofrecerle aplicarla a lo ya cargado. Va con preview y
+        // confirmación porque sobrescribe asignaciones manuales.
+        this.reapplyingRule.set(rule);
       },
       error: () => {
         this.isSavingQuickRule.set(false);
         this.toast.error('No se pudo crear la regla rápida.');
       },
     });
+  }
+
+  onReapplyClosed(): void {
+    this.reapplyingRule.set(null);
+    // Se recarga igual si el usuario canceló: la regla nueva ya existe y la grilla la refleja.
+    this.svc.loadData();
   }
 
   /** Selects only the eligible (unbooked) transactions in the grid. */
@@ -342,7 +345,7 @@ export class ReconciliationPage implements OnInit {
     this.svc.generateEntries(this.gridSelectedIds());
   }
 
-  onFileDropped(event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean }): void {
+  onFileDropped(event: UploadEvent): void {
     this.svc.uploadFiles(event, () => this.showUploadModal.set(false));
   }
 

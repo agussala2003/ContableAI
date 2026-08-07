@@ -147,8 +147,6 @@ export class StudioRulesPage {
     this.form.update(f => ({ ...f, [change.field]: change.value }));
   }
 
-  noop(): void {}
-
   private directionToStr(d: string | null): Direction {
     if (d === 'DEBIT' || d === 'Debit') return 'DEBIT';
     if (d === 'CREDIT' || d === 'Credit') return 'CREDIT';

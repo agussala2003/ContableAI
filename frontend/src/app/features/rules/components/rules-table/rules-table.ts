@@ -1,4 +1,4 @@
-import { Component, computed, input, output } from '@angular/core';
+import { Component, HostListener, computed, input, output, signal } from '@angular/core';
 import { AccountingRule, RuleDirection } from '../../../../core/services/rule.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { RuleFilterType } from '../rules.types';
@@ -21,10 +21,15 @@ export class RulesTable {
   overrideMapByOwnRule = input<Record<string, string[]>>({});
   overrideMapByGlobalRule = input<Record<string, string[]>>({});
 
+  promotingId = input<string | null>(null);
+  reapplyingId = input<string | null>(null);
+
   createRequested = output<void>();
   editRequested = output<AccountingRule>();
   deleteRequested = output<AccountingRule>();
   toggleStatusRequested = output<AccountingRule>();
+  promoteRequested = output<AccountingRule>();
+  reapplyRequested = output<AccountingRule>();
 
   readonly displayedRules = computed(() => {
     const q = this.searchQuery().toLowerCase().trim();
@@ -44,6 +49,61 @@ export class RulesTable {
     );
   });
 
+  // ── Menú kebab de acciones secundarias ──────────────────────────────────
+  //
+  // El menú se posiciona `fixed` y se renderiza fuera de la grilla, no `absolute` dentro de la
+  // fila: el contenedor de la tabla tiene `overflow-auto`, que recortaría el desplegable en las
+  // últimas filas —justo donde más se necesita—.
+
+  /** Id de la regla cuyo menú está abierto; null = ninguno. */
+  readonly openMenuRuleId = signal<string | null>(null);
+  /** Coordenadas de viewport del menú abierto (posicionamiento fixed). */
+  readonly menuPosition = signal<{ top: number; right: number } | null>(null);
+
+  /** La regla del menú abierto, para saber qué opciones ofrecer. */
+  readonly openMenuRule = computed(() => {
+    const id = this.openMenuRuleId();
+    return id === null ? null : this.rules().find(r => r.id === id) ?? null;
+  });
+
+  toggleMenu(rule: AccountingRule, event: MouseEvent): void {
+    event.stopPropagation();
+
+    if (this.openMenuRuleId() === rule.id) {
+      this.closeMenu();
+      return;
+    }
+
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    // Anclado al borde derecho del botón: el menú crece hacia la izquierda y nunca se sale.
+    this.menuPosition.set({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    this.openMenuRuleId.set(rule.id);
+  }
+
+  closeMenu(): void {
+    this.openMenuRuleId.set(null);
+    this.menuPosition.set(null);
+  }
+
+  // Cualquier clic fuera cierra. El clic dentro del menú no llega acá porque lo detiene el propio
+  // contenedor del desplegable.
+  @HostListener('document:click')
+  onDocumentClick(): void {
+    this.closeMenu();
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscape(): void {
+    this.closeMenu();
+  }
+
+  // La posición es de viewport: si la ventana cambia de tamaño, el menú queda flotando lejos del
+  // botón que lo abrió. Cerrarlo es preferible a recalcular.
+  @HostListener('window:resize')
+  onResize(): void {
+    this.closeMenu();
+  }
+
   onCreate(): void {
     this.createRequested.emit();
   }
@@ -58,6 +118,42 @@ export class RulesTable {
 
   onToggleStatus(rule: AccountingRule): void {
     this.toggleStatusRequested.emit(rule);
+  }
+
+  onPromote(rule: AccountingRule): void {
+    this.promoteRequested.emit(rule);
+  }
+
+  onReapply(rule: AccountingRule): void {
+    this.reapplyRequested.emit(rule);
+  }
+
+  /** Las reglas generales (de sistema o de estudio) se administran aparte, no desde acá. */
+  canDelete(rule: AccountingRule): boolean {
+    return rule.companyId != null;
+  }
+
+  /**
+   * Alguna acción de la fila está en vuelo. Se muestra en el propio botón kebab porque, con el
+   * menú cerrado, no habría ningún otro lugar donde ver que la operación sigue corriendo.
+   */
+  isBusy(rule: AccountingRule): boolean {
+    return this.deletingId()   === rule.id
+        || this.promotingId()  === rule.id
+        || this.reapplyingId() === rule.id;
+  }
+
+  /** Solo las reglas propias de la empresa se pueden promover: las de estudio ya lo están. */
+  canPromote(rule: AccountingRule): boolean {
+    return rule.companyId != null;
+  }
+
+  /**
+   * La reaplicación retroactiva es solo para reglas de empresa (decisión de alcance v1.1) y no
+   * tiene sentido sobre una regla inactiva, que el motor ni siquiera evalúa.
+   */
+  canReapply(rule: AccountingRule): boolean {
+    return rule.companyId != null && rule.isActive;
   }
 
   ruleScope(rule: AccountingRule): 'company' | 'studio' | 'system' {

@@ -10,7 +10,11 @@ namespace ContableAI.Infrastructure.Services;
 public interface IExportService
 {
     byte[] ExportToExcel(IEnumerable<BankTransaction> transactions, string companyName, int month, int year);
-    byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null, IReadOnlyDictionary<string, string>? externalCodes = null);
+    /// <param name="bankAccountAliases">
+    /// Alias por cuenta bancaria. Cuando el conjunto exportado abarca más de una, la hoja
+    /// "Formulario de Asiento" desagrega por cuenta y usa estos alias para nombrar cada fila.
+    /// </param>
+    byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IReadOnlyDictionary<string, string>? externalCodes = null, IReadOnlyDictionary<Guid, string>? bankAccountAliases = null);
 
     /// <summary>Genera archivo TXT tab-delimitado compatible con Holistor.</summary>
     byte[] ExportJournalEntriesToHolistor(IEnumerable<JournalEntry> entries, IReadOnlyDictionary<string, string>? externalCodes = null);
@@ -167,7 +171,7 @@ public class ExcelExportService : IExportService
     // =========================================================================
     // LIBRO DIARIO (Journal Entries)
     // =========================================================================
-    public byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IEnumerable<string>? balanceAccounts = null, IReadOnlyDictionary<string, string>? externalCodes = null)
+    public byte[] ExportJournalEntriesToExcel(IEnumerable<JournalEntry> entries, string companyName, int? month, int? year, IReadOnlyDictionary<string, string>? externalCodes = null, IReadOnlyDictionary<Guid, string>? bankAccountAliases = null)
     {
         using var wb = new XLWorkbook();
 
@@ -175,10 +179,6 @@ public class ExcelExportService : IExportService
         var sheetLabel  = (month.HasValue && year.HasValue) ? $"{month:D2}-{year}" : year.HasValue ? $"{year}" : "todo";
         var periodLabel = (month.HasValue && year.HasValue) ? $"{GetMonthName(month.Value)} {year}"
                         : year.HasValue ? $"{year}" : "Todos los períodos";
-
-        var balanceSet = new HashSet<string>(
-            (balanceAccounts ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()),
-            StringComparer.OrdinalIgnoreCase);
 
         // Separar por moneda: los totales de ARS y USD nunca se suman en la misma hoja. Con una
         // sola moneda se conservan los nombres de hoja actuales (sin ruido para las cuentas que
@@ -193,7 +193,7 @@ public class ExcelExportService : IExportService
 
         if (byCurrency.Count == 0)
         {
-            BuildFormularioSheet(wb, "Formulario de Asiento", entryList, companyName, periodLabel, balanceSet, externalCodes);
+            BuildFormularioSheet(wb, "Formulario de Asiento", entryList, companyName, periodLabel, externalCodes, bankAccountAliases);
             BuildDetalleSheet(wb, $"Detalle {sheetLabel}", entryList, companyName, periodLabel, externalCodes);
         }
         else
@@ -203,7 +203,7 @@ public class ExcelExportService : IExportService
                 var suffix       = multi ? $" {group.Key}" : string.Empty;
                 var groupEntries = group.OrderBy(e => e.Date).ToList();
                 var groupPeriod  = multi ? $"{periodLabel} — {group.Key}" : periodLabel;
-                BuildFormularioSheet(wb, $"Formulario de Asiento{suffix}", groupEntries, companyName, groupPeriod, balanceSet, externalCodes);
+                BuildFormularioSheet(wb, $"Formulario de Asiento{suffix}", groupEntries, companyName, groupPeriod, externalCodes, bankAccountAliases);
                 BuildDetalleSheet(wb, $"Detalle {sheetLabel}{suffix}", groupEntries, companyName, groupPeriod, externalCodes);
             }
         }
@@ -213,10 +213,11 @@ public class ExcelExportService : IExportService
         return ms.ToArray();
     }
 
-    // ── Hoja "Formulario de Asiento" (consolidado por cuenta) para un conjunto de asientos ──
+    // ── Hoja "Formulario de Asiento" (consolidado por cuenta y lado) para un conjunto de asientos ──
     private static void BuildFormularioSheet(
         XLWorkbook wb, string sheetName, List<JournalEntry> entries, string companyName,
-        string periodLabel, HashSet<string> balanceSet, IReadOnlyDictionary<string, string>? externalCodes)
+        string periodLabel, IReadOnlyDictionary<string, string>? externalCodes,
+        IReadOnlyDictionary<Guid, string>? bankAccountAliases = null)
     {
         var ws = wb.Worksheets.Add(sheetName);
 
@@ -250,40 +251,77 @@ public class ExcelExportService : IExportService
             c.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
         }
 
-        // Group by account, but split configured balance accounts into exclusive Debe/Haber rows.
+        // Consolidación: SIEMPRE una fila por (cuenta, lado). Una cuenta que recibe importes en el
+        // Debe y en el Haber nunca se netea ni se fusiona — se emiten dos filas independientes.
+        // Es lo que permite auditar cuentas puente como "VALORES EN TRANSITO": si el Debe no iguala
+        // al Haber, falta procesar el otro lado de una transferencia entre cuentas propias.
+        //
+        // Cuando el conjunto abarca más de una cuenta bancaria, la clave incorpora además la cuenta
+        // de origen. Sin eso, una contrapartida como "Gastos Bancarios" sumaría importes de todos
+        // los bancos en una sola fila, dando un saldo que no se corresponde con ningún extracto.
+        //
+        // La condición es la MISMA que decide el desglose en la pantalla (`accountGroups` de
+        // journal-page.ts): más de una cuenta bancaria presente en los datos. Por eso no hace falta
+        // pasar un flag — con el filtro puesto en una cuenta, el conjunto exportado ya trae una
+        // sola y ninguno de los dos desagrega. Si divergieran, el Excel y la pantalla mostrarían
+        // distintas filas para el mismo período.
+        var splitByBankAccount = entries.Select(e => e.BankAccountId).Distinct().Count() > 1;
+
         var groups = entries
-            .SelectMany(e => e.Lines.Select(l =>
+            .SelectMany(e => e.Lines.Select(l => new { Entry = e, Line = l }))
+            .GroupBy(x => new
             {
-                var account = l.Account.Trim();
-                var isBalance = balanceSet.Contains(account);
-                var key = isBalance ? $"{account}__{(l.IsDebit ? "D" : "H")}" : account;
-                var label = isBalance ? $"{account} ({(l.IsDebit ? "Debe" : "Haber")})" : account;
-                return new { Key = key, Label = label, l.Amount, l.IsDebit };
-            }))
-            .GroupBy(x => x.Key)
+                Account       = x.Line.Account.Trim(),
+                x.Line.IsDebit,
+                BankAccountId = splitByBankAccount ? x.Entry.BankAccountId : null,
+            })
             .Select(g => new
             {
-                Key     = g.Key,
-                Account = g.First().Label,
-                Debe    = g.Where(x => x.IsDebit).Sum(x => x.Amount),
-                Haber   = g.Where(x => !x.IsDebit).Sum(x => x.Amount),
+                g.Key.Account,
+                g.Key.IsDebit,
+                g.Key.BankAccountId,
+                BankAlias = splitByBankAccount
+                    ? BankAliasOf(g.Key.BankAccountId, bankAccountAliases)
+                    : null,
+                Amount = g.Sum(x => x.Line.Amount),
             })
-            // Mismo orden que la UI: cuentas con Debe primero, luego las de solo Haber
-            .OrderBy(g => g.Debe > 0 ? 0 : 1)
-            .ThenBy(g => g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty), StringComparer.OrdinalIgnoreCase)
-            .ThenBy(g => g.Account.EndsWith("(Debe)", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ToList();
+
+        // El sufijo "(Debe)"/"(Haber)" solo se agrega cuando la cuenta tiene saldo en ambos lados;
+        // en el resto de las cuentas sería ruido en la mayoría de las filas. La comparación se hace
+        // dentro del mismo alcance con que se agrupó: desagregado por banco, una cuenta con Debe en
+        // uno y Haber en otro no tiene los dos lados en ninguna de las dos filas.
+        var twoSided = groups
+            .GroupBy(g => $"{g.BankAccountId}|{g.Account.ToLowerInvariant()}", StringComparer.Ordinal)
+            .Where(g => g.Any(x => x.IsDebit) && g.Any(x => !x.IsDebit))
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var rows = groups
+            .Select(g => new
+            {
+                g.Account,
+                g.IsDebit,
+                g.BankAlias,
+                Label = BuildLabel(g.Account, g.IsDebit, g.BankAlias,
+                    twoSided.Contains($"{g.BankAccountId}|{g.Account.ToLowerInvariant()}")),
+                Debe  = g.IsDebit ? g.Amount : 0m,
+                Haber = g.IsDebit ? 0m : g.Amount,
+            })
+            // Mismo orden que la UI: cada cuenta bancaria forma un bloque; dentro de él, primero las
+            // filas del Debe y después las del Haber, alfabéticas.
+            .OrderBy(g => g.BankAlias ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(g => g.IsDebit ? 0 : 1)
             .ThenBy(g => g.Account, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         int row1 = 7;
         bool alt1 = false;
-        foreach (var g in groups)
+        foreach (var g in rows)
         {
             var bg1 = alt1 ? XLColor.FromArgb(240, 253, 251) : XLColor.White;
-            // Strip balance suffixes to look up the base account name
-            var baseName = g.Account.Replace(" (Debe)", string.Empty).Replace(" (Haber)", string.Empty).Trim();
-            var extCode  = externalCodes?.GetValueOrDefault(baseName) ?? string.Empty;
-            ws.Cell(row1, 1).Value = g.Account;
+            var extCode = externalCodes?.GetValueOrDefault(g.Account) ?? string.Empty;
+            ws.Cell(row1, 1).Value = g.Label;
             if (g.Debe  > 0) { ws.Cell(row1, 2).Value = g.Debe;  ws.Cell(row1, 2).Style.NumberFormat.Format = "#,##0.00"; ws.Cell(row1, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
             if (g.Haber > 0) { ws.Cell(row1, 3).Value = g.Haber; ws.Cell(row1, 3).Style.NumberFormat.Format = "#,##0.00"; ws.Cell(row1, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right; }
             if (!string.IsNullOrEmpty(extCode)) ws.Cell(row1, 4).Value = extCode;
@@ -320,6 +358,29 @@ public class ExcelExportService : IExportService
         ws.Column(2).Width = 20;
         ws.Column(3).Width = 20;
         ws.Column(4).Width = 15;
+    }
+
+    /// <summary>
+    /// Alias de la cuenta bancaria de una fila desagregada. Los textos de los dos casos límite
+    /// —asiento sin cuenta y cuenta que ya no existe— son los mismos que usa la pantalla: es el
+    /// mismo bucket visto desde dos lugares, y nombrarlo distinto rompería la paridad tanto como
+    /// agrupar distinto.
+    /// </summary>
+    private static string BankAliasOf(Guid? bankAccountId, IReadOnlyDictionary<Guid, string>? aliases)
+    {
+        if (bankAccountId is null) return "Sin cuenta asignada";
+        return aliases?.GetValueOrDefault(bankAccountId.Value) ?? "Cuenta desconocida";
+    }
+
+    /// <summary>
+    /// Etiqueta de la fila. El Formulario tiene una sola columna de texto, así que la cuenta
+    /// bancaria va dentro de ella: agregar una columna correría Debe/Haber y rompería la posición
+    /// que los contadores ya conocen (y las fórmulas SUM de la fila de totales).
+    /// </summary>
+    private static string BuildLabel(string account, bool isDebit, string? bankAlias, bool twoSided)
+    {
+        var label = twoSided ? $"{account} ({(isDebit ? "Debe" : "Haber")})" : account;
+        return bankAlias is null ? label : $"{label} [{bankAlias}]";
     }
 
     // ── Hoja "Detalle" (asientos individuales, formato original) para un conjunto de asientos ──
