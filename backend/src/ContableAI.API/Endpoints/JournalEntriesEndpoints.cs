@@ -346,7 +346,8 @@ public static class JournalEntriesEndpoints
                 .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidPost))
                 .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, externalCodesPost);
+            var aliasesPost = await LoadBankAccountAliasesAsync(dbContext, entries);
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, req.Month, req.Year, externalCodesPost, aliasesPost);
             var dateLabel = req.Month.HasValue && req.Year.HasValue
                 ? $"{req.Month:D2}-{req.Year}"
                 : req.Year.HasValue ? $"{req.Year}" : "todo";
@@ -457,7 +458,8 @@ public static class JournalEntriesEndpoints
                 .Where(a => a.ExternalCode != null && (a.StudioTenantId == null || a.StudioTenantId == studioGuidGet))
                 .ToDictionaryAsync(a => a.Name, a => a.ExternalCode!);
 
-            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, externalCodesGet);
+            var aliasesGet = await LoadBankAccountAliasesAsync(dbContext, entries);
+            var fileBytes = exportService.ExportJournalEntriesToExcel(entries, companyName, month, year, externalCodesGet, aliasesGet);
             var dateLabel = month.HasValue && year.HasValue
                 ? $"{month:D2}-{year}"
                 : year.HasValue ? $"{year}" : "todo";
@@ -651,6 +653,27 @@ public static class JournalEntriesEndpoints
         .Produces(200, contentType: "text/csv")
         .Produces(400)
         .Produces(404);
+    }
+
+    /// <summary>
+    /// Alias de las cuentas bancarias que aparecen en los asientos exportados. Los necesita la hoja
+    /// "Formulario de Asiento" para nombrar sus filas cuando desagrega por cuenta.
+    /// </summary>
+    private static async Task<Dictionary<Guid, string>> LoadBankAccountAliasesAsync(
+        ContableAIDbContext dbContext, List<JournalEntry> entries)
+    {
+        var ids = entries
+            .Where(e => e.BankAccountId.HasValue)
+            .Select(e => e.BankAccountId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0) return [];
+
+        return await dbContext.BankAccounts
+            .AsNoTracking()
+            .Where(a => ids.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.Alias);
     }
 
     private static string BuildEntrySignature(JournalEntry entry)
