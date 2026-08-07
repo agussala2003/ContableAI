@@ -91,6 +91,14 @@ export interface PerFileResult {
   transactions: BankTransaction[];
 }
 
+/** Cuenta bancaria provisional creada por el enrutamiento automático (Flujo 3 del OCR). */
+export interface CreatedBankAccount {
+  id: string;
+  alias: string;
+  accountNumber: string | null;
+  currency: Currency;
+}
+
 export interface UploadResponse {
   totalFiles: number;
   totalProcessed: number;
@@ -100,6 +108,8 @@ export interface UploadResponse {
   perFile: PerFileResult[];
   skippedDuplicates?: SkippedDuplicate[];
   parseErrors?: string[];
+  /** Cuentas que el OCR detectó y dio de alta solas. Nacen SIN contrapartida: no pueden asentar. */
+  createdBankAccounts?: CreatedBankAccount[];
 }
 
 /** Respuesta del endpoint de subida: el archivo se procesa en un job de Hangfire en segundo plano. */

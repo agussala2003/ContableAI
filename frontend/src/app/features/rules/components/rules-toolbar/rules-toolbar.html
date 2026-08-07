@@ -75,6 +75,24 @@
       Mostrar inactivas
     </label>
 
+    <!-- Importar: el <input file> va oculto y lo dispara el label, para poder darle el mismo
+         estilo que al resto de los botones de la barra. -->
+    <label
+      [class.opacity-40]="!canCreate()"
+      [class.cursor-not-allowed]="!canCreate()"
+      [class.cursor-pointer]="canCreate()"
+      class="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium whitespace-nowrap
+             text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800
+             border border-slate-200 dark:border-slate-700
+             hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+      title="Importar reglas desde un archivo JSON exportado"
+    >
+      <input type="file" accept="application/json,.json" class="hidden"
+        [disabled]="!canCreate()" (change)="onImportFileChange($event)" />
+      <lucide-icon name="upload" class="w-4 h-4"></lucide-icon>
+      Importar
+    </label>
+
     <button id="tour-rules-new-btn"
       (click)="onCreateClick()"
       [disabled]="!canCreate()"

@@ -59,7 +59,7 @@ public class UploadBankStatementHandlerTests
         public Task<QuotaLimits> GetLimitsAsync(string studioTenantId) => throw new NotSupportedException();
         public Task<QuotaUsage>  GetUsageAsync(string studioTenantId)  => throw new NotSupportedException();
         public Task<bool> CanAddCompanyAsync(string studioTenantId)          => throw new NotSupportedException();
-        public Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId) => throw new NotSupportedException();
+        public Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId, int additional = 1) => throw new NotSupportedException();
     }
 
     private sealed class FakeJobClient : IBackgroundJobClient

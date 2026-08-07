@@ -24,7 +24,7 @@ public class CompanyCuitUniquenessTests
         public Task<QuotaLimits> GetLimitsAsync(string studioTenantId) => throw new NotImplementedException();
         public Task<QuotaUsage>  GetUsageAsync(string studioTenantId)  => throw new NotImplementedException();
         public Task<bool> CanAddCompanyAsync(string studioTenantId)               => Task.FromResult(true);
-        public Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId)  => Task.FromResult(true);
+        public Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId, int additional = 1) => Task.FromResult(true);
         public Task<bool> CanUploadTransactionsAsync(string studioTenantId, int count) => Task.FromResult(true);
     }
 

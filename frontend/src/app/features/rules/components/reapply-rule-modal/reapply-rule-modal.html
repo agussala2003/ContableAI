@@ -29,7 +29,52 @@
               <div class="h-full w-1/3 rounded-full bg-amber-500 animate-pulse"></div>
             </div>
           </div>
-        } @else if (isLoadingPreview()) {
+        } @else {
+          <!-- El alcance se elige ANTES de ver el impacto: el preview se recalcula con cada
+               cambio, así que el número que se confirma siempre corresponde a lo elegido. -->
+          <fieldset class="space-y-1.5">
+            <legend class="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
+              Alcance
+            </legend>
+
+            <label class="flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-colors"
+              [class]="scope() === 'pending'
+                ? 'border-amber-300 dark:border-amber-500/50 bg-amber-50/60 dark:bg-amber-500/5'
+                : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50'">
+              <input type="radio" name="reapply-scope" value="pending"
+                [checked]="scope() === 'pending'" (change)="setScope('pending')"
+                [disabled]="isLoadingPreview()"
+                class="mt-0.5 h-3.5 w-3.5 text-amber-600 focus:ring-amber-500 border-slate-300" />
+              <span class="min-w-0">
+                <span class="block text-xs font-medium text-slate-800 dark:text-slate-200">
+                  Solo movimientos sin cuenta asignada
+                </span>
+                <span class="block text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  Completa los pendientes. No pisa nada de lo que ya está clasificado.
+                </span>
+              </span>
+            </label>
+
+            <label class="flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-colors"
+              [class]="scope() === 'all'
+                ? 'border-red-300 dark:border-red-500/50 bg-red-50/60 dark:bg-red-500/5'
+                : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50'">
+              <input type="radio" name="reapply-scope" value="all"
+                [checked]="scope() === 'all'" (change)="setScope('all')"
+                [disabled]="isLoadingPreview()"
+                class="mt-0.5 h-3.5 w-3.5 text-red-600 focus:ring-red-500 border-slate-300" />
+              <span class="min-w-0">
+                <span class="block text-xs font-medium text-slate-800 dark:text-slate-200">
+                  Sin cuenta + con cuenta no asentados <span class="text-red-600 dark:text-red-400">(reemplazar)</span>
+                </span>
+                <span class="block text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  Sobrescribe también lo que ya tiene cuenta, incluidas las asignaciones manuales.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
+          @if (isLoadingPreview()) {
           <div class="flex items-center gap-2 py-6 justify-center text-sm text-slate-500 dark:text-slate-400">
             <lucide-icon name="loader" class="w-4 h-4 animate-spin"></lucide-icon>
             Calculando el impacto...
@@ -86,6 +131,19 @@
             </div>
           }
 
+          <!-- Convierte el selector en una decisión informada: sin este número, elegir el alcance
+               seguro sería a ciegas. -->
+          @if (outOfScopeCount() > 0) {
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5">
+              <p class="text-[11px] text-slate-600 dark:text-slate-300">
+                Hay <span class="font-semibold">{{ outOfScopeCount() }}</span>
+                movimiento{{ outOfScopeCount() !== 1 ? 's' : '' }} más que coincide{{ outOfScopeCount() !== 1 ? 'n' : '' }}
+                pero ya {{ outOfScopeCount() !== 1 ? 'tienen' : 'tiene' }} cuenta asignada.
+                Elegí <span class="font-medium">Reemplazar</span> si querés incluirlo{{ outOfScopeCount() !== 1 ? 's' : '' }}.
+              </p>
+            </div>
+          }
+
           <!-- Orden correcto de operaciones: reaplicar solo funciona sobre reglas de empresa,
                así que una vez promovida ya no se puede aplicar a históricos. -->
           <div class="rounded-xl border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/60 dark:bg-indigo-500/5 px-3 py-2.5">
@@ -94,6 +152,7 @@
               Estudio, aplicala a tus movimientos históricos <span class="font-semibold">ANTES</span> de promoverla.
             </p>
           </div>
+          }
         }
       </div>
 

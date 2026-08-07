@@ -84,7 +84,8 @@ public sealed class ReapplyRuleHandler : IRequestHandler<ReapplyRuleCommand, Res
         var targetSource = ResolveTargetSource(rule.TargetAccount, company.SplitChequeTax);
 
         var outcome = ReapplyCandidateClassifier.Classify(
-            candidates, rule.Keyword, rule.TargetAccount, targetSource, rule.Id, closedPeriods);
+            candidates, rule.Keyword, rule.TargetAccount, targetSource, rule.Id, closedPeriods,
+            cmd.Scope);
 
         if (!cmd.DryRun && outcome.ToUpdate.Count > 0)
             await ApplyAsync(cmd, rule, targetSource, outcome, ct);
@@ -94,7 +95,8 @@ public sealed class ReapplyRuleHandler : IRequestHandler<ReapplyRuleCommand, Res
             outcome.ToUpdate.Count,
             outcome.Pending, outcome.ByOtherRule, outcome.Manual,
             outcome.SkippedSettled, outcome.SkippedClosedPeriod,
-            outcome.SkippedAfipCombo, outcome.AlreadyApplied);
+            outcome.SkippedAfipCombo, outcome.AlreadyApplied,
+            outcome.SkippedOutOfScope);
 
         if (!cmd.DryRun)
             _logger.LogInformation(
@@ -141,8 +143,16 @@ public sealed class ReapplyRuleHandler : IRequestHandler<ReapplyRuleCommand, Res
                 ? await _db.Database.BeginTransactionAsync(ct)
                 : null;
 
-            foreach (var batch in outcome.ToUpdate.Chunk(BatchSize))
+            foreach (var chunk in outcome.ToUpdate.Chunk(BatchSize))
             {
+                // OJO: `chunk` es Guid[], y sobre un array `Contains` liga a
+                // MemoryExtensions.Contains(ReadOnlySpan<T>, T) —la sobrecarga de Span gana sobre
+                // la de Enumerable—. EF Core no sabe traducir eso y el job explota en runtime con
+                // "GenericArguments[1] 'System.ReadOnlySpan`1[System.Guid]' violates the constraint
+                // of type 'TRet'". Materializarlo como List<Guid> fuerza Enumerable.Contains, que
+                // sí se traduce a un `IN (...)`. No cambiar el tipo de esta variable.
+                List<Guid> batch = [.. chunk];
+
                 await _db.BankTransactions.IgnoreQueryFilters()
                     .Where(t => batch.Contains(t.Id))
                     .ExecuteUpdateAsync(s => s
@@ -167,6 +177,7 @@ public sealed class ReapplyRuleHandler : IRequestHandler<ReapplyRuleCommand, Res
                     Operation = "ReapplyRuleOverride",
                     rule.Keyword,
                     rule.TargetAccount,
+                    Scope               = cmd.Scope.ToString(),
                     CompanyId           = rule.CompanyId,
                     Updated             = outcome.ToUpdate.Count,
                     FromPending         = outcome.Pending,

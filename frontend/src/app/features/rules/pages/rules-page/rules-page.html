@@ -27,6 +27,7 @@
       (searchQueryChange)="onSearchQueryChange($event)"
       (filterTypeChange)="onFilterTypeChange($event)"
       (showInactiveChange)="onShowInactiveChange($event)"
+      (importFileSelected)="onImportFile($event)"
       (createRequested)="openCreate()"
     />
 
@@ -42,6 +43,7 @@
         [overrideMapByOwnRule]="overrideMapByOwnRule()"
         [overrideMapByGlobalRule]="overrideMapByGlobalRule()"
         (createRequested)="openCreate()"
+        (exportRequested)="onExportRules($event)"
         (editRequested)="openEdit($event)"
         (deleteRequested)="confirmDelete($event)"
         (toggleStatusRequested)="toggleRuleStatus($event)"

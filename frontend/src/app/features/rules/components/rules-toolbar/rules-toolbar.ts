@@ -25,6 +25,19 @@ export class RulesToolbar {
   filterTypeChange = output<RuleFilterType>();
   showInactiveChange = output<boolean>();
   createRequested = output<void>();
+  /** Archivo JSON elegido por el usuario para importar reglas. */
+  importFileSelected = output<File>();
+
+  /**
+   * Toma el archivo y limpia el input. Sin el reset, elegir el MISMO archivo dos veces seguidas
+   * —el caso natural tras corregirlo— no dispara "change" y parecería que la app se colgó.
+   */
+  onImportFileChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) this.importFileSelected.emit(file);
+  }
 
   onCompanyChange(value: string): void {
     this.companyChange.emit(value);

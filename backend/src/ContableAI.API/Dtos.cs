@@ -9,6 +9,21 @@ record CreateRuleRequest(
     int?   Priority,
     bool?  RequiresTaxMatching
 );
+/// <summary>
+/// Regla dentro de un archivo de exportación. Deliberadamente NO lleva Id, CompanyId ni
+/// StudioTenantId: el archivo describe la configuración, no las filas de una base concreta, y
+/// aceptarlos permitiría escribir en una empresa ajena mandando un JSON armado a mano.
+/// </summary>
+record ImportRuleItem(
+    string  Keyword,
+    string  TargetAccount,
+    string? Direction,
+    int?    Priority,
+    bool?   RequiresTaxMatching
+);
+
+record ImportRulesRequest(List<ImportRuleItem> Rules);
+
 record CreateChartOfAccountRequest(string Name, string? ExternalCode = null);
 
 /// <summary>Alta y edición de una cuenta bancaria de empresa (F1: multi-cuenta).</summary>

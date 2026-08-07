@@ -457,6 +457,11 @@ export class ReconciliationService {
     const generated = response.totalProcessed > 0;
     const reapplied = (response.reappliedToExisting ?? 0) > 0;
 
+    // Va antes que cualquier otra rama y fuera de los `if` de éxito: la cuenta se creó igual, y es
+    // el aviso más importante de la carga. Sin contrapartida esos movimientos no van a poder
+    // asentarse, y el usuario se enteraría recién al recibir un 422 al generar asientos.
+    this._reportCreatedBankAccounts(response);
+
     if (event.withoutDateFilter && generated) {
       this._filters.update(ff => ({ ...ff, month: null, year: null }));
     }
@@ -509,6 +514,33 @@ export class ReconciliationService {
       this._isLoading.set(false);
       this.toast.warning('No se encontraron movimientos para importar.');
     }
+  }
+
+  /**
+   * Aviso persistente por cada cuenta bancaria que el OCR dio de alta sola (Flujo 3). Nacen sin
+   * contrapartida contable, así que sus movimientos entran pero NO pueden generar asiento.
+   *
+   * El toast no se cierra solo a propósito: la acción que pide está en otra pantalla (la ficha de
+   * la empresa), y uno de cuatro segundos se pierde justo cuando el usuario está mirando la grilla
+   * que se acaba de llenar.
+   */
+  private _reportCreatedBankAccounts(response: UploadResponse): void {
+    const created = response.createdBankAccounts ?? [];
+    if (created.length === 0) return;
+
+    const names = created.map(a => a.alias).join(', ');
+    this.toast.persistent(
+      created.length === 1
+        ? `Se detectó una cuenta bancaria nueva (${names}). Andá a la ficha de la empresa, pestaña ` +
+          'Cuentas Bancarias, y configurale su contrapartida contable: hasta entonces sus ' +
+          'movimientos no van a poder asentarse.'
+        : `Se detectaron ${created.length} cuentas bancarias nuevas (${names}). Andá a la ficha de ` +
+          'la empresa, pestaña Cuentas Bancarias, y configurales su contrapartida contable: hasta ' +
+          'entonces sus movimientos no van a poder asentarse.',
+    );
+
+    // El selector de la Dropzone tiene que ofrecerlas desde la próxima carga.
+    this.bankAccountService.refresh(this.companyService.activeCompany()?.id);
   }
 
   /**

@@ -17,11 +17,21 @@ export class ToastService {
 
   private nextId = 0;
 
+  /**
+   * @param duration Milisegundos hasta el cierre automático. Con <c>0</c> (o menos) el toast queda
+   * hasta que el usuario lo cierre: es para los avisos que exigen una acción en OTRA pantalla, que
+   * un toast de cuatro segundos garantiza que se pierdan.
+   */
   show(message: string, type: ToastType = 'success', duration?: number): void {
     const effectiveDuration = duration ?? this.configService.config().defaultToastDurationMs;
     const id = this.nextId++;
     this._toasts.update(list => [...list, { id, message, type }]);
-    setTimeout(() => this.dismiss(id), effectiveDuration);
+    if (effectiveDuration > 0) setTimeout(() => this.dismiss(id), effectiveDuration);
+  }
+
+  /** Toast que no se va solo. El componente ya expone el botón de cierre. */
+  persistent(message: string, type: ToastType = 'warning'): void {
+    this.show(message, type, 0);
   }
 
   success(message: string, duration?: number): void {
