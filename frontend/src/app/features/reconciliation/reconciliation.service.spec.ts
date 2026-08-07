@@ -38,6 +38,7 @@ function makeTx(overrides: Partial<BankTransaction> = {}): BankTransaction {
     isPossibleDuplicate: false,
     tenantId: 'tenant',
     companyId: null,
+    bankAccountId: null,
     journalEntryId: null,
     ...overrides,
   };
@@ -176,6 +177,33 @@ describe('ReconciliationService', () => {
       );
       afipReq.flush([]);
       expect(service.pendingAfipCount()).toBe(0);
+
+      // F1.e: el mismo effect refresca las cuentas bancarias, que alimentan el selector de la
+      // Dropzone. Se piden con includeInactive para que el panel de la ficha de empresa pueda
+      // reactivar una cuenta dada de baja.
+      const bankReq = httpMock.expectOne(
+        r => r.method === 'GET' && r.url.endsWith('/companies/company-1/bank-accounts'),
+      );
+      expect(bankReq.request.params.get('includeInactive')).toBe('true');
+      bankReq.flush([]);
+    });
+
+    it('descarta el filtro por cuenta bancaria al cambiar de empresa', () => {
+      // Las cuentas pertenecen a una empresa: mantener el filtro devolvería una grilla vacía sin
+      // explicar por qué.
+      service.setFilter({ bankAccountId: 'account-de-la-empresa-anterior' });
+
+      companyService.activeCompany.set(makeCompany({ id: 'company-2' }));
+      TestBed.tick();
+
+      expect(service.filters().bankAccountId).toBeNull();
+
+      const listReq = httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/transactions'));
+      expect(listReq.request.params.get('bankAccountId')).toBeNull();
+      listReq.flush(pagedResult([]));
+
+      httpMock.expectOne(r => r.url.endsWith('/companies/company-2/afip/vouchers')).flush([]);
+      httpMock.expectOne(r => r.url.endsWith('/companies/company-2/bank-accounts')).flush([]);
     });
   });
 
