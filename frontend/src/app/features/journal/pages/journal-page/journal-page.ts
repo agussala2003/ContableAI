@@ -454,19 +454,39 @@ export class JournalPage {
   }
 
   exportExcel(): void {
-    this.isExporting.set(true);
     const company = this.companyService.activeCompany();
-    const entryIds = this.filteredEntries().map(e => e.id);
+    const month = this.selectedMonth() ?? undefined;
+    const year  = this.selectedYear() ?? undefined;
+
+    // El nombre sale armado del período y la empresa; el prompt es solo la oportunidad de
+    // cambiarlo. Cancelar aborta la exportación: quien cancela un diálogo de nombre no quiere el
+    // archivo con el nombre por defecto, quiere no bajarlo.
+    const suggested = this.journalService.buildExcelFileName(company?.name, month, year);
+    const chosen = window.prompt('Nombre del archivo a descargar:', suggested);
+    if (chosen === null) return;
+
+    this.isExporting.set(true);
     this.journalService.downloadExcel(
       company?.id,
-      this.selectedMonth() ?? undefined,
-      this.selectedYear() ?? undefined,
+      month,
+      year,
       this.searchDescription().trim() || undefined,
       this.searchAccount() || undefined,
-      entryIds,
+      this.filteredEntries().map(e => e.id),
       this.selectedCurrency() ?? undefined,
+      this.normalizeFileName(chosen, suggested),
     );
     setTimeout(() => this.isExporting.set(false), this.configService.config().exportCooldownMs);
+  }
+
+  /**
+   * Deja el nombre utilizable: quita los caracteres que el sistema de archivos rechaza y garantiza
+   * la extensión. Un nombre vacío o sin .xlsx haría que el archivo no abra con Excel al doble clic.
+   */
+  private normalizeFileName(input: string, fallback: string): string {
+    const cleaned = input.replace(/[\\/:*?"<>|]/g, '').trim();
+    if (cleaned.length === 0) return fallback;
+    return cleaned.toLowerCase().endsWith('.xlsx') ? cleaned : `${cleaned}.xlsx`;
   }
 
   exportHolistor(): void {

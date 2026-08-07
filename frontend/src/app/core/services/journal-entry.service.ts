@@ -4,8 +4,13 @@ import { Observable } from 'rxjs';
 import { ToastService } from './toast.service';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
-import { saveResponseAsFile } from '../utils/file-download';
+import { saveBlob, saveResponseAsFile } from '../utils/file-download';
 import { BankAccountOption } from './transaction';
+
+const MONTH_NAMES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
 
 export interface JournalEntryLine {
   account: string;
@@ -104,6 +109,17 @@ export class JournalEntryService {
     }>(this.baseUrl, { params: p });
   }
 
+  /**
+   * Nombre por defecto del Libro Diario: `Libro_Diario_{Empresa}_{Mes}_{Año}.xlsx`. Se arma acá y
+   * no en el componente para que el prompt y el nombre real del archivo no puedan divergir.
+   */
+  buildExcelFileName(companyName?: string, month?: number, year?: number): string {
+    const company = (companyName ?? 'Empresa').replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '');
+    const mLabel  = month ? MONTH_NAMES[month - 1] : 'Todos';
+    const yLabel  = year ?? new Date().getFullYear();
+    return `Libro_Diario_${company}_${mLabel}_${yLabel}.xlsx`;
+  }
+
   downloadExcel(
     companyId?: string,
     month?: number,
@@ -112,6 +128,7 @@ export class JournalEntryService {
     account?: string,
     entryIds?: string[],
     currency?: string,
+    fileName?: string,
   ): void {
     const payload = {
       companyId,
@@ -128,9 +145,11 @@ export class JournalEntryService {
       responseType: 'blob',
     }).subscribe({
       next: response => {
-        const mLabel = month ? String(month).padStart(2, '0') : 'todo';
-        const yLabel = year ?? new Date().getFullYear();
-        saveResponseAsFile(response, `LibroDiario_${mLabel}-${yLabel}.xlsx`);
+        // El nombre elegido por el usuario gana sobre el Content-Disposition del backend, así que
+        // se pasa como fallback Y se fuerza: saveResponseAsFile prefiere el header cuando existe.
+        const fallback = fileName ?? this.buildExcelFileName(undefined, month, year);
+        if (fileName) saveBlob(response.body!, fileName);
+        else          saveResponseAsFile(response, fallback);
       },
       error: err => {
         const status = err?.status;

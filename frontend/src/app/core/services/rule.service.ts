@@ -44,6 +44,44 @@ export interface ReapplyRuleReport {
   skippedClosedPeriod: number;
   skippedAfipCombo: number;
   alreadyApplied: number;
+  /** Ya tienen cuenta y el alcance elegido es "solo pendientes": cuánto más alcanzaría Reemplazar. */
+  skippedOutOfScope: number;
+}
+
+/**
+ * Hasta dónde llega la reaplicación.
+ * - `pending`: solo completa los movimientos sin cuenta asignada. No pisa nada.
+ * - `all`: además sobrescribe los que ya tienen cuenta pero no están asentados. Destructivo.
+ */
+export type ReapplyScope = 'pending' | 'all';
+
+/**
+ * Forma de una regla dentro de un archivo de exportación. Sin id, companyId ni studioTenantId:
+ * el archivo describe la CONFIGURACIÓN, no las filas de una base concreta. Llevarlos invitaría a
+ * pegarlos de vuelta y a que alguien intente escribir en una empresa ajena editando el JSON.
+ */
+export interface ExportedRule {
+  keyword: string;
+  targetAccount: string;
+  direction: string | null;
+  priority: number;
+  requiresTaxMatching: boolean;
+}
+
+/** Envoltorio del archivo. La versión permite migrar el formato sin romper archivos viejos. */
+export interface RulesExportFile {
+  version: 1;
+  exportedAt: string;
+  companyName?: string;
+  rules: ExportedRule[];
+}
+
+export interface ImportRulesResult {
+  created: number;
+  skippedDuplicates: number;
+  invalid: number;
+  duplicateKeywords: string[];
+  invalidKeywords: string[];
 }
 
 export interface JobStatus {
@@ -148,16 +186,23 @@ export class RuleService {
   }
 
   /** Preview de la reaplicación forzada: calcula el impacto sin escribir nada. */
-  reapplyPreview(id: string): Observable<ReapplyRuleReport> {
+  reapplyPreview(id: string, scope: ReapplyScope = 'all'): Observable<ReapplyRuleReport> {
     return this.http.post<ReapplyRuleReport>(
-      `${this.apiBase}/rules/${id}/reapply-async?dryRun=true`, {},
+      `${this.apiBase}/rules/${id}/reapply-async?dryRun=true&scope=${scope}`, {},
     );
   }
 
   /** Encola la reaplicación forzada en Hangfire; el progreso se sigue con {@link getJobStatus}. */
-  reapplyAsync(id: string): Observable<{ jobId: string; message: string }> {
+  reapplyAsync(id: string, scope: ReapplyScope = 'all'): Observable<{ jobId: string; message: string }> {
     return this.http.post<{ jobId: string; message: string }>(
-      `${this.apiBase}/rules/${id}/reapply-async`, {},
+      `${this.apiBase}/rules/${id}/reapply-async?scope=${scope}`, {},
+    );
+  }
+
+  /** Importa un lote de reglas exportadas previamente a JSON. */
+  importRules(companyId: string, rules: ExportedRule[]): Observable<ImportRulesResult> {
+    return this.http.post<ImportRulesResult>(
+      `${this.apiBase}/companies/${companyId}/rules/import`, { rules },
     );
   }
 

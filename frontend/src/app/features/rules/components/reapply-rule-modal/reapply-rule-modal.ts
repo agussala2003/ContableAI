@@ -3,7 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer } from 'rxjs';
 import { switchMap, take, takeWhile, tap } from 'rxjs/operators';
 import { LucideAngularModule } from 'lucide-angular';
-import { AccountingRule, ReapplyRuleReport, RuleService } from '../../../../core/services/rule.service';
+import { AccountingRule, ReapplyRuleReport, ReapplyScope, RuleService } from '../../../../core/services/rule.service';
 import { ToastService } from '../../../../core/services/toast.service';
 
 /**
@@ -42,8 +42,30 @@ export class ReapplyRuleModal {
   /** Estado crudo del job mientras se pollea ("Enqueued" | "Processing" | ...). */
   jobState         = signal<string | null>(null);
 
+  /**
+   * Alcance elegido. Arranca en "pending" a propósito: es la opción que no pisa nada. La versión
+   * destructiva tiene que ser una elección deliberada, no el default que sale por inercia.
+   */
+  scope = signal<ReapplyScope>('pending');
+
   /** Cuántas asignaciones manuales se van a perder — dispara el bloque de advertencia. */
   manualCount = computed(() => this.preview()?.manual ?? 0);
+
+  /**
+   * Movimientos que quedarían fuera por el alcance elegido. Es lo que convierte al selector en una
+   * decisión informada en vez de una adivinanza: el usuario ve cuánto más alcanzaría con Reemplazar.
+   */
+  outOfScopeCount = computed(() => this.preview()?.skippedOutOfScope ?? 0);
+
+  setScope(scope: ReapplyScope): void {
+    if (this.scope() === scope) return;
+    this.scope.set(scope);
+
+    // El preview depende del alcance: hay que recalcularlo, si no el modal mostraría el impacto
+    // de la otra opción y el usuario confirmaría sobre un número que no corresponde.
+    const rule = this.rule();
+    if (rule) this.loadPreview(rule);
+  }
 
   /** Total de coincidencias que quedan intactas por alguna de las exclusiones. */
   skippedTotal = computed(() => {
@@ -69,6 +91,8 @@ export class ReapplyRuleModal {
     this.isLoadingPreview.set(false);
     this.isReapplying.set(false);
     this.jobState.set(null);
+    // Vuelve al alcance seguro: que la elección destructiva de una regla no se herede a la próxima.
+    this.scope.set('pending');
   }
 
   /** Pide el impacto sin escribir: cuántos movimientos se van a sobrescribir y de qué origen. */
@@ -77,7 +101,7 @@ export class ReapplyRuleModal {
     this.jobState.set(null);
     this.isLoadingPreview.set(true);
 
-    this.ruleService.reapplyPreview(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.ruleService.reapplyPreview(rule.id, this.scope()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: preview => {
         this.preview.set(preview);
         this.isLoadingPreview.set(false);
@@ -106,7 +130,7 @@ export class ReapplyRuleModal {
     this.isReapplying.set(true);
     this.jobState.set('Enqueued');
 
-    this.ruleService.reapplyAsync(rule.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.ruleService.reapplyAsync(rule.id, this.scope()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: ({ jobId }) => this.pollJob(jobId, rule),
       error: err => {
         this.isReapplying.set(false);

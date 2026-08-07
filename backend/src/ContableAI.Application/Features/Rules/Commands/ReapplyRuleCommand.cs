@@ -19,7 +19,27 @@ public sealed record ReapplyRuleCommand(
     Guid    RuleId,
     string  StudioTenantId,
     string  RequestedByEmail,
-    bool    DryRun) : IRequest<Result<ReapplyRuleReport>>;
+    bool    DryRun,
+    ReapplyScope Scope = ReapplyScope.PendingAndUnsettled) : IRequest<Result<ReapplyRuleReport>>;
+
+/// <summary>
+/// Hasta dónde llega la reaplicación. Los movimientos ya asentados, los de período cerrado y los de
+/// cruce AFIP quedan fuera en ambos casos: eso no lo decide el alcance sino la integridad contable.
+/// </summary>
+public enum ReapplyScope
+{
+    /// <summary>
+    /// Solo completa: toca únicamente los movimientos sin cuenta asignada. No pisa nada de lo que
+    /// el contador o una regla anterior ya resolvieron, así que es reversible por construcción.
+    /// </summary>
+    PendingOnly = 0,
+
+    /// <summary>
+    /// Reemplaza: además de los pendientes, sobrescribe los que ya tienen cuenta pero no están
+    /// asentados —incluidas las asignaciones hechas a mano—. Es la opción destructiva.
+    /// </summary>
+    PendingAndUnsettled = 1,
+}
 
 /// <summary>
 /// Impacto de la reaplicación, con el desglose por origen previo de la clasificación.
@@ -49,4 +69,11 @@ public sealed record ReapplyRuleReport(
     /// <summary>Coinciden pero vienen de un cruce múltiple AFIP: pisarlos rompería el desglose por impuesto.</summary>
     int     SkippedAfipCombo,
     /// <summary>Coinciden y ya están exactamente como los dejaría esta regla: no se reescriben.</summary>
-    int     AlreadyApplied);
+    int     AlreadyApplied,
+
+    /// <summary>
+    /// Coinciden y se podrían actualizar, pero ya tienen cuenta y el alcance elegido es
+    /// <see cref="ReapplyScope.PendingOnly"/>. Es el número que le dice al usuario cuánto más
+    /// alcanzaría si eligiera "Reemplazar".
+    /// </summary>
+    int     SkippedOutOfScope = 0);

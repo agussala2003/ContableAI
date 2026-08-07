@@ -1,3 +1,4 @@
+using ContableAI.Application.Features.Rules.Commands;
 using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 
@@ -14,6 +15,14 @@ namespace ContableAI.Infrastructure.Features.Rules;
 /// </summary>
 internal static class ReapplyCandidateClassifier
 {
+    /// <summary>
+    /// Valor con el que se marca una cuenta sin asignar. Coincide en texto con
+    /// <see cref="ClassificationSources.Pending"/> pero es otra cosa: aquel describe el ORIGEN de
+    /// la clasificación, este el contenido del campo cuenta. Los endpoints de transacciones usan
+    /// el mismo literal para su filtro "Pendiente".
+    /// </summary>
+    private const string PendingAccountSentinel = "Pending";
+
     /// <summary>Proyección mínima de un movimiento: lo justo para decidir y para reportar.</summary>
     internal sealed record Candidate(
         Guid    Id,
@@ -32,7 +41,8 @@ internal static class ReapplyCandidateClassifier
         int SkippedSettled,
         int SkippedClosedPeriod,
         int SkippedAfipCombo,
-        int AlreadyApplied);
+        int AlreadyApplied,
+        int SkippedOutOfScope);
 
     /// <summary>
     /// Reglas de exclusión, en orden de precedencia:
@@ -43,6 +53,9 @@ internal static class ReapplyCandidateClassifier
     ///   4. Cae en un período contable cerrado → misma regla que la generación y el borrado.
     ///   5. Ya está exactamente como lo dejaría esta regla → no se reescribe, así reaplicar dos
     ///      veces seguidas reporta 0 en la segunda en vez de inflar el número.
+    ///   6. Ya tiene cuenta y el alcance es <c>PendingOnly</c> → fuera de alcance por elección del
+    ///      usuario. Es la ÚNICA exclusión que él controla; las cinco anteriores son de integridad
+    ///      contable y no se pueden desactivar desde la UI.
     /// El resto se actualiza, contabilizado por su origen previo para que la UI pueda advertir
     /// cuántas asignaciones manuales se van a perder.
     /// </summary>
@@ -52,11 +65,13 @@ internal static class ReapplyCandidateClassifier
         string                 targetAccount,
         string                 targetSource,
         Guid                   ruleId,
-        IReadOnlySet<(int Year, int Month)> closedPeriods)
+        IReadOnlySet<(int Year, int Month)> closedPeriods,
+        ReapplyScope           scope = ReapplyScope.PendingAndUnsettled)
     {
         var toUpdate = new List<Guid>();
         int pending = 0, byOtherRule = 0, manual = 0;
         int skippedSettled = 0, skippedClosedPeriod = 0, skippedAfipCombo = 0, alreadyApplied = 0;
+        int skippedOutOfScope = 0;
 
         foreach (var c in candidates)
         {
@@ -89,8 +104,17 @@ internal static class ReapplyCandidateClassifier
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(c.AssignedAccount)
-                || c.ClassificationSource == ClassificationSources.Pending)
+            var isPending = string.IsNullOrWhiteSpace(c.AssignedAccount)
+                         || c.AssignedAccount == PendingAccountSentinel
+                         || c.ClassificationSource == ClassificationSources.Pending;
+
+            if (!isPending && scope == ReapplyScope.PendingOnly)
+            {
+                skippedOutOfScope++;
+                continue;
+            }
+
+            if (isPending)
                 pending++;
             else if (c.ClassificationSource == ClassificationSources.Manual)
                 manual++;
@@ -102,6 +126,7 @@ internal static class ReapplyCandidateClassifier
 
         return new Outcome(
             toUpdate, pending, byOtherRule, manual,
-            skippedSettled, skippedClosedPeriod, skippedAfipCombo, alreadyApplied);
+            skippedSettled, skippedClosedPeriod, skippedAfipCombo, alreadyApplied,
+            skippedOutOfScope);
     }
 }

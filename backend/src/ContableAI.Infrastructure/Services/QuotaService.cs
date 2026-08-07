@@ -44,7 +44,12 @@ public interface IQuotaService
     Task<QuotaLimits>  GetLimitsAsync(string studioTenantId);
     Task<QuotaUsage>   GetUsageAsync(string studioTenantId);
     Task<bool>         CanAddCompanyAsync(string studioTenantId);
-    Task<bool>         CanAddRuleAsync(string studioTenantId, Guid companyId);
+    /// <param name="additional">
+    /// Cuántas reglas se van a agregar de una. La importación en lote lo usa para validar el
+    /// archivo completo antes de insertar nada: entrar "hasta donde quepa" dejaría al usuario con
+    /// media configuración y sin saber cuál falta.
+    /// </param>
+    Task<bool>         CanAddRuleAsync(string studioTenantId, Guid companyId, int additional = 1);
     Task<bool>         CanUploadTransactionsAsync(string studioTenantId, int count);
 }
 
@@ -104,16 +109,18 @@ public class QuotaService : IQuotaService
         return limits.CompaniesOk(current);
     }
 
-    public async Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId)
+    public async Task<bool> CanAddRuleAsync(string studioTenantId, Guid companyId, int additional = 1)
     {
         var limits  = await GetLimitsAsync(studioTenantId);
         if (limits.MaxRulesPerCompany == QuotaLimits.Unlimited)
             return true;
 
-        // Se usa count general de reglas del tenant como métrica general en vez de por compañía para el Pro, 
+        // Se usa count general de reglas del tenant como métrica general en vez de por compañía para el Pro,
         // pero mantengamos la semantica por empresa temporalmente.
         var current = await _db.AccountingRules.CountAsync(r => r.CompanyId == companyId);
-        return limits.RulesOk(current);
+
+        // RulesOk pregunta si entra UNA más; para N se corre el cursor N-1 posiciones.
+        return limits.RulesOk(current + additional - 1);
     }
 
     public async Task<bool> CanUploadTransactionsAsync(string studioTenantId, int count)

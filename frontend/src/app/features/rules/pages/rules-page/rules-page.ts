@@ -1,7 +1,11 @@
 import { Component, computed, effect, inject, signal, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { RuleService, AccountingRule, SaveRuleRequest, RuleDirection, PromoteRuleResponse } from '../../../../core/services/rule.service';
+import {
+  RuleService, AccountingRule, SaveRuleRequest, RuleDirection, PromoteRuleResponse,
+  ExportedRule, ImportRulesResult, RulesExportFile,
+} from '../../../../core/services/rule.service';
+import { saveBlob } from '../../../../core/utils/file-download';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
@@ -56,6 +60,123 @@ export class RulesPage {
   promotePreview = signal<PromoteRuleResponse | null>(null);
   isLoadingPreview = signal(false);
   isPromoting      = signal(false);
+
+  // ── Exportar / importar reglas (JSON) ───────────────────────────────────
+
+  /** Versión del formato del archivo. Permite migrarlo sin romper archivos ya exportados. */
+  private readonly EXPORT_VERSION = 1;
+  isImporting = signal(false);
+
+  /**
+   * Descarga las reglas tildadas. El archivo lleva la CONFIGURACIÓN, no las filas: sin id,
+   * companyId ni studioTenantId. Así el mismo archivo sirve para cualquier empresa —que es todo el
+   * punto de la feature— y no queda un id de otro estudio dando vueltas en un archivo que el
+   * usuario va a mandar por mail.
+   */
+  onExportRules(rules: AccountingRule[]): void {
+    if (rules.length === 0) return;
+
+    const company = this.companyService.activeCompany();
+    const file: RulesExportFile = {
+      version: this.EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      companyName: company?.name,
+      rules: rules.map(r => ({
+        keyword: r.keyword,
+        targetAccount: r.targetAccount,
+        direction: r.direction ?? null,
+        priority: r.priority,
+        requiresTaxMatching: r.requiresTaxMatching,
+      })),
+    };
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const slug = (company?.name ?? 'reglas').replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_|_$/g, '');
+    saveBlob(
+      new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }),
+      `Reglas_${slug}_${stamp}.json`,
+    );
+
+    this.toast.success(`${rules.length} regla${rules.length !== 1 ? 's' : ''} exportada${rules.length !== 1 ? 's' : ''}.`);
+  }
+
+  /** Lee el archivo, lo valida en el cliente y delega el alta en el endpoint de importación. */
+  async onImportFile(file: File): Promise<void> {
+    const company = this.companyService.activeCompany();
+    if (!company) {
+      this.toast.warning('Seleccioná una empresa antes de importar reglas.');
+      return;
+    }
+
+    let rules: ExportedRule[];
+    try {
+      rules = this.parseExportFile(await file.text());
+    } catch (err) {
+      this.toast.error(err instanceof Error ? err.message : 'El archivo no es un JSON de reglas válido.');
+      return;
+    }
+
+    this.isImporting.set(true);
+    this.ruleService.importRules(company.id, rules)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: result => {
+          this.isImporting.set(false);
+          this.reportImport(result);
+          this.loadRules(company.id);
+        },
+        error: err => {
+          this.isImporting.set(false);
+          const problem = (err as { error?: { detail?: string; message?: string } } | null)?.error;
+          this.toast.error(problem?.detail ?? problem?.message ?? 'No se pudieron importar las reglas.');
+        },
+      });
+  }
+
+  /**
+   * Valida la forma del archivo antes de mandarlo. Se hace acá y no solo en el backend para poder
+   * decirle al usuario QUÉ tiene mal el archivo; un 400 genérico no le sirve para arreglarlo.
+   * Acepta tanto el envoltorio con metadata como un array pelado de reglas.
+   */
+  private parseExportFile(text: string): ExportedRule[] {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('El archivo no es un JSON válido.');
+    }
+
+    const raw = Array.isArray(parsed)
+      ? parsed
+      : (parsed as RulesExportFile | null)?.rules;
+
+    if (!Array.isArray(raw) || raw.length === 0)
+      throw new Error('El archivo no contiene reglas.');
+
+    const rules = raw.filter((r): r is ExportedRule =>
+      !!r && typeof (r as ExportedRule).keyword === 'string'
+          && typeof (r as ExportedRule).targetAccount === 'string'
+          && (r as ExportedRule).keyword.trim().length > 0
+          && (r as ExportedRule).targetAccount.trim().length > 0);
+
+    if (rules.length === 0)
+      throw new Error('Ninguna regla del archivo tiene keyword y cuenta contable.');
+
+    return rules;
+  }
+
+  /** Un solo toast con el resultado: creadas, y por qué se omitieron las demás. */
+  private reportImport(result: ImportRulesResult): void {
+    const parts: string[] = [];
+    if (result.skippedDuplicates > 0) parts.push(`${result.skippedDuplicates} ya existían`);
+    if (result.invalid > 0)           parts.push(`${result.invalid} inválidas`);
+    const detail = parts.length ? ` (${parts.join(', ')})` : '';
+
+    if (result.created > 0)
+      this.toast.success(`Se importaron ${result.created} regla${result.created !== 1 ? 's' : ''}${detail}.`);
+    else
+      this.toast.warning(`No se importó ninguna regla nueva${detail || '.'}`);
+  }
 
   /** Regla en curso de reaplicación; abre `app-reapply-rule-modal` cuando no es null. */
   reapplyingRule = signal<AccountingRule | null>(null);

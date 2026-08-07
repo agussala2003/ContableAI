@@ -25,6 +25,8 @@ export class RulesTable {
   reapplyingId = input<string | null>(null);
 
   createRequested = output<void>();
+  /** Reglas tildadas para exportar. */
+  exportRequested = output<AccountingRule[]>();
   editRequested = output<AccountingRule>();
   deleteRequested = output<AccountingRule>();
   toggleStatusRequested = output<AccountingRule>();
@@ -48,6 +50,50 @@ export class RulesTable {
       r.keyword.toLowerCase().includes(q) || r.targetAccount.toLowerCase().includes(q),
     );
   });
+
+  // ── Selección múltiple (exportar a JSON) ────────────────────────────────
+
+  private readonly selectedIds = signal<Set<string>>(new Set());
+
+  readonly selectedCount = computed(() => this.selectedIds().size);
+
+  /** Todas las visibles están tildadas. Se mide contra las visibles, no contra el total: el
+   *  usuario espera que "seleccionar todo" abarque lo que tiene delante, no lo que el filtro ocultó. */
+  readonly allVisibleSelected = computed(() => {
+    const visible = this.displayedRules();
+    return visible.length > 0 && visible.every(r => this.selectedIds().has(r.id));
+  });
+
+  readonly someVisibleSelected = computed(() =>
+    this.selectedCount() > 0 && !this.allVisibleSelected()
+  );
+
+  isSelected(id: string): boolean {
+    return this.selectedIds().has(id);
+  }
+
+  toggleSelect(id: string, event?: Event): void {
+    event?.stopPropagation();
+    this.selectedIds.update(current => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  toggleSelectAllVisible(): void {
+    const visible = this.displayedRules();
+    this.selectedIds.set(this.allVisibleSelected() ? new Set() : new Set(visible.map(r => r.id)));
+  }
+
+  clearSelection(): void {
+    this.selectedIds.set(new Set());
+  }
+
+  onExportClick(): void {
+    const selected = this.selectedIds();
+    this.exportRequested.emit(this.rules().filter(r => selected.has(r.id)));
+  }
 
   // ── Menú kebab de acciones secundarias ──────────────────────────────────
   //

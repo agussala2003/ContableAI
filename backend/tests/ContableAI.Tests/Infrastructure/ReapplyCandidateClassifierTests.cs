@@ -1,3 +1,4 @@
+using ContableAI.Application.Features.Rules.Commands;
 using ContableAI.Domain.Constants;
 using ContableAI.Infrastructure.Features.Rules;
 using FluentAssertions;
@@ -34,6 +35,83 @@ public class ReapplyCandidateClassifierTests
     private static ReapplyCandidateClassifier.Outcome Classify(params Candidate[] candidates) =>
         ReapplyCandidateClassifier.Classify(
             candidates, Keyword, Target, ClassificationSources.HardRule, RuleId, NoClosedPeriods);
+
+    private static ReapplyCandidateClassifier.Outcome ClassifyWithScope(
+        ReapplyScope scope, params Candidate[] candidates) =>
+        ReapplyCandidateClassifier.Classify(
+            candidates, Keyword, Target, ClassificationSources.HardRule, RuleId, NoClosedPeriods, scope);
+
+    // ── v1.2: alcance elegible por el usuario ───────────────────────────────────
+
+    /// <summary>
+    /// "Solo pendientes" es la opción no destructiva: completa lo que falta y no pisa nada de lo
+    /// que el contador o una regla anterior ya resolvieron.
+    /// </summary>
+    [Fact]
+    public void PendingOnlyScope_LeavesAlreadyClassifiedTransactionsUntouched()
+    {
+        var outcome = ClassifyWithScope(
+            ReapplyScope.PendingOnly,
+            Tx(ClassificationSources.Pending),
+            Tx(ClassificationSources.Manual,   assignedAccount: "OTRA CUENTA"),
+            Tx(ClassificationSources.HardRule, assignedAccount: "OTRA CUENTA", appliedRuleId: Guid.NewGuid()));
+
+        outcome.ToUpdate.Should().HaveCount(1, "solo el movimiento sin cuenta entra en el alcance");
+        outcome.Pending.Should().Be(1);
+        outcome.Manual.Should().Be(0);
+        outcome.ByOtherRule.Should().Be(0);
+        outcome.SkippedOutOfScope.Should().Be(2,
+            "el usuario necesita ver cuánto más alcanzaría eligiendo Reemplazar");
+    }
+
+    /// <summary>
+    /// Una cuenta vacía, nula o con el centinela "Pending" son la misma cosa para el usuario: el
+    /// movimiento no está categorizado. Las tres tienen que entrar en el alcance "solo pendientes",
+    /// porque cuál de las tres quedó grabada depende de por dónde entró el movimiento.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Pending")]
+    public void PendingOnlyScope_TreatsEveryFlavourOfUnassignedAsPending(string? assignedAccount)
+    {
+        var outcome = ClassifyWithScope(
+            ReapplyScope.PendingOnly,
+            Tx(ClassificationSources.HardRule, assignedAccount: assignedAccount));
+
+        outcome.ToUpdate.Should().HaveCount(1);
+        outcome.Pending.Should().Be(1);
+        outcome.SkippedOutOfScope.Should().Be(0);
+    }
+
+    /// <summary>
+    /// El alcance no puede aflojar las exclusiones de integridad: un movimiento asentado sigue
+    /// intocable con cualquiera de las dos opciones.
+    /// </summary>
+    [Theory]
+    [InlineData(ReapplyScope.PendingOnly)]
+    [InlineData(ReapplyScope.PendingAndUnsettled)]
+    public void Scope_NeverOverridesTheSettledExclusion(ReapplyScope scope)
+    {
+        var outcome = ClassifyWithScope(
+            scope,
+            Tx(ClassificationSources.Pending, journalEntryId: Guid.NewGuid()));
+
+        outcome.ToUpdate.Should().BeEmpty();
+        outcome.SkippedSettled.Should().Be(1);
+    }
+
+    /// <summary>El default sigue siendo el comportamiento previo: sin alcance explícito, reemplaza.</summary>
+    [Fact]
+    public void DefaultScope_StillReplacesEverythingUnsettled()
+    {
+        var outcome = Classify(
+            Tx(ClassificationSources.Pending),
+            Tx(ClassificationSources.Manual, assignedAccount: "OTRA CUENTA"));
+
+        outcome.ToUpdate.Should().HaveCount(2);
+        outcome.SkippedOutOfScope.Should().Be(0);
+    }
 
     [Fact]
     public void OverwritesEveryUnsettledMatch_RegardlessOfHowItWasClassified()

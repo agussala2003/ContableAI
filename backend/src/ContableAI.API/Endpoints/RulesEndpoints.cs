@@ -112,13 +112,19 @@ public static class RulesEndpoints
             ISender               sender,
             ContableAIDbContext   dbContext,
             IBackgroundJobClient  backgroundJobClient,
-            [FromQuery] bool      dryRun = false) =>
+            [FromQuery] bool      dryRun = false,
+            [FromQuery] string?   scope  = null) =>
         {
             var email = httpContext.User.FindFirst(ClaimTypes.Email)?.Value
                      ?? httpContext.User.FindFirst("email")?.Value
                      ?? "desconocido";
 
-            var command = new ReapplyRuleCommand(id, tenant.StudioTenantId!, email, dryRun);
+            // Sin `scope` explícito se mantiene el comportamiento previo (reemplazar), para no
+            // cambiarle el resultado a un cliente viejo que no manda el parámetro.
+            if (!TryParseScope(scope, out var parsedScope))
+                return Results.BadRequest(new { message = "scope inválido. Valores: pending, all." });
+
+            var command = new ReapplyRuleCommand(id, tenant.StudioTenantId!, email, dryRun, parsedScope);
 
             // El preview corre síncrono: es solo lectura y su costo lo acota el prefiltro por
             // keyword, así que el modal puede mostrar el impacto sin esperar a un job.
@@ -155,9 +161,10 @@ public static class RulesEndpoints
         .WithName("ReapplyRuleAsync")
         .WithTags("Reglas")
         .WithSummary("Reaplicar una regla sobre TODOS los movimientos históricos que coincidan (sobrescribe).")
-        .WithDescription("A diferencia de /reapply, sobrescribe la cuenta asignada aunque haya sido puesta a mano. Nunca toca movimientos ya asentados, de períodos cerrados ni provenientes de un cruce múltiple AFIP. Con dryRun=true devuelve 200 con el impacto sin escribir; sin él encola un job de Hangfire y devuelve 202 con el jobId para pollear en /api/jobs/{jobId}/status.")
+        .WithDescription("A diferencia de /reapply, sobrescribe la cuenta asignada aunque haya sido puesta a mano. Nunca toca movimientos ya asentados, de períodos cerrados ni provenientes de un cruce múltiple AFIP. Query params: dryRun (true devuelve 200 con el impacto sin escribir; sin él encola un job de Hangfire y devuelve 202 con el jobId para pollear en /api/jobs/{jobId}/status) y scope ('pending' = solo movimientos sin cuenta asignada; 'all' = también los que ya tienen cuenta pero no están asentados, es el default).")
         .Produces(202)
         .Produces(200)
+        .Produces(400)
         .Produces(404)
         .Produces(422);
 
@@ -299,5 +306,29 @@ public static class RulesEndpoints
         .WithSummary("Crear una regla global de estudio.")
         .Produces<RuleResponse>(201)
         .Produces<ProblemDetails>(400);
+    }
+
+    /// <summary>
+    /// Traduce el query param de alcance. Ausente = <c>PendingAndUnsettled</c>, que es el
+    /// comportamiento que tenía el endpoint antes de que el alcance fuera configurable: un cliente
+    /// viejo que no manda el parámetro sigue obteniendo el mismo resultado.
+    /// </summary>
+    private static bool TryParseScope(string? scope, out ReapplyScope parsed)
+    {
+        parsed = ReapplyScope.PendingAndUnsettled;
+
+        if (string.IsNullOrWhiteSpace(scope)) return true;
+
+        switch (scope.Trim().ToLowerInvariant())
+        {
+            case "pending":
+                parsed = ReapplyScope.PendingOnly;
+                return true;
+            case "all":
+                parsed = ReapplyScope.PendingAndUnsettled;
+                return true;
+            default:
+                return false;
+        }
     }
 }
