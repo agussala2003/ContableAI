@@ -110,10 +110,14 @@ public static class JournalEntriesEndpoints
             [FromQuery] string?   companyId,
             [FromQuery] int?      month,
             [FromQuery] int?      year,
-            [FromQuery] string?   currency) =>
+            [FromQuery] string?   currency,
+            [FromQuery] string?   bankAccountId = null) =>
         {
             if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
                 return Results.BadRequest(new { message = "currency inválida. Valores soportados: ARS, USD." });
+
+            if (!BankAccountFilter.TryParse(bankAccountId, out var baId, out var unassignedOnly))
+                return Results.BadRequest(new { message = "bankAccountId inválido." });
 
             var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
@@ -128,6 +132,16 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(currency))
                 query = query.Where(j => j.Currency == currency);
+
+            // Las opciones del dropdown salen del alcance SIN el filtro de cuenta aplicado: si no,
+            // al elegir una cuenta el resto desaparecería del selector y no habría cómo volver.
+            var usedBankAccountIds = await query
+                .Select(j => j.BankAccountId)
+                .Distinct()
+                .ToListAsync();
+
+            if (unassignedOnly)     query = query.Where(j => j.BankAccountId == null);
+            else if (baId.HasValue) query = query.Where(j => j.BankAccountId == baId.Value);
 
             if (month.HasValue && year.HasValue)
             {
@@ -153,16 +167,19 @@ public static class JournalEntriesEndpoints
                     j.BankTransactionId,
                     j.GeneratedAt,
                     j.Currency,
+                    j.BankAccountId,
                     Lines = j.Lines.OrderByDescending(l => l.IsDebit).ThenBy(l => l.Account).Select(l => new { l.Account, l.Amount, l.IsDebit }),
                 })
                 .ToListAsync();
 
-            return Results.Ok(entries);
+            var availableBankAccounts = await BankAccountFilter.BuildAsync(dbContext, usedBankAccountIds);
+
+            return Results.Ok(new { Entries = entries, AvailableBankAccounts = availableBankAccounts });
         })
         .WithName("GetJournalEntries")
         .WithTags("Libro Diario")
-        .WithSummary("Listar asientos del estudio, filtrable por empresa, período y moneda.")
-        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD). Devuelve asientos con su moneda y sus líneas (account, amount, isDebit). Sin filtros devuelve todos los asientos del estudio.")
+        .WithSummary("Listar asientos del estudio, filtrable por empresa, período, moneda y cuenta bancaria.")
+        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD), bankAccountId (guid | 'none' para los asientos sin cuenta). Devuelve { entries, availableBankAccounts }: cada asiento con su moneda, su cuenta bancaria y sus líneas (account, amount, isDebit).")
         .Produces(200)
         .Produces(400);
 
@@ -358,10 +375,14 @@ public static class JournalEntriesEndpoints
             [FromQuery] string? search,
             [FromQuery] string? account,
             [FromQuery] string? currency,
-            [FromQuery] string? entryIds) =>
+            [FromQuery] string? entryIds,
+            [FromQuery] string? bankAccountId = null) =>
         {
             if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
                 return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
+
+            if (!BankAccountFilter.TryParse(bankAccountId, out var expBaId, out var expUnassigned))
+                return Results.BadRequest("bankAccountId inválido.");
 
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
@@ -407,6 +428,9 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(currency))
                 query = query.Where(j => j.Currency == currency);
+
+            if (expUnassigned)         query = query.Where(j => j.BankAccountId == null);
+            else if (expBaId.HasValue) query = query.Where(j => j.BankAccountId == expBaId.Value);
 
             if (!string.IsNullOrWhiteSpace(entryIds))
             {

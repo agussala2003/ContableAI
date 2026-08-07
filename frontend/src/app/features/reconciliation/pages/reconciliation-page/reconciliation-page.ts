@@ -6,7 +6,7 @@ import { FormsModule } from '@angular/forms';
 import { CompanyService } from '../../../../core/services/company.service';
 import { AuthService } from '../../../../core/services/auth.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
-import { ReconciliationService } from '../../reconciliation.service';
+import { ReconciliationService, UploadEvent } from '../../reconciliation.service';
 import { UploadZone } from '../../components/upload-zone/upload-zone';
 import { TransactionGrid } from '../../components/transaction-grid/transaction-grid';
 import { TransactionSkeleton } from '../../../../shared/components/transaction-skeleton';
@@ -345,7 +345,7 @@ export class ReconciliationPage implements OnInit {
     this.svc.generateEntries(this.gridSelectedIds());
   }
 
-  onFileDropped(event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean }): void {
+  onFileDropped(event: UploadEvent): void {
     this.svc.uploadFiles(event, () => this.showUploadModal.set(false));
   }
 

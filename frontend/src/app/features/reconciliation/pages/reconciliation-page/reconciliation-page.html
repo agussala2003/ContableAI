@@ -414,6 +414,19 @@
       }
     </select>
 
+    @if (svc.availableBankAccounts().length > 1) {
+      <select [ngModel]="svc.filters().bankAccountId ?? ''"
+        (ngModelChange)="svc.setFilter({ bankAccountId: $event === '' ? null : $event }); svc.applyFilters()"
+        aria-label="Filtrar por cuenta bancaria"
+        class="py-1.5 pl-3 pr-8 rounded-lg text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700
+               text-slate-700 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer">
+        <option value="">Todas las cuentas bancarias</option>
+        @for (ba of svc.availableBankAccounts(); track ba.id) {
+          <option [value]="ba.id">{{ ba.alias }}</option>
+        }
+      </select>
+    }
+
     <select [ngModel]="svc.filters().month ?? ''"
       (ngModelChange)="svc.setFilter({ month: $event === '' ? null : +$event }); svc.applyFilters()"
       aria-label="Filtrar por mes"
@@ -458,6 +471,7 @@
   } @else {
     <div id="tour-tx-grid" class="min-h-0">
       <app-transaction-grid class="block" [transactions]="svc.transactions()" [sortBy]="svc.filters().sortBy"
+        [showBankAccountColumn]="svc.showBankAccountColumn()" [bankAccounts]="svc.availableBankAccounts()"
         [sortDir]="svc.filters().sortDir" (accountChanged)="updateTransaction($event)"
         (bulkAssigned)="onBulkAssigned($event)" (selectionChange)="onGridSelectionChange($event)"
         (sortChange)="onSortChange($event)" (createRuleRequested)="handleCreateRule($event)"

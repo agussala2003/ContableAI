@@ -27,6 +27,20 @@ public sealed record ParsedStatement(
     string? DetectedAccountNumber,
     string? DetectedCbu)
 {
+    /// <summary>
+    /// Identificadores encontrados en el encabezado cuando hay MÁS DE UNO: el síntoma de un
+    /// resumen consolidado (varias cuentas en un mismo PDF). Se guardan todos para poder nombrarlos
+    /// en el mensaje de rechazo; con un solo identificador la lista queda vacía.
+    /// </summary>
+    public IReadOnlyList<string> ConflictingAccountIdentifiers { get; init; } = [];
+
+    /// <summary>
+    /// El documento identifica a más de una cuenta. Enrutarlo automáticamente exigiría adivinar
+    /// cuál de las cuentas es la dueña de cada movimiento, y errarle contamina el libro diario de
+    /// una cuenta ajena: se rechaza y se le pide al usuario que elija la cuenta a mano.
+    /// </summary>
+    public bool HasMultipleAccounts => ConflictingAccountIdentifiers.Count > 1;
+
     /// <summary>Resultado sin metadata de documento (CSV/XLSX: no traen encabezado parseable).</summary>
     public static ParsedStatement WithoutMetadata(IEnumerable<BankTransaction> transactions, string bankCode) =>
         new([.. transactions], Currencies.Ars, bankCode, null, null);

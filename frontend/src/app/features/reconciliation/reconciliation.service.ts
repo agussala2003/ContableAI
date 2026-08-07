@@ -6,9 +6,21 @@ import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
 import { CompanyService } from '../../core/services/company.service';
 import { JournalEntryService } from '../../core/services/journal-entry.service';
-import { ReconciliationFilters, ReconciliationPagination } from './models/reconciliation.models';
+import { BankAccountFilterOption, ReconciliationFilters, ReconciliationPagination } from './models/reconciliation.models';
+import { BankAccountService } from '../../core/services/bank-account.service';
 import { AfipService } from './afip.service';
 import { RuleService } from '../../core/services/rule.service';
+
+/** Payload que emite la Dropzone (y que el reintento con reglas re-emite tal cual). */
+export interface UploadEvent {
+  files: File[];
+  bankCode: string;
+  companyId?: string;
+  withoutDateFilter: boolean;
+  forceReapplyRules?: boolean;
+  /** Cuenta elegida a mano; ausente = detectar por OCR. */
+  bankAccountId?: string;
+}
 
 /**
  * Feature-scoped state service for the reconciliation module.
@@ -26,12 +38,13 @@ export class ReconciliationService {
   private journalEntryService = inject(JournalEntryService);
   private afipService         = inject(AfipService);
   private ruleService         = inject(RuleService);
+  private bankAccountService  = inject(BankAccountService);
   private readonly destroyRef = inject(DestroyRef);
 
   // ── Private writable state ─────────────────────────────────────────────
   private _transactions     = signal<BankTransaction[]>([]);
   private _filters          = signal<ReconciliationFilters>({
-    month: null, year: null, search: '', account: '', direction: null, currency: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact'
+    month: null, year: null, search: '', account: '', direction: null, currency: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact', bankAccountId: null
   });
   private _pagination       = signal<ReconciliationPagination>({
     page: 1, pageSize: 10, totalCount: 0, totalPages: 0,
@@ -44,6 +57,7 @@ export class ReconciliationService {
   private _totalEgresosAll        = signal(0);
   private _currencyTotals         = signal<CurrencyTotals[]>([]);
   private _availableAccounts      = signal<string[]>([]);
+  private _availableBankAccounts  = signal<BankAccountFilterOption[]>([]);
   private _availableMonths        = signal<number[]>([]);
   private _availableYears         = signal<number[]>([]);
   private _pendingAfipCount       = signal<number>(0);
@@ -67,6 +81,16 @@ export class ReconciliationService {
   /** True cuando el conjunto filtrado tiene más de una moneda: la UI separa totales por moneda. */
   readonly isMultiCurrency  = computed(() => this._currencyTotals().length > 1);
   readonly availableAccounts = this._availableAccounts.asReadonly();
+  readonly availableBankAccounts = this._availableBankAccounts.asReadonly();
+
+  /**
+   * La columna "Cuenta bancaria" solo aporta cuando la grilla mezcla cuentas. Con el filtro puesto
+   * en una sola, repetiría el mismo valor en todas las filas; y si la empresa no tiene más de una
+   * cuenta en los datos, no hay nada que distinguir.
+   */
+  readonly showBankAccountColumn = computed(() =>
+    this._filters().bankAccountId === null && this._availableBankAccounts().length > 1
+  );
   readonly availableMonths   = this._availableMonths.asReadonly();
   readonly availableYears    = this._availableYears.asReadonly();
   readonly pendingAfipCount  = this._pendingAfipCount.asReadonly();
@@ -80,7 +104,7 @@ export class ReconciliationService {
   );
   readonly hasActiveFilters = computed(() => {
     const f = this._filters();
-    return !!(f.search || f.month || f.year || f.account || f.direction || f.currency || f.exactAmount || f.minAmount || f.maxAmount);
+    return !!(f.search || f.month || f.year || f.account || f.bankAccountId || f.direction || f.currency || f.exactAmount || f.minAmount || f.maxAmount);
   });
   readonly eligibleIds = computed(() =>
     this._transactions()
@@ -95,11 +119,14 @@ export class ReconciliationService {
   constructor() {
     // Reload when the active company changes (reset to page 1)
     effect(() => {
-      this.companyService.activeCompany();
+      const company = this.companyService.activeCompany();
       untracked(() => {
         this._pagination.update(p => ({ ...p, page: 1 }));
+        this._filters.update(f => ({ ...f, bankAccountId: null }));
         this.loadData();
         this.refreshAfipCount();
+        // Alimenta el selector de cuenta de la Dropzone.
+        this.bankAccountService.refresh(company?.id);
       });
     });
   }
@@ -144,6 +171,7 @@ export class ReconciliationService {
       year:         f.year     ?? undefined,
       search:       f.search   || undefined,
       account:      f.account  || undefined,
+      bankAccountId: f.bankAccountId ?? undefined,
       direction:    f.direction ?? undefined,
       currency:     f.currency  ?? undefined,
       sortBy:       f.sortBy   ?? undefined,
@@ -168,6 +196,7 @@ export class ReconciliationService {
         this._totalEgresosAll.set(result.totalEgresosAll ?? 0);
         this._currencyTotals.set(result.currencyTotals ?? []);
         this._availableAccounts.set(result.availableAccounts ?? []);
+        this._availableBankAccounts.set(result.availableBankAccounts ?? []);
         this._availableMonths.set(result.availableMonths ?? []);
         this._availableYears.set(result.availableYears ?? []);
         this._isLoading.set(false);
@@ -197,7 +226,7 @@ export class ReconciliationService {
   }
 
   clearFilters(): void {
-    this._filters.update(f => ({ ...f, search: '', account: '', direction: null, currency: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
+    this._filters.update(f => ({ ...f, search: '', account: '', bankAccountId: null, direction: null, currency: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
     this._pagination.update(p => ({ ...p, page: 1 }));
     this.loadData();
   }
@@ -345,13 +374,16 @@ export class ReconciliationService {
 
   /** Encola la subida (procesamiento en un job de Hangfire) y arranca el polling del resultado. */
   uploadFiles(
-    event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
+    event: UploadEvent,
     onSuccess?: () => void,
   ): void {
     this._isLoading.set(true);
     const companyId = event.companyId ?? this.companyService.activeCompany()?.id;
 
-    this.txService.uploadFiles(event.files, event.bankCode, companyId, event.withoutDateFilter, event.forceReapplyRules).subscribe({
+    this.txService.uploadFiles(
+      event.files, event.bankCode, companyId, event.withoutDateFilter,
+      event.forceReapplyRules, event.bankAccountId,
+    ).subscribe({
       next: ({ uploadId }) => this._pollUploadResult(uploadId, event, onSuccess),
       error: () => {
         this._isLoading.set(false);
@@ -363,7 +395,7 @@ export class ReconciliationService {
   /** Mismo patrón de polling que la generación de asientos (ver _doGenerate más abajo). */
   private _pollUploadResult(
     uploadId: string,
-    event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
+    event: UploadEvent,
     onSuccess?: () => void,
   ): void {
     const maxPolls = Math.ceil(this.JOB_POLL_TIMEOUT_MS / this.UPLOAD_POLL_INTERVAL_MS);
@@ -406,7 +438,7 @@ export class ReconciliationService {
    */
   private _handleUploadResult(
     envelope: UploadJobResultEnvelope,
-    event: { files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; forceReapplyRules?: boolean },
+    event: UploadEvent,
     onSuccess?: () => void,
   ): void {
     if (!envelope.isSuccess) {
@@ -449,24 +481,7 @@ export class ReconciliationService {
         }
       }
       if (response.parseErrors?.length) {
-        // Rechazo por extracto multi-cuenta (mezcla de monedas): mostrar el mensaje
-        // específico del backend en lugar del genérico de OCR.
-        const mixedCurrencyErrors = response.parseErrors.filter(e => /m[aá]s de una moneda/i.test(e));
-        const otherErrors = response.parseErrors.filter(e => !/m[aá]s de una moneda/i.test(e));
-
-        if (mixedCurrencyErrors.length) {
-          const n = mixedCurrencyErrors.length;
-          this.toast.error(
-            `${n} extracto${n > 1 ? 's contienen' : ' contiene'} cuentas en más de una moneda (pesos y dólares). ` +
-            `Subí el extracto de cada cuenta por separado.`
-          );
-        }
-        if (otherErrors.length) {
-          const count = otherErrors.length;
-          this.toast.warning(
-            `${count} archivo${count > 1 ? 's' : ''} no ${count > 1 ? 'pudieron' : 'pudo'} procesarse (OCR fallido o formato no soportado) y ${count > 1 ? 'fueron omitidos' : 'fue omitido'}.`
-          );
-        }
+        this._reportParseErrors(response.parseErrors);
       }
       if (reapplied) {
         this.toast.success(`Se aplicaron tus reglas actualizadas a ${response.reappliedToExisting} transacciones existentes.`);
@@ -496,6 +511,54 @@ export class ReconciliationService {
     }
   }
 
+  /**
+   * Los archivos rechazados llegan como texto libre del backend. Los tres motivos accionables
+   * merecen su propio mensaje: decirle "OCR fallido" a alguien que subió un resumen consolidado lo
+   * manda a revisar la calidad del PDF cuando lo que tiene que hacer es elegir la cuenta.
+   */
+  private _reportParseErrors(errors: string[]): void {
+    const matching = (rx: RegExp) => errors.filter(e => rx.test(e));
+
+    const mixedCurrency = matching(/m[aá]s de una moneda/i);
+    const consolidated  = matching(/resumen consolidado/i);
+    const unreadable    = matching(/no se pudo leer el n[uú]mero de cuenta/i);
+    const rest = errors.filter(e =>
+      !mixedCurrency.includes(e) && !consolidated.includes(e) && !unreadable.includes(e));
+
+    if (mixedCurrency.length) {
+      const n = mixedCurrency.length;
+      this.toast.error(
+        `${n} extracto${n > 1 ? 's contienen' : ' contiene'} cuentas en más de una moneda (pesos y dólares). ` +
+        `Subí el extracto de cada cuenta por separado.`
+      );
+    }
+
+    if (consolidated.length) {
+      const n = consolidated.length;
+      this.toast.error(
+        `${n} extracto${n > 1 ? 's son resúmenes consolidados' : ' es un resumen consolidado'}: ` +
+        `identifica${n > 1 ? 'n' : ''} más de una cuenta bancaria. Elegí la cuenta en el selector ` +
+        `de la pantalla de carga y volvé a subirlo${n > 1 ? 's' : ''}.`
+      );
+    }
+
+    if (unreadable.length) {
+      const n = unreadable.length;
+      this.toast.warning(
+        `No se pudo leer el número de cuenta de ${n} extracto${n > 1 ? 's' : ''}. ` +
+        `Elegí la cuenta bancaria en la pantalla de carga y volvé a subirlo${n > 1 ? 's' : ''}.`
+      );
+    }
+
+    if (rest.length) {
+      const n = rest.length;
+      this.toast.warning(
+        `${n} archivo${n > 1 ? 's' : ''} no ${n > 1 ? 'pudieron' : 'pudo'} procesarse ` +
+        `(OCR fallido o formato no soportado) y ${n > 1 ? 'fueron omitidos' : 'fue omitido'}.`
+      );
+    }
+  }
+
   // ── Delete all ─────────────────────────────────────────────────────────
   async clearAll(): Promise<void> {
     const ok = await this.confirmDialog.confirm({
@@ -516,6 +579,7 @@ export class ReconciliationService {
         this._totalEgresosAll.set(0);
         this._currencyTotals.set([]);
         this._availableAccounts.set([]);
+        this._availableBankAccounts.set([]);
         this._availableMonths.set([]);
         this._availableYears.set([]);
         this.toast.success('La grilla se vacíó correctamente.');

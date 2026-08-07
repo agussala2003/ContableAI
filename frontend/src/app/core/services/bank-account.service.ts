@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../config/config.service';
@@ -38,6 +38,34 @@ export class BankAccountService {
 
   private get apiBase(): string {
     return this.configService.config().apiUrl;
+  }
+
+  // ── Estado compartido ──────────────────────────────────────────────────
+  // Lo consume el selector de cuenta de la Dropzone. Vive en el servicio y no en el componente
+  // porque el alta de una cuenta ocurre en otra pantalla (la ficha de empresa): sin un estado
+  // común, el selector seguiría ofreciendo la lista vieja hasta recargar la página.
+
+  private _accounts = signal<BankAccount[]>([]);
+  private loadedFor: string | null = null;
+
+  /** Cuentas activas de la empresa en foco: las únicas a las que tiene sentido dirigir una carga. */
+  readonly activeAccounts = computed(() => this._accounts().filter(a => a.isActive));
+
+  /** (Re)carga el estado compartido. Llamar al cambiar de empresa y tras cada alta/baja. */
+  refresh(companyId: string | null | undefined): void {
+    if (!companyId) {
+      this.loadedFor = null;
+      this._accounts.set([]);
+      return;
+    }
+
+    this.loadedFor = companyId;
+    this.list(companyId, true).subscribe({
+      // Descarta respuestas de una empresa que ya no es la activa (el usuario pudo cambiarla
+      // mientras la request estaba en vuelo).
+      next: list => { if (this.loadedFor === companyId) this._accounts.set(list); },
+      error: ()   => { if (this.loadedFor === companyId) this._accounts.set([]); },
+    });
   }
 
   list(companyId: string, includeInactive = false): Observable<BankAccount[]> {

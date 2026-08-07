@@ -149,6 +149,7 @@ public static class TransactionEndpoints
             [FromQuery] string?  account,
             [FromQuery] string?  sortBy,
             [FromQuery] string?  sortDir,
+            [FromQuery] string?  bankAccountId = null,
             [FromQuery] bool     strictSearch = false,
             [FromQuery] int?     type        = null,
             [FromQuery] decimal? exactAmount = null,
@@ -172,6 +173,16 @@ public static class TransactionEndpoints
 
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var txCompanyId))
                 query = query.Where(t => t.CompanyId == txCompanyId);
+
+            // Filtro por cuenta bancaria. El sentinel "none" aísla los movimientos SIN cuenta:
+            // importaciones previas a la multi-cuenta y CSV/XLSX sin encabezado. Sin él no habría
+            // forma de llegar a ellos desde la UI, y son justamente los que hay que reasignar para
+            // poder asentarlos.
+            if (!BankAccountFilter.TryParse(bankAccountId, out var baId, out var unassignedOnly))
+                return Results.BadRequest(new { message = "bankAccountId inválido." });
+
+            if (unassignedOnly)      query = query.Where(t => t.BankAccountId == null);
+            else if (baId.HasValue)  query = query.Where(t => t.BankAccountId == baId.Value);
 
             if (month.HasValue && year.HasValue)
             {
@@ -275,6 +286,13 @@ public static class TransactionEndpoints
                 .OrderByDescending(y => y)
                 .ToListAsync();
 
+            var usedBankAccountIds = await filterBaseQuery
+                .Select(t => t.BankAccountId)
+                .Distinct()
+                .ToListAsync();
+
+            var availableBankAccounts = await BankAccountFilter.BuildAsync(dbContext, usedBankAccountIds);
+
             pageSize = Math.Clamp(pageSize, 1, 500);
             page     = Math.Max(1, page);
 
@@ -349,13 +367,15 @@ public static class TransactionEndpoints
                 AvailableAccounts     = normalizedAccounts,
                 AvailableMonths       = availableMonths,
                 AvailableYears        = availableYears,
+                AvailableBankAccounts = availableBankAccounts,
             });
         })
         .WithName("GetTransactions")
         .WithTags("Transacciones")
         .WithSummary("Listar transacciones paginadas del estudio, filtrables por empresa, período y búsqueda.")
-        .WithDescription("Query params: companyId (guid), month (int), year (int), search (string), page (defecto 1), pageSize (defecto 100, máx 500). Ordenadas por fecha descendente.")
-        .Produces(200);
+        .WithDescription("Query params: companyId (guid), month (int), year (int), search (string), bankAccountId (guid | 'none' para los movimientos sin cuenta), page (defecto 1), pageSize (defecto 100, máx 500). Ordenadas por fecha descendente. Devuelve AvailableBankAccounts para poblar el filtro.")
+        .Produces(200)
+        .Produces(400);
 
 
         app.MapPut("/api/transactions/{id:guid}", async (

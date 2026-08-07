@@ -1,5 +1,9 @@
-import { Component, input, output, signal, viewChild, ElementRef } from '@angular/core';
+import { Component, ElementRef, inject, input, output, signal, viewChild } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
+import { BankAccountService } from '../../../../core/services/bank-account.service';
+
+/** Valor del selector que deja decidir la cuenta al OCR. */
+export const AUTO_BANK_ACCOUNT = '';
 
 @Component({
   selector: 'app-upload-zone',
@@ -11,14 +15,32 @@ export class UploadZone {
 
   isLoading = input<boolean>(false);
   companyId = input<string | undefined>(undefined);
-  fileDropped = output<{ files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean }>();
+  fileDropped = output<{
+    files: File[];
+    bankCode: string;
+    companyId?: string;
+    withoutDateFilter: boolean;
+    bankAccountId?: string;
+  }>();
 
   private fileInput = viewChild.required<ElementRef<HTMLInputElement>>('fileInput');
+
+  private bankAccountService = inject(BankAccountService);
+
+  /** Cuentas ofrecidas en el selector. El estado lo mantiene el servicio (ver refresh()). */
+  readonly bankAccounts = this.bankAccountService.activeAccounts;
 
   selectedFiles: File[] = [];
   isDragging        = signal(false);
   withoutDateFilter = signal(false);
   showAdvanced      = signal(false);
+
+  /**
+   * Cuenta elegida a mano. Vacío = "Automático": el backend la deduce del encabezado del extracto.
+   * Una elección explícita tiene precedencia sobre el OCR y es, además, la salida para los
+   * resúmenes consolidados que el backend rechaza por identificar más de una cuenta.
+   */
+  selectedBankAccountId = signal<string>(AUTO_BANK_ACCOUNT);
 
   removeFile(index: number) {
     this.selectedFiles = this.selectedFiles.filter((_, i) => i !== index);
@@ -50,6 +72,7 @@ export class UploadZone {
         bankCode: 'AUTO',
         companyId: this.companyId(),
         withoutDateFilter: this.withoutDateFilter(),
+        bankAccountId: this.selectedBankAccountId() || undefined,
       });
     }
   }

@@ -228,6 +228,8 @@ public sealed class UploadBankStatementHandler
     /// Cuatro caminos, en orden de precedencia:
     ///   1. <b>Manual</b> — el usuario eligió la cuenta en la Dropzone: gana siempre, sin mirar el
     ///      extracto. Sabe mejor que el OCR qué está subiendo.
+    ///   0. <b>Consolidado</b> — el encabezado identifica más de una cuenta: se rechaza (salvo que
+    ///      haya elección manual, ver arriba).
     ///   2. <b>Match único</b> — el número detectado corresponde a exactamente una cuenta de la
     ///      empresa (por número o por CBU): se enruta ahí.
     ///   3. <b>Cuenta nueva</b> — se detectó un número que no existe en la empresa: se crea una
@@ -278,6 +280,20 @@ public sealed class UploadBankStatementHandler
 
                 Stamp(txs, explicitId);
                 routed.Add((file, txs));
+                continue;
+            }
+
+            // ── Flujo 0: resumen consolidado (F1.e) ──────────────────────────
+            // El encabezado identifica más de una cuenta. Va DESPUÉS del flujo manual a propósito:
+            // el usuario puede saber que, pese al encabezado, todos los movimientos del archivo son
+            // de una sola cuenta —el consolidado de BBVA lista la cuenta gemela aunque no tenga
+            // movimientos— y esa afirmación suya vale más que la nuestra. Lo que no hacemos es
+            // elegir por él.
+            if (statement.HasMultipleAccounts)
+            {
+                parseErrors.Add(
+                    $"{fileName}: {PdfBankParser.MultipleAccountsDetectedError} " +
+                    $"(cuentas detectadas: {string.Join(", ", statement.ConflictingAccountIdentifiers)})");
                 continue;
             }
 

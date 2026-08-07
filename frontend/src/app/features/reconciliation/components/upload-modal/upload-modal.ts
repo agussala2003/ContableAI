@@ -17,7 +17,7 @@ export class UploadModal {
   pendingCount = input<number>(0);
 
   close              = output<void>();
-  fileDropped        = output<{ files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean }>();
+  fileDropped        = output<{ files: File[]; bankCode: string; companyId?: string; withoutDateFilter: boolean; bankAccountId?: string }>();
   matchComplete      = output<void>();
   refreshAfipCount   = output<void>();
   skippedDuplicates  = output<SkippedDuplicate[]>();

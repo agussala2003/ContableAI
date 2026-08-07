@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, inject, signal, computed, effect, DestroyRef } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { JournalEntryService, JournalEntry, JournalEntryLine } from '../../../../core/services/journal-entry.service';
+import { BankAccountOption } from '../../../../core/services/transaction';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.service';
@@ -13,10 +14,12 @@ import { TransactionSkeleton } from '../../../../shared/components/transaction-s
 import { LucideAngularModule } from 'lucide-angular';
 
 export interface AccountGroup {
-  /** Clave única del grupo: `cuenta__debit` | `cuenta__credit`. */
+  /** Clave única del grupo: `[cuentaBancaria__]cuenta__debit|credit`. */
   key: string;
   /** Etiqueta a mostrar; lleva sufijo "(Debe)"/"(Haber)" solo si la cuenta tiene ambos lados. */
   account: string;
+  /** Alias de la cuenta bancaria cuando el Mayor está desagregado por cuenta; null si no. */
+  bankAccountAlias: string | null;
   /** Lado del grupo. Es la fuente de verdad del lado, no `debit > 0` (un grupo puede sumar 0). */
   isDebit: boolean;
   debit: number;
@@ -74,6 +77,38 @@ export class JournalPage {
   searchAccount     = signal('');
   /** Filtro por moneda (ARS/USD, null = todas). Se filtra server-side (query param `currency`). */
   selectedCurrency  = signal<string | null>(null);
+  /** Filtro por cuenta bancaria (GUID, 'none' = sin cuenta, null = todas). También server-side. */
+  selectedBankAccount = signal<string | null>(null);
+
+  /** Cuentas bancarias presentes en los asientos del alcance actual (las provee el backend). */
+  availableBankAccounts = signal<BankAccountOption[]>([]);
+
+  /**
+   * La columna y la desagregación por cuenta bancaria solo aportan cuando la vista mezcla cuentas.
+   * Con el filtro puesto en una, repetirían el mismo valor en cada fila.
+   */
+  showBankAccountColumn = computed(() =>
+    this.selectedBankAccount() === null && this.availableBankAccounts().length > 1
+  );
+
+  private bankAccountAliases = computed(() =>
+    new Map(this.availableBankAccounts().map(a => [a.id, a.alias]))
+  );
+
+  /**
+   * Plantilla de columnas de la vista Asiento. Vive acá y no repetida en el HTML porque la usan el
+   * encabezado y cada fila: si divergen, las columnas dejan de alinearse. Al mostrar la cuenta
+   * bancaria se le roba ancho a Descripción y Cuenta, que son las que más margen tienen.
+   */
+  readonly journalGridCols = computed(() => this.showBankAccountColumn()
+    ? 'grid grid-cols-[96px_minmax(140px,1fr)_minmax(120px,0.9fr)_minmax(180px,1.4fr)_120px_120px_44px]'
+    : 'grid grid-cols-[96px_minmax(170px,1.2fr)_minmax(220px,1.8fr)_120px_120px_44px]');
+
+  /** Alias de la cuenta bancaria de un asiento; los previos a la multi-cuenta no tienen ninguna. */
+  bankAccountLabel(bankAccountId: string | null): string {
+    if (!bankAccountId) return 'Sin cuenta asignada';
+    return this.bankAccountAliases().get(bankAccountId) ?? 'Cuenta desconocida';
+  }
 
   readonly months = [
     { value: 1,  label: 'Enero' },     { value: 2,  label: 'Febrero' },
@@ -146,15 +181,30 @@ export class JournalPage {
   accountGroups = computed((): AccountGroup[] => {
     const map = new Map<string, AccountGroup>();
     const accFilter = this.searchAccount();
+    // Con varias cuentas bancarias a la vista, una misma contrapartida contable (p. ej. "Gastos
+    // Bancarios") recibe importes de todas ellas. Consolidarlas en una sola fila daría un saldo que
+    // no se corresponde con ningún extracto y volvería imposible cuadrar el Mayor contra el banco.
+    const splitByBankAccount = this.showBankAccountColumn();
 
     for (const entry of this.filteredEntries()) {
       for (const line of entry.lines) {
         if (accFilter && line.account !== accFilter) continue;
 
         const account = line.account.trim();
-        const key = `${account}__${line.isDebit ? 'debit' : 'credit'}`;
+        const side    = line.isDebit ? 'debit' : 'credit';
+        const bankKey = entry.bankAccountId ?? 'none';
+
+        const key = splitByBankAccount ? `${bankKey}__${account}__${side}` : `${account}__${side}`;
         if (!map.has(key)) {
-          map.set(key, { key, account, isDebit: line.isDebit, debit: 0, credit: 0, lines: [] });
+          map.set(key, {
+            key,
+            account,
+            bankAccountAlias: splitByBankAccount ? this.bankAccountLabel(entry.bankAccountId) : null,
+            isDebit: line.isDebit,
+            debit: 0,
+            credit: 0,
+            lines: [],
+          });
         }
 
         const grp = map.get(key)!;
@@ -167,24 +217,34 @@ export class JournalPage {
     const groups = Array.from(map.values());
 
     // El sufijo "(Debe)"/"(Haber)" solo se agrega cuando la cuenta tiene saldo en ambos lados;
-    // en el resto de las cuentas sería ruido en la mayoría de las filas.
+    // en el resto de las cuentas sería ruido en la mayoría de las filas. La comparación se hace
+    // dentro del mismo alcance con que se agrupó: si el Mayor está desagregado por cuenta bancaria,
+    // una cuenta con Debe en un banco y Haber en otro no tiene los dos lados en ninguna de las dos
+    // filas, y marcarlas sería mentir sobre lo que muestra cada una.
+    const scopeOf = (g: AccountGroup) =>
+      splitByBankAccount
+        ? `${g.bankAccountAlias}__${g.account.toLowerCase()}`
+        : g.account.toLowerCase();
+
     const sides = new Map<string, { debit: boolean; credit: boolean }>();
     for (const g of groups) {
-      const base = g.account.toLowerCase();
-      const seen = sides.get(base) ?? { debit: false, credit: false };
+      const seen = sides.get(scopeOf(g)) ?? { debit: false, credit: false };
       if (g.isDebit) seen.debit = true;
       else           seen.credit = true;
-      sides.set(base, seen);
+      sides.set(scopeOf(g), seen);
     }
 
     for (const g of groups) {
-      const seen = sides.get(g.account.toLowerCase());
+      const seen = sides.get(scopeOf(g));
       if (seen?.debit && seen?.credit) {
         g.account = `${g.account} (${g.isDebit ? 'Debe' : 'Haber'})`;
       }
     }
 
     return groups.sort((a, b) => {
+      // Desagregado: cada cuenta bancaria forma un bloque, para poder cuadrarlo contra su extracto.
+      if (splitByBankAccount && a.bankAccountAlias !== b.bankAccountAlias)
+        return (a.bankAccountAlias ?? '').localeCompare(b.bankAccountAlias ?? '');
       // Primero las filas del Debe, luego las del Haber; dentro de cada bloque, alfabético.
       if (a.isDebit !== b.isDebit) return a.isDebit ? -1 : 1;
       return a.account.localeCompare(b.account);
@@ -220,16 +280,26 @@ export class JournalPage {
     this.searchAccount()              !== '' ||
     this.selectedMonth()              !== null ||
     this.selectedYear()               !== null ||
-    this.selectedCurrency()           !== null
+    this.selectedCurrency()           !== null ||
+    this.selectedBankAccount()        !== null
   );
 
   constructor() {
+    // Las cuentas bancarias pertenecen a una empresa: al cambiarla, la selección anterior apunta a
+    // una cuenta ajena y devolvería un Mayor vacío sin explicar por qué.
+    effect(() => {
+      this.companyService.activeCompany()?.id;
+      untracked(() => this.selectedBankAccount.set(null));
+    });
+
     // Recarga cuando cambia la empresa activa o el filtro de moneda (ambos son server-side).
     effect(() => {
       const company = this.companyService.activeCompany();
       this.selectedCurrency();
+      this.selectedBankAccount();
       if (!company?.id) {
         this.entries.set([]);
+        this.availableBankAccounts.set([]);
         this.isLoading.set(false);
         return;
       }
@@ -250,6 +320,7 @@ export class JournalPage {
     this.selectedMonth.set(null);
     this.selectedYear.set(null);
     this.selectedCurrency.set(null);
+    this.selectedBankAccount.set(null);
   }
 
   setViewMode(mode: 'journal' | 'ledger'): void {
@@ -293,13 +364,15 @@ export class JournalPage {
     this.journalService.getEntries({
       companyId,
       currency: this.selectedCurrency() ?? undefined,
+      bankAccountId: this.selectedBankAccount() ?? undefined,
     }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: list => {
+      next: res => {
         if (requestSeq !== this.loadSeq) return;
-        this.entries.set(list.map(e => ({
+        this.entries.set(res.entries.map(e => ({
           ...e,
           lines: [...e.lines].sort((a, b) => (b.isDebit ? 1 : 0) - (a.isDebit ? 1 : 0)),
         })));
+        this.availableBankAccounts.set(res.availableBankAccounts ?? []);
         this.isLoading.set(false);
       },
       error: () => {

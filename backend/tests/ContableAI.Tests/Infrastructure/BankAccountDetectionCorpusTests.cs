@@ -18,7 +18,9 @@ namespace ContableAI.Tests.Infrastructure;
 /// </summary>
 public class BankAccountDetectionCorpusTests(ITestOutputHelper output)
 {
-    private sealed record Detection(string Bank, string Folder, string File, string? Account, string? Cbu)
+    private sealed record Detection(
+        string Bank, string Folder, string File, string? Account, string? Cbu,
+        IReadOnlyList<string> Conflicts)
     {
         public bool Identified => Account is not null || Cbu is not null;
 
@@ -57,7 +59,8 @@ public class BankAccountDetectionCorpusTests(ITestOutputHelper output)
                     Path.GetFileName(Path.GetDirectoryName(pdf)!),
                     Path.GetFileName(pdf),
                     statement.DetectedAccountNumber,
-                    statement.DetectedCbu));
+                    statement.DetectedCbu,
+                    statement.ConflictingAccountIdentifiers));
             }
             catch (InvalidOperationException)
             {
@@ -175,6 +178,52 @@ public class BankAccountDetectionCorpusTests(ITestOutputHelper output)
                     $"{r.File}: un número fuera de ese rango no es una cuenta bancaria");
             }
         }
+    }
+
+    /// <summary>
+    /// F1.e — Contrapeso de <see cref="DetectionRate_MeetsMinimumThreshold"/>: aquel mide que
+    /// detectemos, este mide que no detectemos DE MÁS. Un falso positivo de la guarda de resúmenes
+    /// consolidados no es cosmético: bloquea la carga de un archivo válido y obliga al usuario a
+    /// elegir la cuenta a mano en cada subida.
+    ///
+    /// No se afirma que la guarda nunca se dispare —el corpus contiene resúmenes consolidados de
+    /// verdad, los "Cuenta Pyme" de BBVA que listan dos cuentas corrientes con sus dos CBU— sino
+    /// que cuando se dispara sea sobre evidencia sólida:
+    ///   · cada identificador en conflicto tiene forma de CBU real (22 dígitos), y
+    ///   · todos comparten banco y sucursal, o sea que son cuentas del mismo cliente en el mismo
+    ///     banco y no números sueltos capturados de cualquier parte del encabezado.
+    /// El tope final es el que atrapa una regresión que empiece a rechazar todo.
+    /// </summary>
+    [SkippableFact]
+    public void ConsolidatedStatementGuard_OnlyFiresOnGenuinelyConsolidatedStatements()
+    {
+        var results = RunCorpus();
+        var flagged = results.Where(r => r.Conflicts.Count > 1).ToList();
+
+        output.WriteLine($"Rechazados por multi-cuenta: {flagged.Count} de {results.Count} extractos");
+        foreach (var g in flagged.GroupBy(r => r.Bank).OrderBy(g => g.Key))
+            output.WriteLine($"  {g.Key,-12} {g.Count()} archivo(s)");
+        output.WriteLine("");
+        foreach (var f in flagged)
+            output.WriteLine($"  {f.Bank,-12} {f.Folder}/{f.File} → {string.Join(" | ", f.Conflicts)}");
+
+        foreach (var f in flagged)
+        {
+            foreach (var id in f.Conflicts)
+                id.Should().MatchRegex(@"^\d{22}$",
+                    $"{f.File}: la guarda solo puede rechazar por CBU/CVU bien formados");
+
+            // Dígitos 1-3 banco + 4-7 sucursal: el bloque que comparten las cuentas de un mismo
+            // cliente en un mismo banco.
+            f.Conflicts.Select(id => id[..7]).Distinct().Should().HaveCount(1,
+                $"{f.File}: los CBU en conflicto tienen que ser del mismo banco y sucursal; si no, " +
+                "la heurística está capturando números que no son de las cuentas del titular");
+        }
+
+        var rejectionRate = 100.0 * flagged.Count / results.Count;
+        rejectionRate.Should().BeLessThan(25,
+            "si la guarda rechaza más de uno de cada cuatro extractos dejó de ser una excepción " +
+            "y se convirtió en un bloqueo sistemático de la carga automática");
     }
 
     /// <summary>

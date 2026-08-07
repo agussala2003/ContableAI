@@ -132,6 +132,8 @@ export class BankAccountsPanel {
           : [...list, saved]);
         this.isSaving.set(false);
         this.closeForm();
+        // Mantiene en sintonía el selector de la Dropzone, que vive en otra pantalla.
+        this.bankAccountService.refresh(this.companyId());
         this.toast.success(editingId ? 'Cuenta actualizada.' : 'Cuenta bancaria creada.');
       },
       error: err => {
@@ -160,6 +162,7 @@ export class BankAccountsPanel {
       next: updated => {
         this.accounts.update(list => list.map(a => a.id === updated.id ? updated : a));
         this.busyId.set(null);
+        this.bankAccountService.refresh(this.companyId());
         this.toast.success(updated.isActive ? 'Cuenta reactivada.' : 'Cuenta dada de baja.');
       },
       error: () => {

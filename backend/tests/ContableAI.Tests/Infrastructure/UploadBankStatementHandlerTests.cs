@@ -41,10 +41,14 @@ public class UploadBankStatementHandlerTests
     private sealed class FakeBankParser(
         Func<IEnumerable<BankTransaction>> factory,
         string? detectedAccountNumber = null,
-        string? detectedCbu = null) : IBankParserService
+        string? detectedCbu = null,
+        IReadOnlyList<string>? conflictingIdentifiers = null) : IBankParserService
     {
         public ParsedStatement Parse(Stream fileStream, string bankCode, string fileName) =>
-            new([.. factory()], Currencies.Ars, "BBVA", detectedAccountNumber, detectedCbu);
+            new([.. factory()], Currencies.Ars, "BBVA", detectedAccountNumber, detectedCbu)
+            {
+                ConflictingAccountIdentifiers = conflictingIdentifiers ?? [],
+            };
 
         public IEnumerable<BankTransaction> ParseCsv(Stream fileStream, string bankCode) => throw new NotSupportedException();
     }
@@ -73,10 +77,11 @@ public class UploadBankStatementHandlerTests
 
     private static UploadBankStatementHandler NewHandler(
         ContableAIDbContext db, Func<IEnumerable<BankTransaction>> parsed, bool canUpload = true,
-        string? detectedAccountNumber = null, string? detectedCbu = null)
+        string? detectedAccountNumber = null, string? detectedCbu = null,
+        IReadOnlyList<string>? conflictingIdentifiers = null)
         => new(
             db,
-            new FakeBankParser(parsed, detectedAccountNumber, detectedCbu),
+            new FakeBankParser(parsed, detectedAccountNumber, detectedCbu, conflictingIdentifiers),
             new ClassificationService(new HardRuleStrategy()), // motor de reglas real
             new FakeQuota(canUpload),
             new FakeJobClient(),
@@ -306,6 +311,74 @@ public class UploadBankStatementHandlerTests
 
         await using var check = NewDb(dbName);
         (await check.BankTransactions.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Routing_ConsolidatedStatement_RejectsTheFile()
+    {
+        // Caso "Cuenta Pyme" de BBVA: el encabezado lista dos cuentas con sus dos CBU. Enrutar todo
+        // a la primera contaminaría el libro diario de una cuenta con movimientos de la otra.
+        var dbName = Guid.NewGuid().ToString();
+        var company = NewCompany();
+        await using (var seed = NewDb(dbName))
+        {
+            seed.Companies.Add(company);
+            seed.BankAccounts.Add(NewBankAccount(company.Id, "BBVA", normalizedNumber: "1840098978"));
+            await seed.SaveChangesAsync();
+        }
+
+        var fileRef = await StageCsvAsync(dbName);
+        Result<UploadBankStatementResponse> result;
+        await using (var db = NewDb(dbName))
+        {
+            result = await NewHandler(
+                    db,
+                    () => [ParsedTx(100m, TransactionType.Debit, "PAGO")],
+                    detectedAccountNumber: "1840098978",
+                    conflictingIdentifiers: ["0170184120000000989781", "0170184120000000989859"])
+                .Handle(CommandFor(fileRef, company.Id), CancellationToken.None);
+        }
+
+        result.IsSuccess.Should().BeFalse(
+            "un resumen consolidado no se puede enrutar sin adivinar a qué cuenta va cada movimiento");
+        result.Error.Should().Contain("resumen consolidado");
+
+        await using var check = NewDb(dbName);
+        (await check.BankTransactions.CountAsync()).Should().Be(0);
+        (await check.BankAccounts.CountAsync()).Should().Be(1, "tampoco debe crear una cuenta provisional");
+    }
+
+    [Fact]
+    public async Task Routing_ConsolidatedStatement_WithExplicitAccount_IsImported()
+    {
+        // La salida del rechazo anterior: el usuario afirma que todos los movimientos del archivo
+        // son de una sola cuenta. Es la única forma de cargar un consolidado, y tiene que funcionar.
+        var dbName = Guid.NewGuid().ToString();
+        var company = NewCompany();
+        var chosen = NewBankAccount(company.Id, "BBVA Cta. Cte.", normalizedNumber: "1840098978");
+
+        await using (var seed = NewDb(dbName))
+        {
+            seed.Companies.Add(company);
+            seed.BankAccounts.Add(chosen);
+            await seed.SaveChangesAsync();
+        }
+
+        var fileRef = await StageCsvAsync(dbName);
+        Result<UploadBankStatementResponse> result;
+        await using (var db = NewDb(dbName))
+        {
+            result = await NewHandler(
+                    db,
+                    () => [ParsedTx(100m, TransactionType.Debit, "PAGO")],
+                    conflictingIdentifiers: ["0170184120000000989781", "0170184120000000989859"])
+                .Handle(CommandFor(fileRef, company.Id, bankAccountId: chosen.Id), CancellationToken.None);
+        }
+
+        result.IsSuccess.Should().BeTrue();
+
+        await using var check = NewDb(dbName);
+        (await check.BankTransactions.SingleAsync()).BankAccountId.Should().Be(chosen.Id);
     }
 
     [Fact]

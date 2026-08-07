@@ -5,6 +5,7 @@ import { ToastService } from './toast.service';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
 import { saveResponseAsFile } from '../utils/file-download';
+import { BankAccountOption } from './transaction';
 
 export interface JournalEntryLine {
   account: string;
@@ -21,7 +22,15 @@ export interface JournalEntry {
   generatedAt: string;
   /** Moneda del asiento (ISO 4217: "ARS" | "USD"). */
   currency: string;
+  /** Cuenta bancaria que originó el asiento; null en asientos previos a la multi-cuenta. */
+  bankAccountId: string | null;
   lines: JournalEntryLine[];
+}
+
+/** Respuesta del listado: los asientos más las opciones del filtro por cuenta bancaria. */
+export interface JournalEntriesResponse {
+  entries: JournalEntry[];
+  availableBankAccounts: BankAccountOption[];
 }
 
 export interface LinkedTransaction {
@@ -62,13 +71,16 @@ export class JournalEntryService {
     );
   }
 
-  getEntries(params?: { companyId?: string; month?: number; year?: number; currency?: string }): Observable<JournalEntry[]> {
+  getEntries(params?: {
+    companyId?: string; month?: number; year?: number; currency?: string; bankAccountId?: string;
+  }): Observable<JournalEntriesResponse> {
     let p = new HttpParams();
     if (params?.companyId) p = p.set('companyId', params.companyId);
     if (params?.month)     p = p.set('month',     params.month);
     if (params?.year)      p = p.set('year',       params.year);
     if (params?.currency)  p = p.set('currency',   params.currency);
-    return this.http.get<JournalEntry[]>(this.baseUrl, { params: p });
+    if (params?.bankAccountId) p = p.set('bankAccountId', params.bankAccountId);
+    return this.http.get<JournalEntriesResponse>(this.baseUrl, { params: p });
   }
 
   deleteEntry(id: string): Observable<void> {
