@@ -28,6 +28,19 @@ export interface AdminUserRow {
   maxCompanies: number;
   monthlyTxUsed: number;
   maxMonthlyTransactions: number;
+  /**
+   * Saldo prepago de extractos del ESTUDIO, no del usuario. Dos usuarios del mismo estudio
+   * muestran el mismo número y comparten la bolsa: acreditar desde cualquiera de las dos filas
+   * tiene el mismo efecto.
+   */
+  statementBalance: number;
+}
+
+/** Resultado de acreditar un pack. `applied: false` = ese comprobante ya estaba cargado. */
+export interface TopUpQuotaResponse {
+  applied: boolean;
+  balance: number;
+  message: string;
 }
 
 export interface DbResetResponse {
@@ -54,6 +67,17 @@ export class AdminService {
 
   getStats(): Observable<AdminStats> {
     return this.http.get<AdminStats>(`${this.baseUrl}/stats`);
+  }
+
+  /**
+   * Acredita un pack de extractos a un estudio. `reference` es el comprobante del pago y funciona
+   * como clave de idempotencia: reintentar la misma carga devuelve `applied: false` sin duplicar.
+   */
+  topUpQuota(studioTenantId: string, amount: number, reference: string): Observable<TopUpQuotaResponse> {
+    return this.http.post<TopUpQuotaResponse>(
+      `${this.baseUrl}/tenants/${encodeURIComponent(studioTenantId)}/quota/top-up`,
+      { amount, reference },
+    );
   }
 
   getUsers(): Observable<AdminUserRow[]> {
