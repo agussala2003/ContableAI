@@ -16,6 +16,11 @@ export interface CurrentUsage {
   periodKey: string;
   /** Extractos procesados y facturables en el período. */
   statementsProcessed: number;
+  /**
+   * Saldo prepago disponible: extractos cargados menos consumidos. No vence.
+   * Puede ser 0; en teoría negativo si dos cargas concurrentes sobregiraran el saldo.
+   */
+  balance: number;
 }
 
 @Injectable({ providedIn: 'root' })

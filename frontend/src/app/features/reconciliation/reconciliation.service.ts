@@ -477,7 +477,19 @@ export class ReconciliationService {
     if (!envelope.isSuccess) {
       this._isLoading.set(false);
       if (envelope.statusCode === 402) {
-        this.toast.warning('Límite del plan alcanzado. Actualizá tu suscripción en la sección Plan.');
+        // Dos cosas distintas responden 402 y el usuario no puede hacer lo mismo ante cada una:
+        // sin saldo de extractos se compra un pack; con el tope del plan alcanzado se cambia de
+        // plan. El backend las distingue con un código al principio de `error` ("CODIGO|mensaje").
+        if ((envelope.error ?? '').startsWith('NO_STATEMENT_QUOTA')) {
+          // Persistente: el contador tiene que poder anotar el contacto sin que el aviso se
+          // desvanezca, y no hay nada que pueda hacer dentro de la app para destrabarlo.
+          this.toast.persistent(
+            'Te quedaste sin saldo de extractos. Escribinos a presalsoporte@gmail.com o por ' +
+            'Instagram (@presal.app) para sumar un pack nuevo y seguir trabajando.',
+          );
+        } else {
+          this.toast.warning('Límite del plan alcanzado. Actualizá tu suscripción en la sección Plan.');
+        }
       } else if (envelope.statusCode === 403) {
         this.toast.error('No tenés permisos para realizar esta acción.');
       } else {

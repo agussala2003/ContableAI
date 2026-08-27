@@ -24,11 +24,16 @@ public static class UsageEndpoints
                 return Results.Unauthorized();
 
             var summary = await usage.GetCurrentPeriodAsync(studioTenantId, ct);
+            var balance = await usage.GetAvailableQuotaAsync(studioTenantId, ct);
 
             return Results.Ok(new
             {
                 summary.PeriodKey,
                 summary.StatementsProcessed,
+                // El saldo va acá y no en un endpoint aparte porque el usuario los lee juntos:
+                // "consumí 12 este mes, me quedan 38". Enterarse del saldo recién cuando la carga
+                // se bloquea es la peor forma posible de comunicarlo.
+                Balance = balance,
             });
         })
         .RequireAuthorization()
@@ -36,9 +41,11 @@ public static class UsageEndpoints
         .WithTags("Consumo")
         .WithSummary("Consumo del período en curso para el estudio autenticado.")
         .WithDescription(
-            "Devuelve { periodKey, statementsProcessed }: los extractos procesados y facturables " +
+            "Devuelve { periodKey, statementsProcessed, balance }: los extractos procesados y facturables " +
             "del mes UTC en curso. Suma la cantidad de los eventos del ledger, no cuenta filas, " +
-            "para que un reverso reste en lugar de sumar. Solo informa: no aplica ningún bloqueo.")
+            "para que un reverso reste en lugar de sumar. `balance` es el saldo prepago disponible " +
+            "(cargas menos consumos, sin vencimiento). El bloqueo por falta de saldo lo aplica el " +
+            "pipeline de subida, no este endpoint.")
         .Produces(200)
         .Produces(401);
     }

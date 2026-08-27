@@ -225,4 +225,162 @@ public class UsageLedgerTests : IDisposable
         var insert = async () => await db.SaveChangesAsync();
         await insert.Should().ThrowAsync<DbUpdateException>();
     }
+
+    // ── Saldo prepago (D5) ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Balance_IsTopUpsMinusConsumption()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        await usage.AddQuotaAsync(Tenant, 50, "COMPROBANTE-001");
+        await usage.TrackStatementProcessedAsync(Tenant, null, "extracto-1");
+        await usage.TrackStatementProcessedAsync(Tenant, null, "extracto-2");
+
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(48);
+    }
+
+    [Fact]
+    public async Task Balance_OfAStudioThatNeverBought_IsZero()
+    {
+        using var db = NewDb();
+
+        // Sin eventos, SUM devuelve NULL en SQL. Si no se maneja, la materialización a int revienta
+        // justo para el estudio recién creado — el peor momento posible.
+        (await NewService(db).GetAvailableQuotaAsync("ESTUDIO_NUEVO")).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Balance_DoesNotExpireAcrossPeriods()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        // Carga de hace tres meses: la promesa comercial es que el saldo NO vence.
+        var old = DateTime.UtcNow.AddMonths(-3);
+        db.UsageEvents.Add(new UsageEvent
+        {
+            StudioTenantId = Tenant,
+            Type           = UsageEventType.StatementQuotaTopUp,
+            Quantity       = 20,
+            OccurredAt     = old,
+            PeriodKey      = UsageEvent.PeriodKeyOf(old),
+            IdempotencyKey = "TOPUP_VIEJO",
+        });
+        await db.SaveChangesAsync();
+
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(20);
+    }
+
+    [Fact]
+    public async Task TopUp_IsIdempotentByPaymentReference()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        var first  = await usage.AddQuotaAsync(Tenant, 50, "PAGO-12345");
+        var second = await usage.AddQuotaAsync(Tenant, 50, "PAGO-12345");
+
+        first.Should().BeTrue();
+        second.Should().BeFalse("el mismo comprobante no se acredita dos veces");
+
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(50, "no 100");
+    }
+
+    [Fact]
+    public async Task TopUp_SameReferenceOnAnotherDay_StillDoesNotDoubleCredit()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        // Este es el caso que rompía la clave que incluía la fecha: el admin reintenta la carga al
+        // día siguiente, o el reintento cruza la medianoche UTC. La clave es la referencia SOLA, así
+        // que el resultado no depende de cuándo se ejecute.
+        await usage.AddQuotaAsync(Tenant, 50, "PAGO-12345");
+
+        var sameReferenceLater = await usage.AddQuotaAsync(Tenant, 50, "PAGO-12345");
+
+        sameReferenceLater.Should().BeFalse();
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(50);
+    }
+
+    [Fact]
+    public async Task TopUp_TrimsTheReference_SoAStraySpaceIsNotASecondCredit()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        await usage.AddQuotaAsync(Tenant, 20, "PAGO-999");
+        var withSpaces = await usage.AddQuotaAsync(Tenant, 20, "  PAGO-999  ");
+
+        withSpaces.Should().BeFalse();
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(20);
+    }
+
+    [Fact]
+    public async Task TopUp_IsScopedToItsStudio()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        await usage.AddQuotaAsync(Tenant, 50, "PAGO-A");
+
+        (await usage.GetAvailableQuotaAsync(OtherTenant)).Should().Be(0,
+            "el saldo de un estudio no puede filtrarse a otro");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-10)]
+    public async Task TopUp_RejectsNonPositiveAmounts(int amount)
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        // Una carga negativa restaría saldo disfrazada de acreditación, sin dejar rastro de ajuste.
+        var act = async () => await usage.AddQuotaAsync(Tenant, amount, "PAGO-X");
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task TopUp_RejectsAnEmptyReference(string reference)
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        // Sin referencia todas las cargas compartirían clave: la segunda de un mismo estudio se
+        // perdería en silencio. Es un error de operación, no un caso a tolerar.
+        var act = async () => await usage.AddQuotaAsync(Tenant, 50, reference);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task Reversal_GivesBackBalance()
+    {
+        using var db = NewDb();
+        var usage = NewService(db);
+
+        await usage.AddQuotaAsync(Tenant, 10, "PAGO-R");
+        await usage.TrackStatementProcessedAsync(Tenant, null, "extracto-mal-procesado");
+
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(9);
+
+        // El reverso es un CONSUMO de cantidad negativa, no un borrado ni una carga: el ledger
+        // conserva los dos hechos y explica cómo se llegó al saldo.
+        db.UsageEvents.Add(new UsageEvent
+        {
+            StudioTenantId = Tenant,
+            Type           = UsageEventType.StatementProcessed,
+            Quantity       = -1,
+            OccurredAt     = DateTime.UtcNow,
+            PeriodKey      = UsageEvent.PeriodKeyOf(DateTime.UtcNow),
+            IdempotencyKey = "reverso-extracto-mal-procesado",
+        });
+        await db.SaveChangesAsync();
+
+        (await usage.GetAvailableQuotaAsync(Tenant)).Should().Be(10);
+    }
 }

@@ -116,6 +116,7 @@ public class UploadUsageTrackingTests : IDisposable
     {
         var companyId = await SeedCompanyAsync();
         var content   = "EXTRACTO SEPTIEMBRE 2025 — contenido de prueba"u8.ToArray();
+        await TopUpAsync(10);
 
         // Primera subida.
         await using (var db = NewDb())
@@ -134,7 +135,7 @@ public class UploadUsageTrackingTests : IDisposable
         }
 
         await using var check = NewDb();
-        check.UsageEvents.Count().Should().Be(1,
+        check.UsageEvents.Count(e => e.Type == UsageEventType.StatementProcessed).Should().Be(1,
             "el segundo intento choca contra el índice único y no genera un segundo cobro");
 
         var usage = await new UsageService(check, NullLogger<UsageService>.Instance)
@@ -148,6 +149,7 @@ public class UploadUsageTrackingTests : IDisposable
     {
         var companyId = await SeedCompanyAsync();
         var content   = "MISMO CONTENIDO, OTRO NOMBRE"u8.ToArray();
+        await TopUpAsync(10);
 
         foreach (var name in new[] { "extracto.pdf", "extracto (1).pdf" })
         {
@@ -158,7 +160,7 @@ public class UploadUsageTrackingTests : IDisposable
         }
 
         await using var check = NewDb();
-        check.UsageEvents.Count().Should().Be(1,
+        check.UsageEvents.Count(e => e.Type == UsageEventType.StatementProcessed).Should().Be(1,
             "la idempotencia es por contenido: renombrar el archivo no habilita un segundo cobro");
     }
 
@@ -166,6 +168,7 @@ public class UploadUsageTrackingTests : IDisposable
     public async Task DifferentFiles_AreChargedSeparately()
     {
         var companyId = await SeedCompanyAsync();
+        await TopUpAsync(10);
 
         foreach (var text in new[] { "EXTRACTO SEPTIEMBRE", "EXTRACTO OCTUBRE" })
         {
@@ -176,13 +179,14 @@ public class UploadUsageTrackingTests : IDisposable
         }
 
         await using var check = NewDb();
-        check.UsageEvents.Count().Should().Be(2, "dos extractos distintos son dos consumos");
+        check.UsageEvents.Count(e => e.Type == UsageEventType.StatementProcessed).Should().Be(2, "dos extractos distintos son dos consumos");
     }
 
     [Fact]
     public async Task FileThatParsesNothing_IsNotCharged()
     {
         var companyId = await SeedCompanyAsync();
+        await TopUpAsync(10);
 
         await using (var db = NewDb())
         {
@@ -192,7 +196,7 @@ public class UploadUsageTrackingTests : IDisposable
         }
 
         await using var check = NewDb();
-        check.UsageEvents.Should().BeEmpty(
+        check.UsageEvents.Where(e => e.Type == UsageEventType.StatementProcessed).Should().BeEmpty(
             "un archivo del que no salió ningún movimiento no le entregó nada al usuario");
     }
 
@@ -201,6 +205,7 @@ public class UploadUsageTrackingTests : IDisposable
     {
         var companyId = await SeedCompanyAsync();
         var content   = "EXTRACTO CON METADATA"u8.ToArray();
+        await TopUpAsync(10);
 
         await using (var db = NewDb())
         {
@@ -210,7 +215,7 @@ public class UploadUsageTrackingTests : IDisposable
         }
 
         await using var check = NewDb();
-        var evt = check.UsageEvents.Single();
+        var evt = check.UsageEvents.Single(e => e.Type == UsageEventType.StatementProcessed);
 
         evt.StudioTenantId.Should().Be(Studio, "se factura al estudio, no a la empresa");
         evt.CompanyId.Should().Be(companyId, "pero se guarda la empresa para poder desglosar");
@@ -218,6 +223,121 @@ public class UploadUsageTrackingTests : IDisposable
         evt.Quantity.Should().Be(1);
         evt.PeriodKey.Should().Be(UsageEvent.PeriodKeyOf(DateTime.UtcNow));
         evt.IdempotencyKey.Should().Be(UsageService.ComputeFileHash(content));
+    }
+
+    // ── Bloqueo por falta de saldo (D5) ─────────────────────────────────────────
+
+    /// <summary>Acredita saldo directo, sin pasar por el endpoint de admin.</summary>
+    private async Task TopUpAsync(int amount, string reference = "PAGO-TEST")
+    {
+        await using var db = NewDb();
+        await new UsageService(db, NullLogger<UsageService>.Instance)
+            .AddQuotaAsync(Studio, amount, reference);
+    }
+
+    [Fact]
+    public async Task WithoutBalance_TheUploadIsRejectedWithPaymentRequired()
+    {
+        var companyId = await SeedCompanyAsync();
+
+        await using var db = NewDb();
+        var fileRef = await StageAsync("EXTRACTO SIN SALDO"u8.ToArray(), "extracto.pdf");
+
+        var result = await NewHandler(db, () => [ParsedTx(1000m, "Movimiento")])
+            .Handle(CommandFor(fileRef, companyId), CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+        result.StatusCode.Should().Be(402, "el saldo agotado es 'pago requerido', no un error del usuario");
+        result.Error.Should().StartWith("NO_STATEMENT_QUOTA",
+            "el código distingue este 402 del tope mensual del plan, que se resuelve de otra forma");
+
+        await using var check = NewDb();
+        check.BankTransactions.Should().BeEmpty("sin saldo no se procesa nada");
+        check.UsageEvents.Should().NotContain(e => e.Type == UsageEventType.StatementProcessed);
+    }
+
+    [Fact]
+    public async Task WithBalance_TheUploadGoesThroughAndDiscountsOne()
+    {
+        var companyId = await SeedCompanyAsync();
+        await TopUpAsync(3);
+
+        await using (var db = NewDb())
+        {
+            var fileRef = await StageAsync("EXTRACTO CON SALDO"u8.ToArray(), "extracto.pdf");
+            var result = await NewHandler(db, () => [ParsedTx(1000m, "Movimiento")])
+                .Handle(CommandFor(fileRef, companyId), CancellationToken.None);
+
+            result.IsSuccess.Should().BeTrue();
+        }
+
+        await using var check = NewDb();
+        var balance = await new UsageService(check, NullLogger<UsageService>.Instance)
+            .GetAvailableQuotaAsync(Studio);
+
+        balance.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReUploadingAnAlreadyPaidFile_IsAllowedEvenWithZeroBalance()
+    {
+        var companyId = await SeedCompanyAsync();
+        var content   = "EXTRACTO YA PAGADO"u8.ToArray();
+
+        // Saldo justo para una carga: queda en cero después de procesarla.
+        await TopUpAsync(1);
+
+        await using (var db = NewDb())
+        {
+            var fileRef = await StageAsync(content, "extracto.pdf");
+            await NewHandler(db, () => [ParsedTx(1000m, "Movimiento")])
+                .Handle(CommandFor(fileRef, companyId), CancellationToken.None);
+        }
+
+        // El contador no está seguro de que la carga haya funcionado y resube el MISMO archivo.
+        // Ese extracto ya se pagó: bloquearlo por saldo sería cobrarle dos veces, en fricción.
+        await using (var db = NewDb())
+        {
+            var fileRef = await StageAsync(content, "extracto.pdf");
+            var result = await NewHandler(db, () => [ParsedTx(1000m, "Movimiento")])
+                .Handle(CommandFor(fileRef, companyId), CancellationToken.None);
+
+            result.IsSuccess.Should().BeTrue("un archivo ya cobrado no consume saldo de nuevo");
+        }
+
+        await using var check = NewDb();
+        var balance = await new UsageService(check, NullLogger<UsageService>.Instance)
+            .GetAvailableQuotaAsync(Studio);
+
+        balance.Should().Be(0, "y el saldo no bajó a -1");
+    }
+
+    [Fact]
+    public async Task ABatchBiggerThanTheBalance_IsRejectedInstead_OfOverdrawing()
+    {
+        var companyId = await SeedCompanyAsync();
+        await TopUpAsync(1);
+
+        await using var db = NewDb();
+
+        // Tres archivos distintos con un solo crédito: preguntar solo "¿el saldo es > 0?" dejaría
+        // procesar los tres y el saldo en -2.
+        var refs = new List<StagedFileRef>();
+        foreach (var text in new[] { "EXTRACTO A", "EXTRACTO B", "EXTRACTO C" })
+            refs.Add(await StageAsync(System.Text.Encoding.UTF8.GetBytes(text), $"{text}.pdf"));
+
+        var command = new UploadBankStatementCommand(
+            Guid.NewGuid(), refs, companyId, "AUTO", false, false, Studio, null);
+
+        var result = await NewHandler(db, () => [ParsedTx(100m, "Movimiento")]).Handle(command, CancellationToken.None);
+
+        result.StatusCode.Should().Be(402);
+
+        await using var check = NewDb();
+        var balance = await new UsageService(check, NullLogger<UsageService>.Instance)
+            .GetAvailableQuotaAsync(Studio);
+
+        balance.Should().Be(1, "el saldo queda intacto: no se procesó nada");
     }
 
     [Fact]
@@ -245,6 +365,6 @@ public class UploadUsageTrackingTests : IDisposable
 
         await using var check = NewDb();
         check.BankTransactions.Count().Should().Be(1, "el movimiento tiene que haberse guardado igual");
-        check.UsageEvents.Count().Should().Be(1, "y no tiene que haberse cobrado dos veces");
+        check.UsageEvents.Count(e => e.Type == UsageEventType.StatementProcessed).Should().Be(1, "y no tiene que haberse cobrado dos veces");
     }
 }

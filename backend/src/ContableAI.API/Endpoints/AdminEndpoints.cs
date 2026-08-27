@@ -1,6 +1,7 @@
 using ContableAI.API.Common;
 using ContableAI.Application.Features.Admin.Commands;
 using ContableAI.Application.Features.Admin.Queries;
+using ContableAI.Infrastructure.Services;
 using MediatR;
 using System.Security.Claims;
 
@@ -10,6 +11,9 @@ public record AdminUpdatePlanRequest(string Plan);
 public record AdminUpdateRoleRequest(string Role);
 public record AdminUpdateDisplayNameRequest(string DisplayName);
 public record AdminGlobalRuleRequest(string Keyword, string TargetAccount, string? Direction, int? Priority, bool? RequiresTaxMatching);
+
+/// <summary>Acreditación manual de un pack de extractos. <c>Reference</c> es la clave de idempotencia.</summary>
+public record AdminTopUpQuotaRequest(int Amount, string Reference);
 
 public static class AdminEndpoints
 {
@@ -237,6 +241,81 @@ public static class AdminEndpoints
         .WithTags("Administración")
         .WithSummary("Vaciar la base de datos y re-sembrar datos iniciales (solo Development).")
         .WithDescription("Borra en orden de dependencia FK: líneas de asiento, asientos, transacciones, períodos, auditoría, reglas, usuarios, empresas, plan de cuentas. Luego re-siembra reglas globales y plan de cuentas predeterminado. Retorna 403 en entornos distintos de Development.")
+        .Produces(200)
+        .Produces(403);
+
+        // ── Saldo prepago de extractos ────────────────────────────────────────
+        // No hay pasarela de pagos: el cobro se hace fuera del sistema y el saldo se acredita acá
+        // a mano. Es lo que permite validar el modelo comercial sin integrar Stripe/MercadoPago.
+        app.MapPost("/api/admin/tenants/{tenantId}/quota/top-up", async (
+            string tenantId,
+            AdminTopUpQuotaRequest req,
+            IUsageService usage,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(tenantId))
+                return Results.BadRequest(new { message = "El estudio es obligatorio." });
+
+            if (req.Amount <= 0)
+                return Results.BadRequest(new { message = "La cantidad de extractos tiene que ser mayor que cero." });
+
+            // La referencia ES la clave de idempotencia. Sin ella, dos cargas distintas colisionan
+            // entre sí y solo la primera entra; con una referencia mal puesta, un mismo pago se
+            // podría acreditar dos veces. Se exige explícitamente en vez de generar una al vuelo.
+            if (string.IsNullOrWhiteSpace(req.Reference))
+                return Results.BadRequest(new
+                {
+                    message = "La referencia del comprobante es obligatoria: identifica al pago y evita acreditarlo dos veces.",
+                });
+
+            var applied = await usage.AddQuotaAsync(tenantId, req.Amount, req.Reference, ct);
+            var balance = await usage.GetAvailableQuotaAsync(tenantId, ct);
+
+            // La carga repetida NO es un error: devuelve 200 con applied=false y el saldo real, para
+            // que un reintento del admin (o un doble clic) sea seguro y quede claro qué pasó.
+            return Results.Ok(new
+            {
+                Applied = applied,
+                Balance = balance,
+                Message = applied
+                    ? $"Se acreditaron {req.Amount} extractos al estudio {tenantId}. Saldo disponible: {balance}."
+                    : $"El comprobante '{req.Reference}' ya estaba acreditado. Saldo disponible sin cambios: {balance}.",
+            });
+        })
+        .RequireAuthorization(p => p.RequireRole("SystemAdmin"))
+        .WithName("AdminTopUpStatementQuota")
+        .WithTags("Administración")
+        .WithSummary("Acreditar un pack de extractos prepago a un estudio.")
+        .WithDescription(
+            "Body: { amount (int > 0), reference (string) }. La referencia es el comprobante del pago " +
+            "y funciona como clave de idempotencia: reintentar la misma carga devuelve applied=false " +
+            "sin acreditar de nuevo. El saldo NO vence. Devuelve { applied, balance, message }.")
+        .Produces(200)
+        .Produces(400)
+        .Produces(403);
+
+        // ── Consulta de saldo ─────────────────────────────────────────────────
+        app.MapGet("/api/admin/tenants/{tenantId}/quota", async (
+            string tenantId,
+            IUsageService usage,
+            CancellationToken ct) =>
+        {
+            var balance = await usage.GetAvailableQuotaAsync(tenantId, ct);
+            var period  = await usage.GetCurrentPeriodAsync(tenantId, ct);
+
+            return Results.Ok(new
+            {
+                TenantId              = tenantId,
+                Balance               = balance,
+                period.PeriodKey,
+                period.StatementsProcessed,
+            });
+        })
+        .RequireAuthorization(p => p.RequireRole("SystemAdmin"))
+        .WithName("AdminGetStatementQuota")
+        .WithTags("Administración")
+        .WithSummary("Saldo de extractos y consumo del mes de un estudio.")
+        .WithDescription("Devuelve { tenantId, balance, periodKey, statementsProcessed }. Sirve para verificar una carga antes y después de acreditarla.")
         .Produces(200)
         .Produces(403);
     }

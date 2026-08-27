@@ -71,21 +71,61 @@
               </div>
               <div class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-900/30 border border-teal-200/60 dark:border-teal-800/60 rounded-full px-2.5 py-1 shrink-0">
                 <lucide-icon name="activity" class="w-3 h-3"></lucide-icon>
-                Solo medición
+                Prepago
               </div>
             </div>
 
-            <div class="flex items-baseline gap-2">
-              <span class="text-4xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">{{ u.statementsProcessed }}</span>
-              <span class="text-sm font-medium text-slate-600 dark:text-slate-300">
-                {{ u.statementsProcessed === 1 ? 'extracto procesado' : 'extractos procesados' }}
-              </span>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Procesados este mes</p>
+                <div class="flex items-baseline gap-2">
+                  <span class="text-4xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">{{ u.statementsProcessed }}</span>
+                  <span class="text-sm font-medium text-slate-600 dark:text-slate-300">
+                    {{ u.statementsProcessed === 1 ? 'extracto' : 'extractos' }}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Saldo disponible</p>
+                <div class="flex items-baseline gap-2">
+                  <span class="text-4xl font-bold tabular-nums"
+                    [ngClass]="u.balance <= 0 ? 'text-rose-600 dark:text-rose-400'
+                             : u.balance <= 5 ? 'text-amber-600 dark:text-amber-400'
+                             : 'text-slate-800 dark:text-slate-100'">{{ u.balance }}</span>
+                  <span class="text-sm font-medium text-slate-600 dark:text-slate-300">
+                    {{ u.balance === 1 ? 'extracto' : 'extractos' }}
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <p class="mt-3 text-xs text-slate-500 dark:text-slate-400 max-w-prose">
-              Se cuenta un extracto por archivo procesado que haya producido movimientos. Volver a
-              subir el mismo archivo no lo cuenta de nuevo. Por ahora esta cifra es informativa y no
-              limita ninguna operación.
+            @if (u.balance <= 0) {
+              <div class="mt-5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 p-4">
+                <p class="text-sm font-semibold text-rose-800 dark:text-rose-300">Te quedaste sin saldo</p>
+                <p class="mt-1 text-xs text-rose-700 dark:text-rose-400">
+                  No vas a poder procesar extractos nuevos hasta sumar un pack. Escribinos a
+                  <a href="mailto:presalsoporte@gmail.com?subject=Recarga%20de%20extractos%20-%20PreSal" class="font-semibold underline underline-offset-2">presalsoporte&#64;gmail.com</a>
+                  o por Instagram
+                  <a href="https://instagram.com/presal.app" target="_blank" rel="noopener" class="font-semibold underline underline-offset-2">&#64;presal.app</a>.
+                </p>
+              </div>
+            } @else if (u.balance <= 5) {
+              <div class="mt-5 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 p-4">
+                <p class="text-xs text-amber-800 dark:text-amber-300">
+                  Te quedan pocos extractos. Escribinos a
+                  <a href="mailto:presalsoporte@gmail.com?subject=Recarga%20de%20extractos%20-%20PreSal" class="font-semibold underline underline-offset-2">presalsoporte&#64;gmail.com</a>
+                  o por Instagram
+                  <a href="https://instagram.com/presal.app" target="_blank" rel="noopener" class="font-semibold underline underline-offset-2">&#64;presal.app</a>
+                  antes de quedarte sin saldo.
+                </p>
+              </div>
+            }
+
+            <p class="mt-4 text-xs text-slate-500 dark:text-slate-400 max-w-prose">
+              Se descuenta un extracto por archivo procesado que haya producido movimientos. Volver a
+              subir el mismo archivo no lo descuenta de nuevo, y los errores de lectura no se cobran.
+              <span class="font-medium text-slate-600 dark:text-slate-300">El saldo no vence.</span>
             </p>
           </div>
         </div>

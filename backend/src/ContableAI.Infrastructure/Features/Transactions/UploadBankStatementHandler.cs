@@ -3,6 +3,7 @@ using ContableAI.Application.Features.Transactions.Commands;
 using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
+using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Features.Afip;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
@@ -115,6 +116,15 @@ public sealed class UploadBankStatementHandler
             var (company, forbidden) = await ResolveCompanyAsync(command, ct);
             if (forbidden)
                 return Result<UploadBankStatementResponse>.Forbidden();
+
+            // Saldo prepago: se verifica ANTES de parsear, que es la parte cara (PdfPig y, en los
+            // escaneados, OCR). Sin saldo no tiene sentido gastar CPU en un trabajo que no se va a
+            // poder entregar.
+            if (await OutOfStatementQuotaAsync(command, stagedFiles, ct))
+                return Result<UploadBankStatementResponse>.PaymentRequired(
+                    "NO_STATEMENT_QUOTA",
+                    "Te quedaste sin saldo de extractos. Escribinos a presalsoporte@gmail.com o por " +
+                    "Instagram (@presal.app) para sumar un pack nuevo y seguir trabajando.");
 
             var (parsedFiles, parseErrors) = ParseFiles(command, stagedFiles);
 
@@ -633,6 +643,57 @@ public sealed class UploadBankStatementHandler
 
         return new ClassificationOutcome(
             allClassified, perFileResults, allSkippedDuplicates, totalDuplicates, totalReapplied);
+    }
+
+    /// <summary>
+    /// Decide si la carga tiene que rechazarse por falta de saldo prepago.
+    ///
+    /// No alcanza con preguntar "¿el saldo es mayor que cero?": una carga puede traer varios
+    /// archivos, y con un solo crédito disponible se podrían procesar cinco y dejar el saldo en
+    /// -4. Se exige saldo para TODOS los archivos que se van a cobrar.
+    ///
+    /// Los archivos que YA están en el ledger no cuentan contra el saldo. Es el caso del contador
+    /// que resube un extracto porque no está seguro de que la primera carga haya funcionado: ese
+    /// archivo ya se pagó, y bloquearlo por saldo sería cobrarle dos veces en forma de fricción.
+    /// Por eso el hash se calcula acá, antes de parsear — es barato, los bytes ya están en memoria.
+    ///
+    /// La verificación es CONSERVADORA: un archivo que después falle al parsear no se va a cobrar,
+    /// pero acá igual se le pidió saldo. Se prefiere pecar de estricto: en un modelo prepago, dejar
+    /// el saldo en negativo es peor que pedir una recarga un extracto antes.
+    /// </summary>
+    private async Task<bool> OutOfStatementQuotaAsync(
+        UploadBankStatementCommand command, List<LoadedFile> stagedFiles, CancellationToken ct)
+    {
+        if (stagedFiles.Count == 0) return false;
+
+        var hashes = stagedFiles
+            .Where(f => f.Content.Length > 0)
+            .Select(f => UsageService.ComputeFileHash(f.Content))
+            .Distinct()
+            .ToList();
+
+        if (hashes.Count == 0) return false;
+
+        var alreadyCharged = await _db.UsageEvents
+            .AsNoTracking()
+            .Where(u => u.StudioTenantId == command.StudioTenantId
+                     && u.Type           == UsageEventType.StatementProcessed
+                     && hashes.Contains(u.IdempotencyKey))
+            .Select(u => u.IdempotencyKey)
+            .ToListAsync(ct);
+
+        var billableCount = hashes.Count - alreadyCharged.Distinct().Count();
+        if (billableCount <= 0) return false;
+
+        var available = await _usage.GetAvailableQuotaAsync(command.StudioTenantId, ct);
+
+        if (available >= billableCount) return false;
+
+        _logger.LogWarning(
+            "Carga rechazada por falta de saldo: el estudio {Tenant} tiene {Available} y necesita {Needed}.",
+            command.StudioTenantId, available, billableCount);
+
+        return true;
     }
 
     /// <summary>

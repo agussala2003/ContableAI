@@ -14,6 +14,17 @@ public enum UsageEventType
     /// Es la unidad que se factura (ver el análisis de extracto vs. asiento): está alineada con el
     /// costo real —el parseo/OCR es lo único que escala con el uso— y tiene un punto de medición
     /// único en el pipeline de subida.
+    ///
+    /// CONSUME saldo: su <c>Quantity</c> es POSITIVA (+1 por extracto) y se RESTA del saldo.
     /// </summary>
     StatementProcessed = 0,
+
+    /// <summary>
+    /// Carga de saldo prepago hecha a mano por un administrador tras cobrar un pack de extractos.
+    /// No hay pasarela de pagos: el evento se registra cuando el pago ya está confirmado, y su
+    /// <c>IdempotencyKey</c> es la referencia del comprobante.
+    ///
+    /// APORTA saldo: su <c>Quantity</c> es positiva y se SUMA.
+    /// </summary>
+    StatementQuotaTopUp = 1,
 }
