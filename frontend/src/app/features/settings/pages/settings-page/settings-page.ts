@@ -47,6 +47,50 @@ export class SettingsPage implements OnInit {
     });
   }
 
+  /**
+   * Packs de extractos prepagos.
+   *
+   * Los precios están en USD y NO se guarda ningún monto en pesos ni el tipo de cambio: se cobra
+   * por transferencia al cambio del día. Un número en pesos hardcodeado quedaría viejo en semanas
+   * —los anclajes de referencia ($6.000 / $12.000 / $27.000) se fijaron con el dólar a ~$1.550 el
+   * 27-08-2026— y dejaría publicado un precio que ya no rige.
+   *
+   * El precio por extracto baja con el volumen a propósito: es lo que paga el descuento a cambio
+   * de cobrar por adelantado.
+   */
+  readonly packs = [
+    {
+      name: 'Básico',
+      statements: 20,
+      usd: 4,
+      perStatement: '0,20',
+      pitch: 'Para probar el sistema con un cliente sin comprometer mucho.',
+      highlighted: false,
+    },
+    {
+      name: 'Estudio',
+      statements: 50,
+      usd: 8,
+      perStatement: '0,16',
+      pitch: 'Alcanza para cerrar el mes de varios clientes chicos.',
+      highlighted: true,
+    },
+    {
+      name: 'Volumen',
+      statements: 150,
+      usd: 17,
+      perStatement: '0,11',
+      pitch: 'El mejor precio por extracto, comprando por adelantado.',
+      highlighted: false,
+    },
+  ];
+
+  /** Mail con el pack ya escrito en el asunto: menos fricción y menos pedidos ambiguos. */
+  packMailto(pack: { name: string; statements: number }): string {
+    const subject = `Compra pack ${pack.name} (${pack.statements} extractos) - PreSal`;
+    return `mailto:presalsoporte@gmail.com?subject=${encodeURIComponent(subject)}`;
+  }
+
   /** "2026-08" → "Agosto 2026". El backend manda la clave cruda; la traducción es de la vista. */
   periodLabel(periodKey: string): string {
     const months = [
