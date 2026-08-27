@@ -5,6 +5,14 @@ export interface BankAccountFilterOption {
   id: string;
   alias: string;
   currency: string;
+  /** Banco de la cuenta. Alimenta la cascada Banco → Cuenta sin pedir datos de nuevo. */
+  bankCode: string | null;
+}
+
+/** Opción del filtro por banco. `code` es un código del catálogo, o 'none' para lo sin banco. */
+export interface BankFilterOption {
+  code: string;
+  label: string;
 }
 
 export interface ReconciliationFilters {
@@ -12,6 +20,8 @@ export interface ReconciliationFilters {
   year: number | null;
   search: string;
   account: string;
+  /** Código de banco, 'none' (lo que no se puede atribuir a un banco) o null (todos). */
+  bankCode: string | null;
   /** GUID, 'none' (movimientos sin cuenta) o null (todas). */
   bankAccountId: string | null;
   direction: 'debit' | 'credit' | null;

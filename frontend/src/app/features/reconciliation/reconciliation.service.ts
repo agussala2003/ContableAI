@@ -6,7 +6,7 @@ import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
 import { CompanyService } from '../../core/services/company.service';
 import { JournalEntryService } from '../../core/services/journal-entry.service';
-import { BankAccountFilterOption, ReconciliationFilters, ReconciliationPagination } from './models/reconciliation.models';
+import { BankAccountFilterOption, BankFilterOption, ReconciliationFilters, ReconciliationPagination } from './models/reconciliation.models';
 import { BankAccountService } from '../../core/services/bank-account.service';
 import { AfipService } from './afip.service';
 import { RuleService } from '../../core/services/rule.service';
@@ -44,7 +44,7 @@ export class ReconciliationService {
   // ── Private writable state ─────────────────────────────────────────────
   private _transactions     = signal<BankTransaction[]>([]);
   private _filters          = signal<ReconciliationFilters>({
-    month: null, year: null, search: '', account: '', direction: null, currency: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact', bankAccountId: null
+    month: null, year: null, search: '', account: '', direction: null, currency: null, sortBy: null, sortDir: null, strictSearch: false, amountMode: 'exact', bankCode: null, bankAccountId: null
   });
   private _pagination       = signal<ReconciliationPagination>({
     page: 1, pageSize: 10, totalCount: 0, totalPages: 0,
@@ -58,6 +58,7 @@ export class ReconciliationService {
   private _currencyTotals         = signal<CurrencyTotals[]>([]);
   private _availableAccounts      = signal<string[]>([]);
   private _availableBankAccounts  = signal<BankAccountFilterOption[]>([]);
+  private _availableBanks         = signal<BankFilterOption[]>([]);
   private _availableMonths        = signal<number[]>([]);
   private _availableYears         = signal<number[]>([]);
   private _pendingAfipCount       = signal<number>(0);
@@ -82,14 +83,30 @@ export class ReconciliationService {
   readonly isMultiCurrency  = computed(() => this._currencyTotals().length > 1);
   readonly availableAccounts = this._availableAccounts.asReadonly();
   readonly availableBankAccounts = this._availableBankAccounts.asReadonly();
+  readonly availableBanks        = this._availableBanks.asReadonly();
+
+  /**
+   * Cascada Banco → Cuenta: al elegir un banco, el selector de cuentas ofrece solo las suyas. El
+   * backend manda siempre todas las cuentas del alcance (sin el filtro de banco aplicado) para que
+   * este recorte se resuelva en memoria y cambiar de banco no dispare una request extra.
+   */
+  readonly visibleBankAccounts = computed(() => {
+    const bank     = this._filters().bankCode;
+    const accounts = this._availableBankAccounts();
+
+    if (bank === null) return accounts;
+    if (bank === 'none') return accounts.filter(a => a.id === 'none' || a.bankCode === null);
+    return accounts.filter(a => a.bankCode === bank);
+  });
 
   /**
    * La columna "Cuenta bancaria" solo aporta cuando la grilla mezcla cuentas. Con el filtro puesto
    * en una sola, repetiría el mismo valor en todas las filas; y si la empresa no tiene más de una
-   * cuenta en los datos, no hay nada que distinguir.
+   * cuenta en los datos, no hay nada que distinguir. Se mide sobre las cuentas VISIBLES: elegir un
+   * banco con una sola cuenta también vuelve redundante la columna.
    */
   readonly showBankAccountColumn = computed(() =>
-    this._filters().bankAccountId === null && this._availableBankAccounts().length > 1
+    this._filters().bankAccountId === null && this.visibleBankAccounts().length > 1
   );
   readonly availableMonths   = this._availableMonths.asReadonly();
   readonly availableYears    = this._availableYears.asReadonly();
@@ -104,7 +121,7 @@ export class ReconciliationService {
   );
   readonly hasActiveFilters = computed(() => {
     const f = this._filters();
-    return !!(f.search || f.month || f.year || f.account || f.bankAccountId || f.direction || f.currency || f.exactAmount || f.minAmount || f.maxAmount);
+    return !!(f.search || f.month || f.year || f.account || f.bankCode || f.bankAccountId || f.direction || f.currency || f.exactAmount || f.minAmount || f.maxAmount);
   });
   readonly eligibleIds = computed(() =>
     this._transactions()
@@ -122,7 +139,7 @@ export class ReconciliationService {
       const company = this.companyService.activeCompany();
       untracked(() => {
         this._pagination.update(p => ({ ...p, page: 1 }));
-        this._filters.update(f => ({ ...f, bankAccountId: null }));
+        this._filters.update(f => ({ ...f, bankCode: null, bankAccountId: null }));
         this.loadData();
         this.refreshAfipCount();
         // Alimenta el selector de cuenta de la Dropzone.
@@ -171,6 +188,7 @@ export class ReconciliationService {
       year:         f.year     ?? undefined,
       search:       f.search   || undefined,
       account:      f.account  || undefined,
+      bankCode:      f.bankCode      ?? undefined,
       bankAccountId: f.bankAccountId ?? undefined,
       direction:    f.direction ?? undefined,
       currency:     f.currency  ?? undefined,
@@ -197,6 +215,7 @@ export class ReconciliationService {
         this._currencyTotals.set(result.currencyTotals ?? []);
         this._availableAccounts.set(result.availableAccounts ?? []);
         this._availableBankAccounts.set(result.availableBankAccounts ?? []);
+        this._availableBanks.set(result.availableBanks ?? []);
         this._availableMonths.set(result.availableMonths ?? []);
         this._availableYears.set(result.availableYears ?? []);
         this._isLoading.set(false);
@@ -210,7 +229,21 @@ export class ReconciliationService {
   // ── Filters ────────────────────────────────────────────────────────────
   /** Updates one or more filter fields without triggering a reload. */
   setFilter(patch: Partial<ReconciliationFilters>): void {
-    this._filters.update(f => ({ ...f, ...patch }));
+    this._filters.update(f => {
+      const next = { ...f, ...patch };
+
+      // Cascada: al cambiar de banco, una cuenta ya elegida que no le pertenece dejaría la grilla
+      // vacía sin explicar por qué. Se limpia sola en vez de mostrar un cruce imposible.
+      if (patch.bankCode !== undefined && patch.bankAccountId === undefined && next.bankAccountId) {
+        const account = this._availableBankAccounts().find(a => a.id === next.bankAccountId);
+        const belongs = next.bankCode === null
+          || (next.bankCode === 'none' ? account?.bankCode == null : account?.bankCode === next.bankCode);
+
+        if (!belongs) next.bankAccountId = null;
+      }
+
+      return next;
+    });
   }
 
   /** Resets page to 1 and reloads. Call after setting filters when ready. */
@@ -226,7 +259,7 @@ export class ReconciliationService {
   }
 
   clearFilters(): void {
-    this._filters.update(f => ({ ...f, search: '', account: '', bankAccountId: null, direction: null, currency: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
+    this._filters.update(f => ({ ...f, search: '', account: '', bankCode: null, bankAccountId: null, direction: null, currency: null, month: null, year: null, strictSearch: false, exactAmount: null, minAmount: null, maxAmount: null }));
     this._pagination.update(p => ({ ...p, page: 1 }));
     this.loadData();
   }
@@ -612,6 +645,7 @@ export class ReconciliationService {
         this._currencyTotals.set([]);
         this._availableAccounts.set([]);
         this._availableBankAccounts.set([]);
+        this._availableBanks.set([]);
         this._availableMonths.set([]);
         this._availableYears.set([]);
         this.toast.success('La grilla se vacíó correctamente.');

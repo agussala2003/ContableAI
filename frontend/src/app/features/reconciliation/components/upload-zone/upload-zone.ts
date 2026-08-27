@@ -1,6 +1,6 @@
 import { Component, ElementRef, inject, input, output, signal, viewChild } from '@angular/core';
 import { LucideAngularModule } from 'lucide-angular';
-import { BankAccountService } from '../../../../core/services/bank-account.service';
+import { BankAccount, BankAccountService } from '../../../../core/services/bank-account.service';
 
 /** Valor del selector que deja decidir la cuenta al OCR. */
 export const AUTO_BANK_ACCOUNT = '';
@@ -29,6 +29,24 @@ export class UploadZone {
 
   /** Cuentas ofrecidas en el selector. El estado lo mantiene el servicio (ver refresh()). */
   readonly bankAccounts = this.bankAccountService.activeAccounts;
+
+  constructor() {
+    // El catálogo de bancos alimenta la etiqueta de cada cuenta; se pide una sola vez por sesión.
+    this.bankAccountService.loadBankCodes();
+  }
+
+  /**
+   * Etiqueta de la cuenta en el selector de destino: "Banco Santander · CC Pesos (ARS)".
+   *
+   * El banco va adelante porque con tres bancos en la misma empresa los alias se repiten —"CC
+   * Pesos" existe en todos— y elegir mal manda el extracto a la cuenta equivocada. Las cuentas sin
+   * banco cargado muestran solo el alias, sin separador huérfano.
+   */
+  accountLabel(account: BankAccount): string {
+    const bank = this.bankAccountService.bankLabel(account.bankCode);
+    const name = bank ? `${bank} · ${account.alias}` : account.alias;
+    return `${name} (${account.currency})`;
+  }
 
   selectedFiles: File[] = [];
   isDragging        = signal(false);

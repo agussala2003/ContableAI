@@ -13,18 +13,22 @@ public static class DashboardEndpoints
         app.MapGet("/api/dashboard/stats", async (
             IMediator mediator,
             Guid      companyId,
-            int?      month = null,
-            int?      year  = null) =>
+            int?      month    = null,
+            int?      year     = null,
+            string?   bankCode = null) =>
         {
-            var query  = new GetDashboardStatsQuery(companyId, month, year);
+            if (!BankCodeFilter.TryParse(bankCode, out var bank, out var noBankOnly))
+                return Results.BadRequest(new { message = "bankCode inválido." });
+
+            var query  = new GetDashboardStatsQuery(companyId, month, year, bank, noBankOnly);
             var result = await mediator.Send(query);
             return result.ToHttpResult();
         })
         .RequireAuthorization()
         .WithName("GetDashboardStats")
         .WithTags("Dashboard")
-        .WithSummary("KPIs de conciliación del mes para una empresa.")
-        .WithDescription("Retorna TotalTransactions, PendingClassification, Classified y LowConfidence para el mes/año indicado (o el mes actual si se omiten). Query params: companyId (requerido), month, year.")
+        .WithSummary("KPIs de conciliación del mes para una empresa, opcionalmente acotados a un banco.")
+        .WithDescription("Retorna TotalTransactions, PendingClassification, Classified y LowConfidence para el mes/año indicado (o el mes actual si se omiten). Query params: companyId (requerido), month, year, bankCode (código de banco | 'none' para lo que no se puede atribuir a un banco).")
         .Produces<DashboardStatsResponse>(200)
         .Produces<ProblemDetails>(401);
 

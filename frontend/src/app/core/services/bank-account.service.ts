@@ -22,6 +22,12 @@ export interface BankAccount {
   isActive: boolean;
 }
 
+/** Banco asignable a una cuenta. Lo sirve el backend desde `Domain.Constants.BankCodes`. */
+export interface BankCodeOption {
+  code: string;
+  displayName: string;
+}
+
 export interface SaveBankAccountRequest {
   alias: string;
   accountNumber?: string | null;
@@ -50,6 +56,39 @@ export class BankAccountService {
 
   /** Cuentas activas de la empresa en foco: las únicas a las que tiene sentido dirigir una carga. */
   readonly activeAccounts = computed(() => this._accounts().filter(a => a.isActive));
+
+  // ── Catálogo de bancos ─────────────────────────────────────────────────
+  // Se sirve desde el backend (`/bank-codes`) en lugar de estar escrito en el frontend. El
+  // formulario de cuentas tenía la lista hardcodeada y se le había quedado Santander afuera: no
+  // había forma de asignárselo a una cuenta, y sin banco la cuenta queda fuera de su propio filtro.
+
+  private _bankCodes = signal<BankCodeOption[]>([]);
+  private bankCodesLoaded = false;
+
+  readonly bankCodes = this._bankCodes.asReadonly();
+
+  private bankCodeLabels = computed(() =>
+    new Map(this._bankCodes().map(b => [b.code, b.displayName]))
+  );
+
+  /** Carga el catálogo una sola vez por sesión: es una constante del sistema, no cambia. */
+  loadBankCodes(): void {
+    if (this.bankCodesLoaded) return;
+    this.bankCodesLoaded = true;
+
+    this.http.get<BankCodeOption[]>(`${this.apiBase}/bank-codes`).subscribe({
+      next: list => this._bankCodes.set(list),
+      // Sin catálogo el selector queda vacío, pero el resto de la pantalla sigue funcionando:
+      // el banco es opcional en una cuenta.
+      error: () => { this.bankCodesLoaded = false; },
+    });
+  }
+
+  /** Nombre del banco para mostrar. Cae al código crudo antes que a una cadena vacía. */
+  bankLabel(code: string | null | undefined): string {
+    if (!code) return '';
+    return this.bankCodeLabels().get(code) ?? code;
+  }
 
   /** (Re)carga el estado compartido. Llamar al cambiar de empresa y tras cada alta/baja. */
   refresh(companyId: string | null | undefined): void {

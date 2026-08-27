@@ -111,13 +111,17 @@ public static class JournalEntriesEndpoints
             [FromQuery] int?      month,
             [FromQuery] int?      year,
             [FromQuery] string?   currency,
-            [FromQuery] string?   bankAccountId = null) =>
+            [FromQuery] string?   bankAccountId = null,
+            [FromQuery] string?   bankCode      = null) =>
         {
             if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
                 return Results.BadRequest(new { message = "currency inválida. Valores soportados: ARS, USD." });
 
             if (!BankAccountFilter.TryParse(bankAccountId, out var baId, out var unassignedOnly))
                 return Results.BadRequest(new { message = "bankAccountId inválido." });
+
+            if (!BankCodeFilter.TryParse(bankCode, out var bank, out var noBankOnly))
+                return Results.BadRequest(new { message = "bankCode inválido." });
 
             var studioCompanyIds = await dbContext.Companies
                 .Where(c => c.StudioTenantId == currentTenant.StudioTenantId && c.IsActive)
@@ -133,12 +137,30 @@ public static class JournalEntriesEndpoints
             if (!string.IsNullOrWhiteSpace(currency))
                 query = query.Where(j => j.Currency == currency);
 
-            // Las opciones del dropdown salen del alcance SIN el filtro de cuenta aplicado: si no,
-            // al elegir una cuenta el resto desaparecería del selector y no habría cómo volver.
+            // Las opciones de los dropdowns salen del alcance SIN los filtros de banco y cuenta
+            // aplicados: si no, al elegir uno el resto desaparecería del selector y no habría cómo
+            // volver. La cascada Banco → Cuenta la resuelve el frontend en memoria, con el bankCode
+            // que viaja en cada cuenta.
             var usedBankAccountIds = await query
                 .Select(j => j.BankAccountId)
                 .Distinct()
                 .ToListAsync();
+
+            var availableBankAccounts = await BankAccountFilter.BuildAsync(dbContext, usedBankAccountIds);
+            var availableBanks        = BankCodeFilter.From(availableBankAccounts);
+
+            // Banco antes que cuenta: es el filtro más grueso y deja menos filas para el siguiente.
+            if (noBankOnly)
+            {
+                // "Sin banco" abarca los asientos sin cuenta Y los de cuentas sin banco cargado.
+                var idsWithoutBank = BankCodeFilter.AccountIdsFor(availableBankAccounts, null);
+                query = query.Where(j => !j.BankAccountId.HasValue || idsWithoutBank.Contains(j.BankAccountId.Value));
+            }
+            else if (bank is not null)
+            {
+                var idsForBank = BankCodeFilter.AccountIdsFor(availableBankAccounts, bank);
+                query = query.Where(j => j.BankAccountId.HasValue && idsForBank.Contains(j.BankAccountId.Value));
+            }
 
             if (unassignedOnly)     query = query.Where(j => j.BankAccountId == null);
             else if (baId.HasValue) query = query.Where(j => j.BankAccountId == baId.Value);
@@ -172,14 +194,17 @@ public static class JournalEntriesEndpoints
                 })
                 .ToListAsync();
 
-            var availableBankAccounts = await BankAccountFilter.BuildAsync(dbContext, usedBankAccountIds);
-
-            return Results.Ok(new { Entries = entries, AvailableBankAccounts = availableBankAccounts });
+            return Results.Ok(new
+            {
+                Entries               = entries,
+                AvailableBankAccounts = availableBankAccounts,
+                AvailableBanks        = availableBanks,
+            });
         })
         .WithName("GetJournalEntries")
         .WithTags("Libro Diario")
-        .WithSummary("Listar asientos del estudio, filtrable por empresa, período, moneda y cuenta bancaria.")
-        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD), bankAccountId (guid | 'none' para los asientos sin cuenta). Devuelve { entries, availableBankAccounts }: cada asiento con su moneda, su cuenta bancaria y sus líneas (account, amount, isDebit).")
+        .WithSummary("Listar asientos del estudio, filtrable por empresa, período, moneda, banco y cuenta bancaria.")
+        .WithDescription("Query params: companyId (guid), month (int), year (int), currency (ARS|USD), bankCode (código de banco | 'none' para lo que no se puede atribuir a un banco), bankAccountId (guid | 'none' para los asientos sin cuenta). Devuelve { entries, availableBankAccounts, availableBanks }: cada asiento con su moneda, su cuenta bancaria y sus líneas (account, amount, isDebit); cada cuenta disponible incluye su bankCode para armar la cascada Banco → Cuenta.")
         .Produces(200)
         .Produces(400);
 
@@ -377,13 +402,17 @@ public static class JournalEntriesEndpoints
             [FromQuery] string? account,
             [FromQuery] string? currency,
             [FromQuery] string? entryIds,
-            [FromQuery] string? bankAccountId = null) =>
+            [FromQuery] string? bankAccountId = null,
+            [FromQuery] string? bankCode      = null) =>
         {
             if (!string.IsNullOrWhiteSpace(currency) && !Currencies.IsSupported(currency))
                 return Results.BadRequest("currency inválida. Valores soportados: ARS, USD.");
 
             if (!BankAccountFilter.TryParse(bankAccountId, out var expBaId, out var expUnassigned))
                 return Results.BadRequest("bankAccountId inválido.");
+
+            if (!BankCodeFilter.TryParse(bankCode, out var expBank, out var expNoBank))
+                return Results.BadRequest("bankCode inválido.");
 
             string companyName = "Empresa";
             if (!string.IsNullOrWhiteSpace(companyId) && Guid.TryParse(companyId, out var cGuid))
@@ -429,6 +458,26 @@ public static class JournalEntriesEndpoints
 
             if (!string.IsNullOrWhiteSpace(currency))
                 query = query.Where(j => j.Currency == currency);
+
+            // El export tiene que salir con el MISMO alcance que la pantalla: si la vista está
+            // filtrada por banco, el Excel también. Acá las cuentas no están materializadas (no se
+            // arman dropdowns), así que se resuelven con una consulta acotada a la empresa.
+            if (expNoBank || expBank is not null)
+            {
+                var scopedAccounts = await dbContext.BankAccounts.AsNoTracking()
+                    .Where(a => studioCompanyIds.Contains(a.CompanyId))
+                    .Select(a => new { a.Id, a.BankCode })
+                    .ToListAsync();
+
+                var expIds = scopedAccounts
+                    .Where(a => string.Equals(a.BankCode, expNoBank ? null : expBank, StringComparison.OrdinalIgnoreCase))
+                    .Select(a => a.Id)
+                    .ToList();
+
+                query = expNoBank
+                    ? query.Where(j => !j.BankAccountId.HasValue || expIds.Contains(j.BankAccountId.Value))
+                    : query.Where(j => j.BankAccountId.HasValue && expIds.Contains(j.BankAccountId.Value));
+            }
 
             if (expUnassigned)         query = query.Where(j => j.BankAccountId == null);
             else if (expBaId.HasValue) query = query.Where(j => j.BankAccountId == expBaId.Value);

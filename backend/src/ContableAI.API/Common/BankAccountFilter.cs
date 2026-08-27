@@ -20,8 +20,14 @@ public static class BankAccountFilter
     /// <summary>Etiqueta del bucket sin cuenta. La define el backend para que las dos grillas coincidan.</summary>
     public const string UnassignedLabel = "Sin cuenta asignada";
 
-    /// <summary>Ítem del dropdown. <c>Id</c> es un GUID en texto, o <see cref="Unassigned"/>.</summary>
-    public sealed record Item(string Id, string Alias, string Currency);
+    /// <summary>
+    /// Ítem del dropdown. <c>Id</c> es un GUID en texto, o <see cref="Unassigned"/>.
+    ///
+    /// <c>BankCode</c> viaja en cada cuenta para que el frontend arme la cascada Banco → Cuenta sin
+    /// una segunda request: al elegir un banco, filtra en memoria las cuentas que le pertenecen.
+    /// Es <c>null</c> en las cuentas que todavía no lo tienen cargado y en el bucket sin cuenta.
+    /// </summary>
+    public sealed record Item(string Id, string Alias, string Currency, string? BankCode);
 
     /// <summary>
     /// Traduce el parámetro a un predicado. Devuelve <c>false</c> si el valor no es interpretable,
@@ -63,7 +69,7 @@ public static class BankAccountFilter
             ? []
             : await db.BankAccounts.AsNoTracking()
                 .Where(a => ids.Contains(a.Id))
-                .Select(a => new Item(a.Id.ToString(), a.Alias, a.Currency))
+                .Select(a => new Item(a.Id.ToString(), a.Alias, a.Currency, a.BankCode))
                 .ToListAsync(ct);
 
         var items = accounts.OrderBy(a => a.Alias, StringComparer.OrdinalIgnoreCase).ToList();
@@ -71,7 +77,7 @@ public static class BankAccountFilter
         // El bucket sin cuenta va primero: son los movimientos que no pueden asentarse y que el
         // contador tiene que resolver.
         if (usedIds.Any(x => !x.HasValue))
-            items.Insert(0, new Item(Unassigned, UnassignedLabel, string.Empty));
+            items.Insert(0, new Item(Unassigned, UnassignedLabel, string.Empty, null));
 
         return items;
     }

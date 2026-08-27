@@ -40,7 +40,8 @@ export class BankAccountsPanel {
   formOpen   = signal(false);
 
   readonly currencies: Currency[] = ['ARS', 'USD'];
-  readonly bankCodes = ['BBVA', 'GALICIA', 'CREDICOOP', 'MERCADOPAGO', 'CIUDAD'];
+  /** Catálogo servido por el backend. Antes estaba hardcodeado acá y le faltaba Santander. */
+  readonly bankCodes = this.bankAccountService.bankCodes;
 
   form = this.fb.group({
     alias:             ['', [Validators.required, Validators.maxLength(120)]],
@@ -52,6 +53,8 @@ export class BankAccountsPanel {
   });
 
   constructor() {
+    this.bankAccountService.loadBankCodes();
+
     effect(() => {
       const id = this.companyId();
       if (id) this.load(id);

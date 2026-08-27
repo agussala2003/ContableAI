@@ -150,6 +150,7 @@ public static class TransactionEndpoints
             [FromQuery] string?  sortBy,
             [FromQuery] string?  sortDir,
             [FromQuery] string?  bankAccountId = null,
+            [FromQuery] string?  bankCode      = null,
             [FromQuery] bool     strictSearch = false,
             [FromQuery] int?     type        = null,
             [FromQuery] decimal? exactAmount = null,
@@ -180,6 +181,33 @@ public static class TransactionEndpoints
             // poder asentarlos.
             if (!BankAccountFilter.TryParse(bankAccountId, out var baId, out var unassignedOnly))
                 return Results.BadRequest(new { message = "bankAccountId inválido." });
+
+            if (!BankCodeFilter.TryParse(bankCode, out var bank, out var noBankOnly))
+                return Results.BadRequest(new { message = "bankCode inválido." });
+
+            // Filtro por BANCO (Fase C), un nivel por encima de la cuenta. Se resuelve por las
+            // cuentas de ese banco en vez de desnormalizar el código en cada movimiento: el banco
+            // de una cuenta es editable, y una copia por movimiento quedaría mintiendo al primer
+            // cambio. El predicado termina siendo un IN sobre BankAccountId, la columna que ya
+            // indexa IX_BankTransactions_BankAccountId_Date.
+            if (noBankOnly || bank is not null)
+            {
+                var scopedAccounts = await dbContext.BankAccounts.AsNoTracking()
+                    .Where(a => studioCompanyIds.Contains(a.CompanyId))
+                    .Select(a => new { a.Id, a.BankCode })
+                    .ToListAsync();
+
+                var bankAccountIds = scopedAccounts
+                    .Where(a => string.Equals(a.BankCode, noBankOnly ? null : bank, StringComparison.OrdinalIgnoreCase))
+                    .Select(a => a.Id)
+                    .ToList();
+
+                // "Sin banco" incluye los movimientos sin cuenta: si no, quedarían fuera de todos
+                // los buckets del dropdown y el contador los perdería de vista.
+                query = noBankOnly
+                    ? query.Where(t => !t.BankAccountId.HasValue || bankAccountIds.Contains(t.BankAccountId.Value))
+                    : query.Where(t => t.BankAccountId.HasValue && bankAccountIds.Contains(t.BankAccountId.Value));
+            }
 
             if (unassignedOnly)      query = query.Where(t => t.BankAccountId == null);
             else if (baId.HasValue)  query = query.Where(t => t.BankAccountId == baId.Value);
@@ -292,6 +320,7 @@ public static class TransactionEndpoints
                 .ToListAsync();
 
             var availableBankAccounts = await BankAccountFilter.BuildAsync(dbContext, usedBankAccountIds);
+            var availableBanks        = BankCodeFilter.From(availableBankAccounts);
 
             pageSize = Math.Clamp(pageSize, 1, 500);
             page     = Math.Max(1, page);
@@ -368,6 +397,7 @@ public static class TransactionEndpoints
                 AvailableMonths       = availableMonths,
                 AvailableYears        = availableYears,
                 AvailableBankAccounts = availableBankAccounts,
+                AvailableBanks        = availableBanks,
             });
         })
         .WithName("GetTransactions")

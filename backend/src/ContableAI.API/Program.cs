@@ -179,6 +179,20 @@ app.MapGet("/api/banks", (BankParserFactory factory) =>
    .AllowAnonymous()
    .WithName("GetAvailableBanks");
 
+// Catálogo de bancos asignables a una cuenta bancaria. NO es el mismo conjunto que /api/banks:
+// ese lista los formatos que el factory sabe leer (incluye el pseudo-banco "PDF" y bancos con
+// parser CSV pero sin soporte de extracto PDF). Este es el que valida BankCodes.IsSupported, o
+// sea el único que el alta de cuentas acepta y por el que se puede filtrar.
+// El formulario de cuentas lo tenía hardcodeado y se le había quedado Santander afuera: con la
+// lista servida desde el catálogo, agregar un banco es un solo cambio en el dominio.
+app.MapGet("/api/bank-codes", () =>
+    Results.Ok(ContableAI.Domain.Constants.BankCodes.All
+        .Select(code => new { code, displayName = ContableAI.Domain.Constants.BankCodes.DisplayName(code) })))
+   .RequireAuthorization()
+   .WithName("GetAssignableBankCodes")
+   .WithTags("Cuentas bancarias")
+   .WithSummary("Bancos que se pueden asignar a una cuenta bancaria y usar como filtro.");
+
 // Banner de "listo para operar" — se imprime una sola vez cuando el servidor ya
 // está escuchando y puede aceptar requests (IHostApplicationLifetime.ApplicationStarted).
 app.Lifetime.ApplicationStarted.Register(() =>

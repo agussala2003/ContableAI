@@ -3,7 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { JournalEntryService, JournalEntry, JournalEntryLine } from '../../../../core/services/journal-entry.service';
-import { BankAccountOption } from '../../../../core/services/transaction';
+import { BankAccountOption, BankOption } from '../../../../core/services/transaction';
 import { CompanyService } from '../../../../core/services/company.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.service';
@@ -20,6 +20,8 @@ export interface AccountGroup {
   account: string;
   /** Alias de la cuenta bancaria cuando el Mayor está desagregado por cuenta; null si no. */
   bankAccountAlias: string | null;
+  /** Banco de esa cuenta cuando el Mayor mezcla varios bancos; null si no. */
+  bankLabel: string | null;
   /** Lado del grupo. Es la fuente de verdad del lado, no `debit > 0` (un grupo puede sumar 0). */
   isDebit: boolean;
   debit: number;
@@ -77,22 +79,57 @@ export class JournalPage {
   searchAccount     = signal('');
   /** Filtro por moneda (ARS/USD, null = todas). Se filtra server-side (query param `currency`). */
   selectedCurrency  = signal<string | null>(null);
+  /** Filtro por banco (código, 'none' = sin banco, null = todos). Server-side, nivel más grueso. */
+  selectedBank        = signal<string | null>(null);
   /** Filtro por cuenta bancaria (GUID, 'none' = sin cuenta, null = todas). También server-side. */
   selectedBankAccount = signal<string | null>(null);
 
   /** Cuentas bancarias presentes en los asientos del alcance actual (las provee el backend). */
   availableBankAccounts = signal<BankAccountOption[]>([]);
+  /** Bancos presentes en ese mismo alcance. */
+  availableBanks        = signal<BankOption[]>([]);
+
+  /**
+   * Cascada Banco → Cuenta: el selector de cuentas ofrece solo las del banco elegido. El backend
+   * manda SIEMPRE todas las cuentas del alcance (sin aplicar el filtro de banco) justamente para
+   * que este recorte se haga acá, en memoria: cambiar de banco no dispara una request.
+   */
+  visibleBankAccounts = computed(() => {
+    const bank     = this.selectedBank();
+    const accounts = this.availableBankAccounts();
+
+    if (bank === null) return accounts;
+
+    // "Sin banco" agrupa las cuentas sin banco cargado y el bucket de asientos sin cuenta.
+    if (bank === 'none') return accounts.filter(a => a.id === 'none' || a.bankCode === null);
+
+    return accounts.filter(a => a.bankCode === bank);
+  });
 
   /**
    * La columna y la desagregación por cuenta bancaria solo aportan cuando la vista mezcla cuentas.
-   * Con el filtro puesto en una, repetirían el mismo valor en cada fila.
+   * Con el filtro puesto en una, repetirían el mismo valor en cada fila. Se mide sobre las cuentas
+   * VISIBLES: elegir un banco que tiene una sola cuenta también vuelve redundante la columna.
    */
   showBankAccountColumn = computed(() =>
-    this.selectedBankAccount() === null && this.availableBankAccounts().length > 1
+    this.selectedBankAccount() === null && this.visibleBankAccounts().length > 1
+  );
+
+  /** Ídem para el banco: solo aporta mientras la vista mezcle más de uno. */
+  showBankColumn = computed(() =>
+    this.selectedBank() === null && this.availableBanks().length > 1
   );
 
   private bankAccountAliases = computed(() =>
     new Map(this.availableBankAccounts().map(a => [a.id, a.alias]))
+  );
+
+  private bankLabels = computed(() =>
+    new Map(this.availableBanks().map(b => [b.code, b.label]))
+  );
+
+  private accountBankCodes = computed(() =>
+    new Map(this.availableBankAccounts().map(a => [a.id, a.bankCode]))
   );
 
   /**
@@ -108,6 +145,13 @@ export class JournalPage {
   bankAccountLabel(bankAccountId: string | null): string {
     if (!bankAccountId) return 'Sin cuenta asignada';
     return this.bankAccountAliases().get(bankAccountId) ?? 'Cuenta desconocida';
+  }
+
+  /** Banco de la cuenta de un asiento. "Sin banco" cubre las cuentas sin banco y los sin cuenta. */
+  bankLabel(bankAccountId: string | null): string {
+    const code = bankAccountId ? this.accountBankCodes().get(bankAccountId) ?? null : null;
+    if (!code) return 'Sin banco';
+    return this.bankLabels().get(code) ?? code;
   }
 
   readonly months = [
@@ -185,6 +229,10 @@ export class JournalPage {
     // Bancarios") recibe importes de todas ellas. Consolidarlas en una sola fila daría un saldo que
     // no se corresponde con ningún extracto y volvería imposible cuadrar el Mayor contra el banco.
     const splitByBankAccount = this.showBankAccountColumn();
+    // Nivel superior de la jerarquía Banco → Cuenta → Cuenta contable. No necesita entrar en la
+    // clave del grupo: el banco se deduce de la cuenta bancaria, así que dos grupos con la misma
+    // cuenta siempre caen en el mismo banco. Solo cambia la etiqueta y el orden.
+    const splitByBank = this.showBankColumn();
 
     for (const entry of this.filteredEntries()) {
       for (const line of entry.lines) {
@@ -200,6 +248,7 @@ export class JournalPage {
             key,
             account,
             bankAccountAlias: splitByBankAccount ? this.bankAccountLabel(entry.bankAccountId) : null,
+            bankLabel: splitByBank ? this.bankLabel(entry.bankAccountId) : null,
             isDebit: line.isDebit,
             debit: 0,
             credit: 0,
@@ -242,6 +291,10 @@ export class JournalPage {
     }
 
     return groups.sort((a, b) => {
+      // Jerarquía Banco → Cuenta → Cuenta contable. El banco primero: es como el cliente lee el
+      // balance cuando tiene tres bancos en la misma empresa.
+      if (splitByBank && a.bankLabel !== b.bankLabel)
+        return (a.bankLabel ?? '').localeCompare(b.bankLabel ?? '');
       // Desagregado: cada cuenta bancaria forma un bloque, para poder cuadrarlo contra su extracto.
       if (splitByBankAccount && a.bankAccountAlias !== b.bankAccountAlias)
         return (a.bankAccountAlias ?? '').localeCompare(b.bankAccountAlias ?? '');
@@ -281,6 +334,7 @@ export class JournalPage {
     this.selectedMonth()              !== null ||
     this.selectedYear()               !== null ||
     this.selectedCurrency()           !== null ||
+    this.selectedBank()               !== null ||
     this.selectedBankAccount()        !== null
   );
 
@@ -289,13 +343,28 @@ export class JournalPage {
     // una cuenta ajena y devolvería un Mayor vacío sin explicar por qué.
     effect(() => {
       this.companyService.activeCompany()?.id;
-      untracked(() => this.selectedBankAccount.set(null));
+      untracked(() => {
+        this.selectedBank.set(null);
+        this.selectedBankAccount.set(null);
+      });
+    });
+
+    // Cascada: al cambiar de banco, una cuenta ya elegida que no le pertenece dejaría la vista
+    // vacía sin explicar por qué. Se limpia sola en vez de mostrar un cruce imposible.
+    effect(() => {
+      const visible = this.visibleBankAccounts();
+      untracked(() => {
+        const selected = this.selectedBankAccount();
+        if (selected && !visible.some(a => a.id === selected))
+          this.selectedBankAccount.set(null);
+      });
     });
 
     // Recarga cuando cambia la empresa activa o el filtro de moneda (ambos son server-side).
     effect(() => {
       const company = this.companyService.activeCompany();
       this.selectedCurrency();
+      this.selectedBank();
       this.selectedBankAccount();
       if (!company?.id) {
         this.entries.set([]);
@@ -320,6 +389,7 @@ export class JournalPage {
     this.selectedMonth.set(null);
     this.selectedYear.set(null);
     this.selectedCurrency.set(null);
+    this.selectedBank.set(null);
     this.selectedBankAccount.set(null);
   }
 
@@ -364,6 +434,7 @@ export class JournalPage {
     this.journalService.getEntries({
       companyId,
       currency: this.selectedCurrency() ?? undefined,
+      bankCode:      this.selectedBank() ?? undefined,
       bankAccountId: this.selectedBankAccount() ?? undefined,
     }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: res => {
@@ -373,6 +444,7 @@ export class JournalPage {
           lines: [...e.lines].sort((a, b) => (b.isDebit ? 1 : 0) - (a.isDebit ? 1 : 0)),
         })));
         this.availableBankAccounts.set(res.availableBankAccounts ?? []);
+        this.availableBanks.set(res.availableBanks ?? []);
         this.isLoading.set(false);
       },
       error: () => {
