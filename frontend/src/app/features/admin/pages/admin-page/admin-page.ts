@@ -1,5 +1,5 @@
-import { Component, inject, signal, DestroyRef } from '@angular/core';
-import { DecimalPipe, DatePipe } from '@angular/common';
+import { Component, inject, signal, computed, DestroyRef } from '@angular/core';
+import { DecimalPipe, DatePipe, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -10,7 +10,7 @@ import { ConfirmDialogService } from '../../../../core/services/confirm-dialog.s
 @Component({
   selector: 'app-admin-page',
   standalone: true,
-  imports: [DecimalPipe, DatePipe, LucideAngularModule, FormsModule],
+  imports: [DecimalPipe, DatePipe, NgClass, LucideAngularModule, FormsModule],
   templateUrl: './admin-page.html',
 })
 export class AdminPage {
@@ -28,6 +28,66 @@ export class AdminPage {
   actionInProgress = signal<string | null>(null);
 
   readonly plans = ['Free', 'Pro', 'Enterprise'];
+
+  // ── Carga de saldo prepago ──────────────────────────────────────────────
+  // El saldo pertenece al ESTUDIO (StudioTenantId), no al usuario. La fila desde la que se abre
+  // el modal solo sirve para identificar el estudio: acreditar desde cualquier usuario del mismo
+  // estudio tiene idéntico efecto, y el modal lo dice para que no parezca un error.
+
+  /** Packs comerciales vigentes. Precargados para no tipear el número más usado. */
+  readonly packs = [
+    { amount: 20,  label: 'Básico'  },
+    { amount: 50,  label: 'Estudio' },
+    { amount: 150, label: 'Volumen' },
+  ];
+
+  topUpTarget    = signal<AdminUserRow | null>(null);
+  topUpAmount    = signal(50);
+  topUpReference = signal('');
+  isToppingUp    = signal(false);
+
+  /** Sin comprobante no hay idempotencia, así que el botón no se habilita. */
+  canConfirmTopUp = computed(() =>
+    this.topUpAmount() > 0 && this.topUpReference().trim().length > 0
+  );
+
+  openTopUp(user: AdminUserRow): void {
+    this.topUpTarget.set(user);
+    this.topUpAmount.set(50);
+    this.topUpReference.set('');
+  }
+
+  closeTopUp(): void {
+    if (this.isToppingUp()) return;
+    this.topUpTarget.set(null);
+  }
+
+  confirmTopUp(): void {
+    const target = this.topUpTarget();
+    if (!target || !this.canConfirmTopUp()) return;
+
+    this.isToppingUp.set(true);
+    this.adminService
+      .topUpQuota(target.studioTenantId, this.topUpAmount(), this.topUpReference().trim())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: res => {
+          this.isToppingUp.set(false);
+          this.topUpTarget.set(null);
+
+          // `applied: false` NO es un error: es el comprobante repetido. Se avisa distinto para
+          // que el admin no crea que acreditó dos packs cuando en realidad acreditó uno.
+          if (res.applied) this.toast.success(res.message);
+          else             this.toast.warning(res.message);
+
+          this.reload();
+        },
+        error: err => {
+          this.isToppingUp.set(false);
+          this.toast.error(err?.error?.message ?? 'No se pudo acreditar el saldo.');
+        },
+      });
+  }
 
   readonly statusLabel: Record<number, string> = { 0: 'Pendiente', 1: 'Activo', 2: 'Suspendido' };
   readonly statusClass: Record<number, string> = {

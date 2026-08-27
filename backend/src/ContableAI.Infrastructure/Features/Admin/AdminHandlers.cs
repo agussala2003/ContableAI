@@ -63,6 +63,23 @@ public sealed class GetAdminUsersHandler : IRequestHandler<GetAdminUsersQuery, R
                 g => g.Sum(x => monthlyTxByCompany.GetValueOrDefault(x.Id, 0))
             );
 
+        // Saldo prepago de TODOS los estudios en una sola consulta agrupada. Pedirlo por fila
+        // sería un N+1 contra el ledger, que es la tabla que más rápido crece del sistema.
+        var ledgerByTenant = await _db.UsageEvents
+            .AsNoTracking()
+            .Where(e => tenantIds.Contains(e.StudioTenantId))
+            .GroupBy(e => new { e.StudioTenantId, e.Type })
+            .Select(g => new { g.Key.StudioTenantId, g.Key.Type, Total = g.Sum(e => (int?)e.Quantity) ?? 0 })
+            .ToListAsync(ct);
+
+        var balanceByTenant = ledgerByTenant
+            .GroupBy(x => x.StudioTenantId)
+            .ToDictionary(
+                g => g.Key,
+                // Saldo = cargas − consumos. Los consumos se guardan con cantidad positiva.
+                g => g.Where(x => x.Type == UsageEventType.StatementQuotaTopUp).Sum(x => x.Total)
+                   - g.Where(x => x.Type == UsageEventType.StatementProcessed).Sum(x => x.Total));
+
         var rows = users.Select(u =>
         {
             var limits = QuotaLimits.ForPlan(u.Plan);
@@ -78,7 +95,8 @@ public sealed class GetAdminUsersHandler : IRequestHandler<GetAdminUsersQuery, R
                 companiesByTenant.GetValueOrDefault(u.StudioTenantId, 0),
                 limits.MaxCompanies,
                 monthlyTxByTenant.GetValueOrDefault(u.StudioTenantId, 0),
-                limits.MaxMonthlyTransactions
+                limits.MaxMonthlyTransactions,
+                balanceByTenant.GetValueOrDefault(u.StudioTenantId, 0)
             );
         }).ToList();
 

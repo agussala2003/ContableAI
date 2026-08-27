@@ -17,7 +17,13 @@ public record AdminUserRowResponse(
     int CompaniesCount,
     int MaxCompanies,
     int MonthlyTxUsed,
-    int MaxMonthlyTransactions
+    int MaxMonthlyTransactions,
+    /// <summary>
+    /// Saldo prepago de extractos del ESTUDIO, no del usuario. Dos usuarios del mismo estudio
+    /// muestran el mismo número y comparten la misma bolsa: acreditar desde cualquiera de las dos
+    /// filas tiene el mismo efecto. La UI lo aclara para que no parezca un error de datos.
+    /// </summary>
+    int StatementBalance
 );
 
 public record AdminStatsResponse(
