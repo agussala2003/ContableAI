@@ -84,6 +84,9 @@ public class UploadBankStatementHandlerTests
             new FakeBankParser(parsed, detectedAccountNumber, detectedCbu, conflictingIdentifiers),
             new ClassificationService(new HardRuleStrategy()), // motor de reglas real
             new FakeQuota(canUpload),
+            // Servicio de consumo REAL: el ledger se escribe de verdad en estos tests, así que
+            // cualquier excepción del camino de medición rompe el test en vez de pasar inadvertida.
+            new UsageService(db, NullLogger<UsageService>.Instance),
             new FakeJobClient(),
             NullLogger<UploadBankStatementHandler>.Instance);
 

@@ -11,7 +11,20 @@
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="FluentAssertions" Version="7.2.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.2" />
+    <!--
+      SQLite (en memoria) además de InMemory: InMemory NO aplica índices únicos ni restricciones,
+      así que los tests del ledger de facturación pasarían en verde sin probar nada. Ver
+      Infrastructure/SqliteTestDb.cs.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <!--
+      Fijado por seguridad, NO por necesidad funcional: EFCore.Sqlite 9.0.2 arrastra
+      SQLitePCLRaw 2.1.10, que tiene una vulnerabilidad de severidad alta (GHSA-2m69-gcr7-jv3q,
+      sin corregir hasta 2.1.12). Esta referencia explícita sube la resolución a una versión sana.
+      No quitarla al actualizar EF Core sin verificar antes que la transitiva ya no sea vulnerable.
+    -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <!-- Permite marcar tests como "Skipped" (no "Passed") cuando faltan los PDFs de prueba. -->
@@ -25,10 +38,7 @@
     coloca los suyos anonimizados. Ver backend/tests/TestData/README.md.
   -->
   <ItemGroup>
-    <None Include="..\TestData\**\*"
-          Exclude="..\TestData\**\*.md"
-          Link="TestData\%(RecursiveDir)%(Filename)%(Extension)"
-          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\TestData\**\*" Exclude="..\TestData\**\*.md" Link="TestData\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

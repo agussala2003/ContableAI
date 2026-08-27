@@ -147,6 +147,7 @@ app.MapJournalEntriesEndpoints();
 app.MapAuditEndpoints();
 app.MapPeriodEndpoints();
 app.MapDashboardEndpoints();
+app.MapUsageEndpoints();
 app.MapJobsEndpoints();
 
 // A-2: dashboard de Hangfire protegido — requiere JWT válido con rol SystemAdmin.

@@ -55,6 +55,7 @@ public class ContableAIDbContext : DbContext
     public DbSet<RefreshToken>     RefreshTokens     { get; set; }
     public DbSet<StagedUploadFile> StagedUploadFiles { get; set; }
     public DbSet<UploadJobResult>  UploadJobResults  { get; set; }
+    public DbSet<UsageEvent>       UsageEvents       { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -309,6 +310,47 @@ public class ContableAIDbContext : DbContext
 
         modelBuilder.Entity<UploadJobResult>()
             .HasIndex(r => r.StudioTenantId);
+
+        // ==========================================
+        // UsageEvent — ledger de facturación (append-only)
+        // ==========================================
+
+        // LA garantía de no cobrar dos veces el mismo extracto. Vive en la base y no en el código
+        // a propósito: un "¿ya existe?" en C# tiene una ventana de carrera entre el SELECT y el
+        // INSERT, y el pipeline de subida corre en jobs de Hangfire que pueden solaparse.
+        // El tipo entra en la clave porque la misma identidad puede consumirse de formas distintas
+        // (el hash de un extracto hoy factura su procesamiento; mañana podría facturar otra cosa).
+        modelBuilder.Entity<UsageEvent>()
+            .HasIndex(u => new { u.StudioTenantId, u.Type, u.IdempotencyKey })
+            .IsUnique()
+            .HasDatabaseName("UX_UsageEvents_Tenant_Type_IdempotencyKey");
+
+        // Consulta de consumo del período: se filtra siempre por estudio + PeriodKey.
+        modelBuilder.Entity<UsageEvent>()
+            .HasIndex(u => new { u.StudioTenantId, u.PeriodKey })
+            .HasDatabaseName("IX_UsageEvents_Tenant_PeriodKey");
+
+        modelBuilder.Entity<UsageEvent>()
+            .Property(u => u.StudioTenantId)
+            .IsRequired()
+            .HasMaxLength(120);
+
+        // El SHA-256 en hexadecimal ocupa 64 caracteres; el margen deja lugar a otras identidades
+        // (un GUID de movimiento, por ejemplo) sin migrar la columna.
+        modelBuilder.Entity<UsageEvent>()
+            .Property(u => u.IdempotencyKey)
+            .IsRequired()
+            .HasMaxLength(200);
+
+        modelBuilder.Entity<UsageEvent>()
+            .Property(u => u.PeriodKey)
+            .IsRequired()
+            .HasMaxLength(7); // "YYYY-MM"
+
+        // Sin Global Query Filter, y es deliberado: el filtro por tenant se aplica explícitamente en
+        // cada consulta de consumo. Un ledger de facturación tiene que poder leerse completo para
+        // conciliar y auditar; que un filtro implícito esconda eventos sería el peor lugar posible
+        // para una sorpresa.
 
         // Búsqueda sin distinción de tildes — P-3: mapea a f_unaccent(), el wrapper IMMUTABLE
         // de unaccent() creado en la migración AddTrigramSearchIndex. Tiene que ser la MISMA

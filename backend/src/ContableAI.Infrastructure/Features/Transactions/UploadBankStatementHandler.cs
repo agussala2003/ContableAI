@@ -49,6 +49,7 @@ public sealed class UploadBankStatementHandler
     private readonly IBankParserService     _parser;
     private readonly IClassificationService _classifier;
     private readonly IQuotaService          _quota;
+    private readonly IUsageService          _usage;
     private readonly IBackgroundJobClient   _jobs;
     private readonly ILogger<UploadBankStatementHandler> _logger;
 
@@ -57,6 +58,7 @@ public sealed class UploadBankStatementHandler
         IBankParserService     parser,
         IClassificationService classifier,
         IQuotaService          quota,
+        IUsageService          usage,
         IBackgroundJobClient   jobs,
         ILogger<UploadBankStatementHandler> logger)
     {
@@ -64,6 +66,7 @@ public sealed class UploadBankStatementHandler
         _parser     = parser;
         _classifier = classifier;
         _quota      = quota;
+        _usage      = usage;
         _jobs       = jobs;
         _logger     = logger;
     }
@@ -138,6 +141,12 @@ public sealed class UploadBankStatementHandler
             var outcome = await ClassifyFilesAsync(command, company, allParsed, budget, rules, unionCandidates, ct);
 
             await PersistAsync(outcome, ct);
+
+            // El ledger se escribe DESPUÉS de persistir los movimientos, nunca antes ni en la misma
+            // transacción: si algo falla midiendo el consumo, el trabajo del contador ya está a
+            // salvo. Cobrar de menos se corrige; perder un extracto procesado, no.
+            await TrackUsageAsync(command, company, allParsed, ct);
+
             EnqueueAfipMatchingIfNeeded(company, outcome);
 
             _logger.LogInformation(
@@ -624,6 +633,56 @@ public sealed class UploadBankStatementHandler
 
         return new ClassificationOutcome(
             allClassified, perFileResults, allSkippedDuplicates, totalDuplicates, totalReapplied);
+    }
+
+    /// <summary>
+    /// Registra en el ledger de facturación un evento por cada extracto procesado.
+    ///
+    /// Qué se cobra y qué no:
+    ///   · Se cobra el archivo que se pudo parsear y produjo al menos un movimiento.
+    ///   · NO se cobran los errores de parseo ni los archivos que no se pudieron enrutar a una
+    ///     cuenta: nunca llegan a <paramref name="parsedFiles"/>, salen del lote con su error.
+    ///   · NO se cobra el archivo que parseó cero movimientos (un extracto sin actividad en el
+    ///     período): el usuario no obtuvo nada.
+    ///   · Un archivo cuyos movimientos son TODOS duplicados sí se cobra: el parseo y el OCR —el
+    ///     costo real— se hicieron igual. Resubir el MISMO archivo no cobra de nuevo, pero eso lo
+    ///     garantiza el hash, no esta condición.
+    ///
+    /// La idempotencia es por contenido, no por nombre: el hash se calcula sobre los bytes, así
+    /// que renombrar el archivo y volver a subirlo tampoco cobra dos veces.
+    /// </summary>
+    private async Task TrackUsageAsync(
+        UploadBankStatementCommand command,
+        Company? company,
+        List<(LoadedFile File, List<BankTransaction> Txs)> routedFiles,
+        CancellationToken ct)
+    {
+        foreach (var (file, txs) in routedFiles)
+        {
+            if (txs.Count == 0) continue;
+
+            var hash = UsageService.ComputeFileHash(file.Content);
+
+            try
+            {
+                var tracked = await _usage.TrackStatementProcessedAsync(
+                    command.StudioTenantId, company?.Id, hash, ct);
+
+                if (!tracked)
+                    _logger.LogInformation(
+                        "Extracto '{FileName}' ya estaba registrado en el ledger: no se cobra de nuevo.",
+                        file.FileName);
+            }
+            catch (Exception ex)
+            {
+                // En esta fase SOLO se mide: un fallo del ledger no puede tumbar una carga que ya
+                // se completó. Se registra fuerte para que la diferencia se detecte al conciliar,
+                // en vez de descubrirse al facturar.
+                _logger.LogError(ex,
+                    "No se pudo registrar el consumo del extracto '{FileName}' (tenant {Tenant}, hash {Hash}).",
+                    file.FileName, command.StudioTenantId, hash);
+            }
+        }
     }
 
     /// <summary>Persiste los nuevos movimientos y los cambios de reclasificación en una sola transacción.</summary>
