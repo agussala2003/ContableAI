@@ -2,6 +2,7 @@
 import { NgClass } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
 import { ModalA11yDirective } from '../../../shared/directives/modal-a11y.directive';
+import { STORAGE_KEYS } from '../../utils/storage-keys';
 
 export interface OnboardingStep {
   n: string;
@@ -32,17 +33,17 @@ export class OnboardingModal {
   ];
 
   onStart(): void {
-    localStorage.setItem('contableai_onboarding_done', 'true');
+    localStorage.setItem(STORAGE_KEYS.onboardingDone, 'true');
     this.start.emit();
   }
 
   onSkip(): void {
-    localStorage.setItem('contableai_onboarding_done', 'true');
+    localStorage.setItem(STORAGE_KEYS.onboardingDone, 'true');
     this.skip.emit();
   }
 
   onLoadDemo(): void {
-    localStorage.setItem('contableai_onboarding_done', 'true');
+    localStorage.setItem(STORAGE_KEYS.onboardingDone, 'true');
     this.loadDemo.emit();
   }
 }

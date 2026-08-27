@@ -30,20 +30,6 @@ internal enum StatementSource
 internal sealed record StatementDocument(string Bank, StatementSource Source, IReadOnlyList<StatementLine> Lines);
 
 /// <summary>
-/// Códigos de banco compartidos entre el extractor (que los detecta) y el parser (que despacha
-/// e interpreta según cada uno). Centralizados para que ambos hablen el mismo vocabulario.
-/// </summary>
-internal static class BankCodes
-{
-    public const string Bbva        = "BBVA";
-    public const string Galicia     = "GALICIA";
-    public const string Credicoop   = "CREDICOOP";
-    public const string MercadoPago = "MERCADOPAGO";
-    public const string Ciudad      = "CIUDAD";
-    public const string Generic     = "GENERIC";
-}
-
-/// <summary>
 /// Abstracción de la lectura física de un extracto (Principio de Inversión de Dependencias):
 /// convierte un stream de extracto en su modelo posicional + banco detectado. La implementación
 /// real (<c>OcrStatementExtractor</c>) encapsula PdfPig y Tesseract; en tests se inyecta un

@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 
+using ContableAI.Domain.Constants;
+
 namespace ContableAI.Infrastructure.Services;
 
 /// <summary>

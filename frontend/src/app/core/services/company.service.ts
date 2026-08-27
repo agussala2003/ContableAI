@@ -2,6 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { ConfigService } from '../config/config.service';
+import { STORAGE_KEYS } from '../utils/storage-keys';
 
 export interface Company {
   id: string;
@@ -34,7 +35,7 @@ export interface UpdateCompanyRequest {
 export class CompanyService {
   private http = inject(HttpClient);
   private configService = inject(ConfigService);
-  private readonly activeCompanyKey = 'contableai_active_company_id';
+  private readonly activeCompanyKey = STORAGE_KEYS.activeCompanyId;
 
   private get apiUrl(): string {
     return `${this.configService.config().apiUrl}/companies`;
