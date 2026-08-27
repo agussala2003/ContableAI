@@ -131,6 +131,85 @@
         </div>
       }
 
+      <!-- ── Packs de extractos ─────────────────────────────────────────────
+           Los precios se publican en USD y NO se hardcodea ningún monto en pesos:
+           el equivalente se calcula al tipo de cambio del día de la transferencia.
+           Con un número en pesos fijo, la página quedaría desactualizada en semanas
+           y el cliente podría reclamar un precio que ya no existe. -->
+      <div class="mt-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-6">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 class="text-lg font-semibold text-slate-800 dark:text-slate-100">Packs de extractos</h2>
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Comprás una bolsa de extractos y la usás cuando quieras.
+              <span class="font-medium text-slate-600 dark:text-slate-300">El saldo no vence.</span>
+            </p>
+          </div>
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full px-2.5 py-1">
+            Se abona en pesos
+          </span>
+        </div>
+
+        <div class="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+          @for (pack of packs; track pack.statements) {
+            <div class="relative rounded-xl border p-5 flex flex-col transition-colors"
+              [ngClass]="pack.highlighted
+                ? 'border-indigo-500 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20'
+                : 'border-slate-200 dark:border-slate-700'">
+
+              @if (pack.highlighted) {
+                <span class="absolute -top-2.5 left-5 text-[9px] font-bold uppercase tracking-wider text-white bg-indigo-600 rounded-full px-2 py-0.5">
+                  Más elegido
+                </span>
+              }
+
+              <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{{ pack.name }}</p>
+
+              <div class="mt-2 flex items-baseline gap-1">
+                <span class="text-3xl font-extrabold text-slate-900 dark:text-white tabular-nums">USD {{ pack.usd }}</span>
+              </div>
+
+              <p class="mt-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+                {{ pack.statements }} extractos
+              </p>
+              <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                USD {{ pack.perStatement }} por extracto
+              </p>
+
+              <p class="mt-3 text-xs text-slate-500 dark:text-slate-400 flex-1">{{ pack.pitch }}</p>
+
+              <a [href]="packMailto(pack)"
+                class="mt-5 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors"
+                [ngClass]="pack.highlighted
+                  ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'">
+                Quiero este pack
+              </a>
+            </div>
+          }
+        </div>
+
+        <div class="mt-5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-4">
+          <p class="text-xs text-slate-600 dark:text-slate-300">
+            <span class="font-semibold">Cómo se paga.</span>
+            Por transferencia bancaria en pesos, al tipo de cambio del día. Escribinos y te pasamos
+            los datos; apenas se acredita el pago te cargamos los extractos en la cuenta.
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+            <a href="mailto:presalsoporte@gmail.com?subject=Compra%20de%20extractos%20-%20PreSal"
+              class="inline-flex items-center gap-1.5 font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+              <lucide-icon name="mail" class="w-3.5 h-3.5"></lucide-icon>
+              presalsoporte&#64;gmail.com
+            </a>
+            <a href="https://instagram.com/presal.app" target="_blank" rel="noopener"
+              class="inline-flex items-center gap-1.5 font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+              <lucide-icon name="instagram" class="w-3.5 h-3.5"></lucide-icon>
+              &#64;presal.app
+            </a>
+          </div>
+        </div>
+      </div>
+
       <!-- Upgrade Prompt -->
       @if (q.plan !== 'Enterprise') {
         <div class="mt-4 bg-gradient-to-br from-slate-900 to-indigo-950 rounded-2xl p-8 text-white shadow-xl relative overflow-hidden group">

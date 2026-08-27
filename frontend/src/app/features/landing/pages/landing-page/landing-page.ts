@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { NgClass } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -8,14 +9,20 @@ interface Feature {
   desc: string;
 }
 
-interface PlanFeature {
-  text: string;
+/** Pack prepago de extractos publicado en la landing. */
+interface StatementPack {
+  name: string;
+  statements: number;
+  usd: number;
+  perStatement: string;
+  pitch: string;
+  highlighted: boolean;
 }
 
 @Component({
   selector: 'app-landing-page',
   standalone: true,
-  imports: [RouterLink, LucideAngularModule],
+  imports: [NgClass, RouterLink, LucideAngularModule],
   templateUrl: './landing-page.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -42,21 +49,45 @@ export class LandingPage {
     { icon: 'file-down',      title: 'Exportá los asientos',         desc: 'Descargá el asiento listo para tu sistema contable. Cierre terminado.' },
   ];
 
-  readonly proFeatures: PlanFeature[] = [
-    { text: 'Hasta 15 empresas' },
-    { text: 'Transacciones ilimitadas' },
-    { text: 'Hasta 250 reglas por empresa' },
-    { text: 'Todos los parsers de banco' },
-    { text: 'Cruce AFIP / VEP automático' },
-    { text: 'Exportación CSV, Excel, Holistor, Bejerman' },
-    { text: 'Soporte por email' },
+  /**
+   * Packs prepagos. El precio es USD y NO se guarda ningún monto en pesos ni el tipo de cambio:
+   * se cobra por transferencia al cambio del día. Los anclajes de referencia
+   * ($6.000 / $12.000 / $27.000) se fijaron con el dólar a ~$1.550 el 27-08-2026; hardcodear
+   * esos pesos dejaría publicado un precio que en semanas ya no rige.
+   *
+   * DEBE mantenerse en sintonía con los packs de `settings-page` y con los del modal de carga de
+   * saldo en `admin-page`: si divergen, el cliente ve un precio y el admin carga otro.
+   */
+  readonly packs: StatementPack[] = [
+    {
+      name: 'Básico',
+      statements: 20,
+      usd: 4,
+      perStatement: '0,20',
+      pitch: 'Para probar el sistema con un cliente, sin comprometer mucho.',
+      highlighted: false,
+    },
+    {
+      name: 'Estudio',
+      statements: 50,
+      usd: 8,
+      perStatement: '0,16',
+      pitch: 'Alcanza para cerrar el mes de varios clientes chicos.',
+      highlighted: true,
+    },
+    {
+      name: 'Volumen',
+      statements: 150,
+      usd: 17,
+      perStatement: '0,11',
+      pitch: 'El mejor precio por extracto, comprando por adelantado.',
+      highlighted: false,
+    },
   ];
 
-  readonly enterpriseFeatures: PlanFeature[] = [
-    { text: 'Empresas ilimitadas' },
-    { text: 'Todo lo de Pro, sin límites' },
-    { text: 'Onboarding dedicado' },
-    { text: 'Soporte prioritario' },
-    { text: 'Integraciones a medida' },
-  ];
+  /** Mail con el pack ya escrito en el asunto: menos fricción y menos pedidos ambiguos. */
+  packMailto(pack: StatementPack): string {
+    const subject = `Compra pack ${pack.name} (${pack.statements} extractos) - PreSal`;
+    return `mailto:presalsoporte@gmail.com?subject=${encodeURIComponent(subject)}`;
+  }
 }
