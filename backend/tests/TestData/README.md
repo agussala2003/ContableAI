@@ -45,6 +45,7 @@ TestData/
 ├── extractos/
 │   ├── BBVA/                     ← BbvaNov2024ParseTest (BBVA TB 11.2024.pdf, 012025.pdf)
 │   ├── GALICIA/                  ← GaliciaParseRegressionTests, CurrencyDetectionTests
+│   ├── SANTANDER/                ← SantanderParserTests (los 11 resúmenes mensuales)
 │   ├── GALICIA USD/              ← GaliciaUsdParseTests, CurrencyDetectionTests
 │   ├── CREDICOOP/                ← CredicoopParseRegressionTests, CurrencyDetectionTests
 │   ├── MERCADO PAGO/             ← CurrencyDetectionTests

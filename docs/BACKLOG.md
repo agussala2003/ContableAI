@@ -8,7 +8,9 @@
 **Stack:** `.NET 10` + `Angular 21` + `PostgreSQL` (Clean Architecture)
 
 **Funcionalidades activas en producción:**
-- Parsers multi-banco: BBVA, Galicia, Santander, Macro, Nación, MercadoPago, Ualá, Credicoop, PDF genérico, Banco Ciudad ✨
+- Parsers multi-banco:
+  - **PDF** (`IBankStatementParser`, la vía real de carga): BBVA, Galicia, **Santander** ✨, Credicoop, Banco Ciudad, MercadoPago, genérico tabular.
+  - **CSV / XLSX** (`IBankParser`): BBVA, Galicia, Santander, Macro, Nación, MercadoPago, Ualá, Credicoop.
 - Motor de reglas keyword-based con 245+ reglas globales predefinidas.
 - Cruce AFIP / VEP contra extractos bancarios via `AfipMatchingJob` (Hangfire, tolerancia ±2 días) — Persistencia de vouchers + auto-trigger al subir extracto ✨
 - Generación de asientos de partida doble con validación de períodos cerrados — Debe/Haber ordenado ✨
@@ -54,6 +56,14 @@
 ---
 
 ## 🚀 FEATURES NUEVAS Y CONFIGURACIÓN
+
+### PARSER-SANTANDER · Extractos PDF de Banco Santander
+- **Reportado por:** Cliente (3 bancos en una misma empresa: Santander, Galicia y MercadoPago).
+- **Corrección de este documento:** el baseline afirmaba que Santander ya estaba soportado. Era **falso para PDF**, que es la vía real de carga. Existía `SantanderParser` para CSV/XLSX, pero `BankParserFactory` enruta todo `.pdf` a `PdfBankParser`, cuyo despacho es por `IBankStatementParser` — y ahí Santander no estaba. Sus extractos caían en `GENERIC` y los interpretaba el motor tabular sin conocer el formato.
+- **Fix:** Nuevo `SantanderStatementParser` (`IBankStatementParser`), registrado en `PdfBankParser`. Detección del banco en `OcrStatementExtractor` por nombre de archivo y por prefijo 072 del CBU — el logo del encabezado es vectorial, así que la palabra "Santander" no está en el texto extraíble. Ruta digital (PdfPig), sin OCR. Particularidades cubiertas: símbolo de moneda en celda propia, saldo negativo con el menos pegado al símbolo (`-$`), fila "Saldo Inicial" con fecha pero sin movimiento, descripciones en dos renglones, y exclusión de las filas "Total" / "Saldo total" y del anexo "Detalle impositivo".
+- **Resúmenes consolidados:** 2 de los 11 extractos de muestra apilan **dos cuentas** en un mismo PDF. La guarda compartida (`DetectAccountIdentifiers`) no los veía porque solo mira las primeras 40 líneas y el segundo bloque arranca más abajo. El parser de Santander los rechaza con el mensaje al usuario ya existente, en vez de mezclar los movimientos de las dos cuentas. **Pendiente:** evaluar si conviene ampliar la ventana de la guarda compartida — requiere revalidar el corpus de los otros bancos.
+- **Tests:** `SantanderParserTests` — 7 sobre fixture sintético versionado (corren siempre, también en CI) y 4 de regresión sobre los 11 PDFs reales. La aserción fuerte es la **cadena de saldos**: cada saldo debe ser el anterior ± el importe, y el cierre de cada mes debe ser la apertura del siguiente. Verificado sobre 9 extractos consecutivos (09.25 → 05.26), 565 movimientos, sin una sola rotura.
+- **Estado:** ✅ Completado — 2026-08-27
 
 ### AUDIT-01 · Auditoría y Limpieza Profunda Pre-Producción
 - **Descripción:** Escaneo de vulnerabilidades, memory leaks y código muerto.

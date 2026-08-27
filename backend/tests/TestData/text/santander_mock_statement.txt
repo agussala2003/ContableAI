@@ -1,0 +1,19 @@
+Resumen de cuenta
+ESTUDIO DEMO SRL
+CUIT: 30-11111111-1
+
+Movimientos en pesos
+Cuenta Corriente No 999-000999/9  CBU: 0720999020000000009990
+Fecha    Comprobante   Movimiento                           Debito            Credito           Saldo en cuenta
+31/08/25               Saldo Inicial                                                   $ 1.000.000,00
+01/09/25 10000001      Transferencia recibida                          $   250.000,00  $ 1.250.000,00
+                       De proveedor demo srl / - var / 30111111111
+01/09/25 10000002      Pago servicios               $    50.000,00                     $ 1.200.000,00
+02/09/25 10000003      Pago tarjeta de credito visa $ 1.500.000,00                    -$   300.000,00
+                       Deb. automatico 02/09/2025 part 01210000003
+Banco Santander Argentina S.A. es una sociedad anonima segun la ley argentina
+03/09/25 10000004      Credito transf online banking emp               $   400.000,00  $   100.000,00
+                                                                          Total        $   100.000,00
+                                                            Saldo total                $   100.000,00
+Detalle impositivo
+                       Total retencion impuesto ley 25413 por creditos                 $     1.500,00

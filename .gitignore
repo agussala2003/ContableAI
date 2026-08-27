@@ -69,6 +69,15 @@ docker-compose.override.yml
 # ──────────────────────────────────────────────────────────────────────────────
 /tests/
 
+#  Datos de prueba que cada dev/CI coloca localmente en backend/tests/TestData.
+#  El README de esa carpeta ya decía que los PDFs reales NO se versionan (traen CUIT,
+#  razón social, CBU e importes de clientes), pero nada lo impedía: bastaba con copiarlos
+#  para correr la regresión y quedaban listos para commitear. Los .txt de fixtures SÍ se
+#  versionan — son sintéticos — y por eso la regla es solo sobre binarios de extracto.
+backend/tests/TestData/**/*.pdf
+backend/tests/TestData/**/*.xlsx
+backend/tests/TestData/**/*.csv
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Dics - De la carpeta docs solo dejar lo que sea .md
 # ──────────────────────────────────────────────────────────────────────────────
