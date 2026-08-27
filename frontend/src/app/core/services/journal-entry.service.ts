@@ -5,7 +5,7 @@ import { ToastService } from './toast.service';
 import { ConfigService } from '../config/config.service';
 import { SKIP_LOADING } from '../interceptors/loading.interceptor';
 import { saveBlob, saveResponseAsFile } from '../utils/file-download';
-import { BankAccountOption } from './transaction';
+import { BankAccountOption, BankOption } from './transaction';
 
 const MONTH_NAMES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -36,6 +36,7 @@ export interface JournalEntry {
 export interface JournalEntriesResponse {
   entries: JournalEntry[];
   availableBankAccounts: BankAccountOption[];
+  availableBanks: BankOption[];
 }
 
 export interface LinkedTransaction {
@@ -78,6 +79,7 @@ export class JournalEntryService {
 
   getEntries(params?: {
     companyId?: string; month?: number; year?: number; currency?: string; bankAccountId?: string;
+    bankCode?: string;
   }): Observable<JournalEntriesResponse> {
     let p = new HttpParams();
     if (params?.companyId) p = p.set('companyId', params.companyId);
@@ -85,6 +87,7 @@ export class JournalEntryService {
     if (params?.year)      p = p.set('year',       params.year);
     if (params?.currency)  p = p.set('currency',   params.currency);
     if (params?.bankAccountId) p = p.set('bankAccountId', params.bankAccountId);
+    if (params?.bankCode)      p = p.set('bankCode',      params.bankCode);
     return this.http.get<JournalEntriesResponse>(this.baseUrl, { params: p });
   }
 

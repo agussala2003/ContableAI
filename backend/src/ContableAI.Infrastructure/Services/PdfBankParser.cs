@@ -36,6 +36,7 @@ public class PdfBankParser : IBankParser
         [
             new BbvaStatementParser(),
             new GaliciaStatementParser(),
+            new SantanderStatementParser(),
             new CredicoopStatementParser(),
             new MercadoPagoStatementParser(),
             new CiudadStatementParser(logger),

@@ -7,6 +7,8 @@ using Tesseract;
 using UglyToad.PdfPig;
 using PdfPage = UglyToad.PdfPig.Content.Page;
 
+using ContableAI.Domain.Constants;
+
 namespace ContableAI.Infrastructure.Services;
 
 /// <summary>
@@ -110,6 +112,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
 
         if (normalizedFileName.Contains("BBVA"))        return BankCodes.Bbva;
         if (normalizedFileName.Contains("GALICIA"))     return BankCodes.Galicia;
+        if (normalizedFileName.Contains("SANTANDER"))   return BankCodes.Santander;
         if (normalizedFileName.Contains("CREDICOOP"))   return BankCodes.Credicoop;
         if (normalizedFileName.Contains("CIUDAD"))      return BankCodes.Ciudad;
 
@@ -145,6 +148,12 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         // Ciudad: account format 3-029- (bank code 029) or explicit REFERENCIA column header
         if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))
             return BankCodes.Ciudad;
+
+        // Ver la nota en DetectBankFromRows: Santander se detecta por el prefijo 072 del CBU
+        // porque su encabezado no tiene el nombre del banco como texto, y va último para no
+        // ganarle a la detección positiva de otro banco.
+        if (text.Contains("SANTANDER") || text.Contains("CBU: 072") || text.Contains("CBU 072"))
+            return BankCodes.Santander;
 
         return BankCodes.Generic;
     }
@@ -196,6 +205,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
 
         if (normalizedFileName.Contains("BBVA"))        return BankCodes.Bbva;
         if (normalizedFileName.Contains("GALICIA"))     return BankCodes.Galicia;
+        if (normalizedFileName.Contains("SANTANDER"))   return BankCodes.Santander;
         if (normalizedFileName.Contains("CREDICOOP"))   return BankCodes.Credicoop;
         if (normalizedFileName.Contains("CIUDAD"))      return BankCodes.Ciudad;
         if (normalizedFileName.Contains("MERCADOPAGO") ||
@@ -210,6 +220,14 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED")) return BankCodes.Credicoop;
         if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO"))    return BankCodes.MercadoPago;
         if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))         return BankCodes.Ciudad;
+
+        // Santander va ULTIMO y se apoya en el CBU, no en el nombre: en sus extractos el logo
+        // del encabezado es vectorial, así que la palabra "SANTANDER" no aparece en el texto
+        // extraíble. El prefijo 072 del CBU identifica al banco (mismo criterio que el "CBU 0170"
+        // de BBVA). Va al final para que un CBU 072 que aparezca dentro de la descripción de una
+        // transferencia no le gane a la detección positiva del banco que realmente emitió el PDF.
+        if (text.Contains("SANTANDER") || text.Contains("CBU: 072") || text.Contains("CBU 072"))
+            return BankCodes.Santander;
 
         return BankCodes.Generic;
     }

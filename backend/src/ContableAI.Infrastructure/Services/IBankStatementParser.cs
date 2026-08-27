@@ -1,6 +1,8 @@
 using ContableAI.Domain.Entities;
 using ContableAI.Domain.Enums;
 
+using ContableAI.Domain.Constants;
+
 namespace ContableAI.Infrastructure.Services;
 
 /// <summary>

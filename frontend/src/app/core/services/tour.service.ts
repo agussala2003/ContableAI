@@ -1,4 +1,5 @@
 import { Injectable, signal, computed } from '@angular/core';
+import { STORAGE_KEYS } from '../utils/storage-keys';
 
 export interface TourStep {
   targetId: string;
@@ -114,7 +115,7 @@ const TOURS: Record<string, TourStep[]> = {
   ],
 };
 
-const STORAGE_KEY = 'contableai_tour_done';
+const STORAGE_KEY = STORAGE_KEYS.tourDone;
 
 @Injectable({ providedIn: 'root' })
 export class TourService {

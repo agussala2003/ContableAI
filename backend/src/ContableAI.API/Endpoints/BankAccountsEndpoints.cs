@@ -188,6 +188,14 @@ public static class BankAccountsEndpoints
         if (!Currencies.IsSupported(req.Currency?.Trim().ToUpperInvariant()))
             return Results.BadRequest("Moneda inválida. Valores soportados: ARS, USD.");
 
+        // El banco es OPCIONAL —una cuenta puede darse de alta antes de saberlo, y las que creó el
+        // backfill desde los campos legacy no lo tienen—, pero si viene tiene que ser del catálogo.
+        // Sin esta validación el campo era texto libre, y un "santander " o un "Sant." dejaban a la
+        // cuenta fuera de su propio filtro sin ningún error visible.
+        if (!string.IsNullOrWhiteSpace(req.BankCode) && !BankCodes.IsSupported(req.BankCode))
+            return Results.BadRequest(
+                $"Banco inválido. Valores soportados: {string.Join(", ", BankCodes.All)}.");
+
         return null;
     }
 

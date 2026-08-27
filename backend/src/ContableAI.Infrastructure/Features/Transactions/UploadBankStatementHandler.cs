@@ -3,6 +3,7 @@ using ContableAI.Application.Features.Transactions.Commands;
 using ContableAI.Domain.Common;
 using ContableAI.Domain.Constants;
 using ContableAI.Domain.Entities;
+using ContableAI.Domain.Enums;
 using ContableAI.Infrastructure.Features.Afip;
 using ContableAI.Infrastructure.Persistence;
 using ContableAI.Infrastructure.Services;
@@ -49,6 +50,7 @@ public sealed class UploadBankStatementHandler
     private readonly IBankParserService     _parser;
     private readonly IClassificationService _classifier;
     private readonly IQuotaService          _quota;
+    private readonly IUsageService          _usage;
     private readonly IBackgroundJobClient   _jobs;
     private readonly ILogger<UploadBankStatementHandler> _logger;
 
@@ -57,6 +59,7 @@ public sealed class UploadBankStatementHandler
         IBankParserService     parser,
         IClassificationService classifier,
         IQuotaService          quota,
+        IUsageService          usage,
         IBackgroundJobClient   jobs,
         ILogger<UploadBankStatementHandler> logger)
     {
@@ -64,6 +67,7 @@ public sealed class UploadBankStatementHandler
         _parser     = parser;
         _classifier = classifier;
         _quota      = quota;
+        _usage      = usage;
         _jobs       = jobs;
         _logger     = logger;
     }
@@ -113,6 +117,15 @@ public sealed class UploadBankStatementHandler
             if (forbidden)
                 return Result<UploadBankStatementResponse>.Forbidden();
 
+            // Saldo prepago: se verifica ANTES de parsear, que es la parte cara (PdfPig y, en los
+            // escaneados, OCR). Sin saldo no tiene sentido gastar CPU en un trabajo que no se va a
+            // poder entregar.
+            if (await OutOfStatementQuotaAsync(command, stagedFiles, ct))
+                return Result<UploadBankStatementResponse>.PaymentRequired(
+                    "NO_STATEMENT_QUOTA",
+                    "Te quedaste sin saldo de extractos. Escribinos a presalsoporte@gmail.com o por " +
+                    "Instagram (@presal.app) para sumar un pack nuevo y seguir trabajando.");
+
             var (parsedFiles, parseErrors) = ParseFiles(command, stagedFiles);
 
             // Enrutamiento: decide a qué cuenta bancaria va cada archivo y estampa BankAccountId en
@@ -138,6 +151,12 @@ public sealed class UploadBankStatementHandler
             var outcome = await ClassifyFilesAsync(command, company, allParsed, budget, rules, unionCandidates, ct);
 
             await PersistAsync(outcome, ct);
+
+            // El ledger se escribe DESPUÉS de persistir los movimientos, nunca antes ni en la misma
+            // transacción: si algo falla midiendo el consumo, el trabajo del contador ya está a
+            // salvo. Cobrar de menos se corrige; perder un extracto procesado, no.
+            await TrackUsageAsync(command, company, allParsed, ct);
+
             EnqueueAfipMatchingIfNeeded(company, outcome);
 
             _logger.LogInformation(
@@ -624,6 +643,107 @@ public sealed class UploadBankStatementHandler
 
         return new ClassificationOutcome(
             allClassified, perFileResults, allSkippedDuplicates, totalDuplicates, totalReapplied);
+    }
+
+    /// <summary>
+    /// Decide si la carga tiene que rechazarse por falta de saldo prepago.
+    ///
+    /// No alcanza con preguntar "¿el saldo es mayor que cero?": una carga puede traer varios
+    /// archivos, y con un solo crédito disponible se podrían procesar cinco y dejar el saldo en
+    /// -4. Se exige saldo para TODOS los archivos que se van a cobrar.
+    ///
+    /// Los archivos que YA están en el ledger no cuentan contra el saldo. Es el caso del contador
+    /// que resube un extracto porque no está seguro de que la primera carga haya funcionado: ese
+    /// archivo ya se pagó, y bloquearlo por saldo sería cobrarle dos veces en forma de fricción.
+    /// Por eso el hash se calcula acá, antes de parsear — es barato, los bytes ya están en memoria.
+    ///
+    /// La verificación es CONSERVADORA: un archivo que después falle al parsear no se va a cobrar,
+    /// pero acá igual se le pidió saldo. Se prefiere pecar de estricto: en un modelo prepago, dejar
+    /// el saldo en negativo es peor que pedir una recarga un extracto antes.
+    /// </summary>
+    private async Task<bool> OutOfStatementQuotaAsync(
+        UploadBankStatementCommand command, List<LoadedFile> stagedFiles, CancellationToken ct)
+    {
+        if (stagedFiles.Count == 0) return false;
+
+        var hashes = stagedFiles
+            .Where(f => f.Content.Length > 0)
+            .Select(f => UsageService.ComputeFileHash(f.Content))
+            .Distinct()
+            .ToList();
+
+        if (hashes.Count == 0) return false;
+
+        var alreadyCharged = await _db.UsageEvents
+            .AsNoTracking()
+            .Where(u => u.StudioTenantId == command.StudioTenantId
+                     && u.Type           == UsageEventType.StatementProcessed
+                     && hashes.Contains(u.IdempotencyKey))
+            .Select(u => u.IdempotencyKey)
+            .ToListAsync(ct);
+
+        var billableCount = hashes.Count - alreadyCharged.Distinct().Count();
+        if (billableCount <= 0) return false;
+
+        var available = await _usage.GetAvailableQuotaAsync(command.StudioTenantId, ct);
+
+        if (available >= billableCount) return false;
+
+        _logger.LogWarning(
+            "Carga rechazada por falta de saldo: el estudio {Tenant} tiene {Available} y necesita {Needed}.",
+            command.StudioTenantId, available, billableCount);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Registra en el ledger de facturación un evento por cada extracto procesado.
+    ///
+    /// Qué se cobra y qué no:
+    ///   · Se cobra el archivo que se pudo parsear y produjo al menos un movimiento.
+    ///   · NO se cobran los errores de parseo ni los archivos que no se pudieron enrutar a una
+    ///     cuenta: nunca llegan a <paramref name="parsedFiles"/>, salen del lote con su error.
+    ///   · NO se cobra el archivo que parseó cero movimientos (un extracto sin actividad en el
+    ///     período): el usuario no obtuvo nada.
+    ///   · Un archivo cuyos movimientos son TODOS duplicados sí se cobra: el parseo y el OCR —el
+    ///     costo real— se hicieron igual. Resubir el MISMO archivo no cobra de nuevo, pero eso lo
+    ///     garantiza el hash, no esta condición.
+    ///
+    /// La idempotencia es por contenido, no por nombre: el hash se calcula sobre los bytes, así
+    /// que renombrar el archivo y volver a subirlo tampoco cobra dos veces.
+    /// </summary>
+    private async Task TrackUsageAsync(
+        UploadBankStatementCommand command,
+        Company? company,
+        List<(LoadedFile File, List<BankTransaction> Txs)> routedFiles,
+        CancellationToken ct)
+    {
+        foreach (var (file, txs) in routedFiles)
+        {
+            if (txs.Count == 0) continue;
+
+            var hash = UsageService.ComputeFileHash(file.Content);
+
+            try
+            {
+                var tracked = await _usage.TrackStatementProcessedAsync(
+                    command.StudioTenantId, company?.Id, hash, ct);
+
+                if (!tracked)
+                    _logger.LogInformation(
+                        "Extracto '{FileName}' ya estaba registrado en el ledger: no se cobra de nuevo.",
+                        file.FileName);
+            }
+            catch (Exception ex)
+            {
+                // En esta fase SOLO se mide: un fallo del ledger no puede tumbar una carga que ya
+                // se completó. Se registra fuerte para que la diferencia se detecte al conciliar,
+                // en vez de descubrirse al facturar.
+                _logger.LogError(ex,
+                    "No se pudo registrar el consumo del extracto '{FileName}' (tenant {Tenant}, hash {Hash}).",
+                    file.FileName, command.StudioTenantId, hash);
+            }
+        }
     }
 
     /// <summary>Persiste los nuevos movimientos y los cambios de reclasificación en una sola transacción.</summary>

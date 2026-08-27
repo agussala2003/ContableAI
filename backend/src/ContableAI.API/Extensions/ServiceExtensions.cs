@@ -100,6 +100,7 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentTenantService, CurrentTenantService>();
         services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
         services.AddScoped<IQuotaService, QuotaService>();
+        services.AddScoped<IUsageService, UsageService>();
 
         // ── Resiliencia (Polly) — pipelines reutilizables (email hoy, HTTP a futuro) ──
         services.AddContableResilience();

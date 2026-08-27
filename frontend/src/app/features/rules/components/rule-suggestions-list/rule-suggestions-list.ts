@@ -34,7 +34,7 @@ import { ToastService } from '../../../../core/services/toast.service';
 
       @if (suggestions().length > 0) {
         <p class="text-xs text-indigo-700 dark:text-indigo-300 mb-4 max-w-2xl">
-          ContableAI detectó patrones en tus clasificaciones manuales. Aceptar estas sugerencias creará reglas automáticas para futuras transacciones.
+          PreSal detectó patrones en tus clasificaciones manuales. Aceptar estas sugerencias creará reglas automáticas para futuras transacciones.
         </p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

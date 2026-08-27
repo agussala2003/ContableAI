@@ -47,6 +47,7 @@ export interface PagedResult<T> {
   currencyTotals?: CurrencyTotals[];
   availableAccounts?: string[];
   availableBankAccounts?: BankAccountOption[];
+  availableBanks?: BankOption[];
   availableMonths?: number[];
   availableYears?: number[];
 }
@@ -56,6 +57,21 @@ export interface BankAccountOption {
   id: string;
   alias: string;
   currency: string;
+  /**
+   * Banco al que pertenece la cuenta. Viaja en cada cuenta para que la cascada Banco → Cuenta se
+   * resuelva en memoria, sin una segunda request al cambiar el banco elegido. Es `null` en las
+   * cuentas a las que todavía no se les cargó el banco y en el bucket "Sin cuenta asignada".
+   */
+  bankCode: string | null;
+}
+
+/**
+ * Banco presente en los datos consultados. `code` es un código del catálogo o el sentinel 'none'
+ * (lo que no se puede atribuir a un banco: movimientos sin cuenta, o cuentas sin banco cargado).
+ */
+export interface BankOption {
+  code: string;
+  label: string;
 }
 
 export interface TransactionQueryParams {
@@ -65,6 +81,7 @@ export interface TransactionQueryParams {
   search?:       string;
   account?:      string;
   bankAccountId?: string;
+  bankCode?:      string;
   direction?:    'debit' | 'credit';
   sortBy?:       string;
   sortDir?:      'asc' | 'desc';
@@ -200,6 +217,7 @@ export class Transaction {
     if (params.search)       httpParams = httpParams.set('search', params.search);
     if (params.account)      httpParams = httpParams.set('account', params.account);
     if (params.bankAccountId) httpParams = httpParams.set('bankAccountId', params.bankAccountId);
+    if (params.bankCode)      httpParams = httpParams.set('bankCode',      params.bankCode);
     if (params.sortBy)                       httpParams = httpParams.set('sortBy', params.sortBy);
     if (params.sortDir)                      httpParams = httpParams.set('sortDir', params.sortDir);
     if (params.strictSearch)                 httpParams = httpParams.set('strictSearch', 'true');

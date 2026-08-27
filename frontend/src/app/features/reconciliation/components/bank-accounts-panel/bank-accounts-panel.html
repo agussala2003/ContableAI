@@ -104,8 +104,8 @@
             <select formControlName="bankCode"
               class="w-full h-8 px-2 rounded-md text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors">
               <option value="">Sin especificar</option>
-              @for (code of bankCodes; track code) {
-                <option [value]="code">{{ code }}</option>
+              @for (bank of bankCodes(); track bank.code) {
+                <option [value]="bank.code">{{ bank.displayName }}</option>
               }
             </select>
           </div>

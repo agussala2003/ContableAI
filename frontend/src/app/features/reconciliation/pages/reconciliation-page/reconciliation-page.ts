@@ -4,6 +4,7 @@ import { timer, switchMap, take } from 'rxjs';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CompanyService } from '../../../../core/services/company.service';
+import { STORAGE_KEYS } from '../../../../core/utils/storage-keys';
 import { AuthService } from '../../../../core/services/auth.service';
 import { ChartOfAccountService } from '../../../../core/services/chart-of-account.service';
 import { ReconciliationService, UploadEvent } from '../../reconciliation.service';
@@ -95,7 +96,7 @@ export class ReconciliationPage implements OnInit {
   reapplyingRule = signal<AccountingRule | null>(null);
   isApplyingBulkRule = signal(false);
   showOnboarding   = signal<boolean>(
-    localStorage.getItem('contableai_onboarding_done') !== 'true'
+    localStorage.getItem(STORAGE_KEYS.onboardingDone) !== 'true'
   );
   gridSelectedIds  = signal<string[]>([]);
   quickRuleKeyword = signal('');

@@ -652,6 +652,51 @@ namespace ContableAI.Infrastructure.Migrations
                     b.ToTable("UploadJobResults");
                 });
 
+            modelBuilder.Entity("ContableAI.Domain.Entities.UsageEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PeriodKey")
+                        .IsRequired()
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("StudioTenantId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StudioTenantId", "PeriodKey")
+                        .HasDatabaseName("IX_UsageEvents_Tenant_PeriodKey");
+
+                    b.HasIndex("StudioTenantId", "Type", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_UsageEvents_Tenant_Type_IdempotencyKey");
+
+                    b.ToTable("UsageEvents");
+                });
+
             modelBuilder.Entity("ContableAI.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")

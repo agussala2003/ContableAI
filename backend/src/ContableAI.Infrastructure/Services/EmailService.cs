@@ -55,14 +55,14 @@ public class SmtpEmailService : IEmailService
         var user     = _smtpOptions.User;
         var pass     = _smtpOptions.Password;
         var from     = string.IsNullOrWhiteSpace(_smtpOptions.FromAddress) ? user : _smtpOptions.FromAddress;
-        var fromName = string.IsNullOrWhiteSpace(_smtpOptions.FromName) ? "ContableAI" : _smtpOptions.FromName;
+        var fromName = string.IsNullOrWhiteSpace(_smtpOptions.FromName) ? "PreSal" : _smtpOptions.FromName;
 
-        var subject = "Restablecer tu contraseña — ContableAI";
+        var subject = "Restablecer tu contraseña — PreSal";
         var body    = $"""
             <html><body style="font-family:sans-serif;max-width:600px;margin:0 auto">
               <h2>Restablecer contraseña</h2>
               <p>Hola <strong>{System.Net.WebUtility.HtmlEncode(displayName)}</strong>,</p>
-              <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta ContableAI.</p>
+              <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta PreSal.</p>
               <p>
                 <a href="{resetUrl}" style="display:inline-block;padding:12px 24px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px">
                   Restablecer contraseña
@@ -73,7 +73,7 @@ public class SmtpEmailService : IEmailService
                 Si no solicitaste este cambio, podés ignorar este email.
               </p>
               <hr style="border:none;border-top:1px solid #eee">
-              <p style="color:#999;font-size:12px">ContableAI · Sistema de gestión contable</p>
+              <p style="color:#999;font-size:12px">PreSal · Sistema de gestión contable</p>
             </body></html>
             """;
 

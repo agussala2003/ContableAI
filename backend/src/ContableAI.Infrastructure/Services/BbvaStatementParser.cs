@@ -3,6 +3,8 @@ using ContableAI.Domain.Enums;
 using System.Text.RegularExpressions;
 using static ContableAI.Infrastructure.Services.BankParsingHelpers;
 
+using ContableAI.Domain.Constants;
+
 namespace ContableAI.Infrastructure.Services;
 
 /// <summary>

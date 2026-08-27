@@ -84,6 +84,9 @@ public class UploadBankStatementHandlerTests
             new FakeBankParser(parsed, detectedAccountNumber, detectedCbu, conflictingIdentifiers),
             new ClassificationService(new HardRuleStrategy()), // motor de reglas real
             new FakeQuota(canUpload),
+            // Servicio de consumo REAL: el ledger se escribe de verdad en estos tests, así que
+            // cualquier excepción del camino de medición rompe el test en vez de pasar inadvertida.
+            new UsageService(db, NullLogger<UsageService>.Instance),
             new FakeJobClient(),
             NullLogger<UploadBankStatementHandler>.Instance);
 
@@ -108,7 +111,15 @@ public class UploadBankStatementHandlerTests
         BankAccountName = "Banco Test",
     };
 
-    /// <summary>Siembra un archivo en staging (bytea) y devuelve la referencia que viaja en el command.</summary>
+    /// <summary>
+    /// Siembra un archivo en staging (bytea) y devuelve la referencia que viaja en el command.
+    ///
+    /// De paso acredita saldo prepago: desde D5 el handler rechaza la carga con 402 antes de
+    /// parsear si el estudio no tiene extractos disponibles. Estos tests verifican enrutamiento,
+    /// clasificación y deduplicación, no facturación, así que arrancan con saldo de sobra para que
+    /// el bloqueo no los tape. El bloqueo tiene sus propios tests en
+    /// <see cref="UploadUsageTrackingTests"/>, que sí corren sobre SQLite.
+    /// </summary>
     private static async Task<StagedFileRef> StageCsvAsync(string dbName, string fileName = "extracto.csv")
     {
         var content = "fake-csv-content"u8.ToArray();
@@ -117,6 +128,9 @@ public class UploadBankStatementHandlerTests
         await using var db = NewDb(dbName);
         db.StagedUploadFiles.Add(staged);
         await db.SaveChangesAsync();
+
+        await new UsageService(db, NullLogger<UsageService>.Instance)
+            .AddQuotaAsync(Studio, 100, $"SEED_{dbName}");
 
         return new StagedFileRef(staged.Id, staged.FileName, staged.Length);
     }

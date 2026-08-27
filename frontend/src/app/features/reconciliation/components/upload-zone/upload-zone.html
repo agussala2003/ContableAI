@@ -107,7 +107,7 @@
       >
         <option value="">Automático (detectar del extracto)</option>
         @for (acc of bankAccounts(); track acc.id) {
-          <option [value]="acc.id">{{ acc.alias }} ({{ acc.currency }})</option>
+          <option [value]="acc.id">{{ accountLabel(acc) }}</option>
         }
       </select>
       @if (selectedBankAccountId()) {
