@@ -77,4 +77,32 @@ public class BankCodesTests
         BankCodes.DisplayName("BANCO_VIEJO").Should().Be("BANCO_VIEJO");
         BankCodes.DisplayName(null).Should().BeEmpty();
     }
+
+    // ── Banco emisor a partir del CBU ──────────────────────────────────────────
+
+    [Theory]
+    [InlineData("0070999030004000123456", BankCodes.Galicia)]
+    [InlineData("0170099040000012345678", BankCodes.Bbva)]
+    [InlineData("0290000100000012345678", BankCodes.Ciudad)]
+    [InlineData("0720575020000000016140", BankCodes.Santander)]
+    [InlineData("1910019055001234567890", BankCodes.Credicoop)]
+    public void FromCbu_IdentifiesTheIssuerByItsBcraCode(string cbu, string expected)
+    {
+        BankCodes.FromCbu(cbu).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("072057502000000001614")]    // 21 dígitos: no es un CBU
+    [InlineData("07205750200000000161400")]  // 23 dígitos
+    [InlineData("072-0575-020000000016140")] // sin normalizar a dígitos
+    [InlineData("0000003100059687283158")]   // CVU de billetera virtual: no identifica la entidad
+    [InlineData("0110599520000001234567")]   // banco fuera del catálogo (Nación)
+    public void FromCbu_ReturnsNullWhenItCannotIdentifyTheIssuer(string? cbu)
+    {
+        // Null es un resultado válido: la detección cae al método siguiente (el nombre en el
+        // texto) en vez de adivinar un banco. Adivinarlo elige la estrategia de parseo equivocada.
+        BankCodes.FromCbu(cbu).Should().BeNull();
+    }
 }
