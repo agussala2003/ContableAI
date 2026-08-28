@@ -59,6 +59,37 @@ public static class BankCodes
     }
 
     /// <summary>
+    /// Código de entidad del BCRA (los 3 primeros dígitos del CBU) → banco emisor.
+    ///
+    /// Es la señal de MAYOR confianza para saber de quién es un extracto: el CBU del encabezado
+    /// pertenece, por definición, a la cuenta que el documento informa, y su prefijo es el código
+    /// de la entidad que la emitió. A diferencia de buscar el nombre del banco en el texto, no la
+    /// puede disparar la descripción de un movimiento — una transferencia recibida "de mercado
+    /// pago" no convierte un extracto de Santander en uno de MercadoPago.
+    ///
+    /// Solo entidades bancarias a propósito: el prefijo 000 identifica a un CVU de billetera
+    /// virtual y NO distingue MercadoPago de Ualá, Brubank o cualquier otra. Esas se siguen
+    /// detectando por nombre, que en sus extractos sí aparece como texto.
+    /// </summary>
+    private static readonly Dictionary<string, string> ByCbuPrefix = new()
+    {
+        ["007"] = Galicia,
+        ["017"] = Bbva,
+        ["029"] = Ciudad,
+        ["072"] = Santander,
+        ["191"] = Credicoop,
+    };
+
+    /// <summary>
+    /// Banco emisor deducido de un CBU de 22 dígitos, o <c>null</c> si el prefijo no corresponde a
+    /// ninguna entidad del catálogo (billeteras virtuales incluidas: ver <see cref="ByCbuPrefix"/>).
+    /// </summary>
+    public static string? FromCbu(string? cbu) =>
+        cbu is { Length: 22 } && cbu.All(char.IsDigit) && ByCbuPrefix.TryGetValue(cbu[..3], out var bank)
+            ? bank
+            : null;
+
+    /// <summary>
     /// Nombre del banco tal como lo lee el usuario. Vive junto al catálogo para que agregar un
     /// banco sea un solo cambio: el código y su etiqueta no pueden quedar desalineados.
     /// Un código desconocido se devuelve tal cual — es preferible mostrar el código crudo que

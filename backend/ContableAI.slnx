@@ -6,6 +6,7 @@
     <Project Path="src/ContableAI.Infrastructure/ContableAI.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/ContableAI.Api.Tests/ContableAI.Api.Tests.csproj" />
     <Project Path="tests/ContableAI.Tests/ContableAI.Tests.csproj" />
   </Folder>
 </Solution>

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests de la capa API (handlers de endpoints invocados como métodos, sin levantar un host HTTP).
+
+    Vive separado de ContableAI.Tests por una razón concreta y no por prolijidad: referenciar
+    ContableAI.API copia su carpeta `tessdata` (40 MB) al output del proyecto que la referencia, y
+    OcrStatementExtractor.GetTessDataPath() busca exactamente ahí. Con esos archivos presentes, los
+    tests del corpus de extractos dejan de saltear la ruta OCR y arrancan a correr Tesseract sobre
+    los PDFs escaneados: la suite pasa de ~90 s a más de 10 minutos. Acá no hay tests de parseo, así
+    que el tessdata que se copie es inofensivo.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" Version="7.2.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ContableAI.API\ContableAI.API.csproj" />
+  </ItemGroup>
+
+</Project>

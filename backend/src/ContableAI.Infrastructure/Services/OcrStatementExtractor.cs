@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PDFtoImage;
 using SkiaSharp;
 using System.Text;
+using System.Text.RegularExpressions;
 using Tesseract;
 using UglyToad.PdfPig;
 using PdfPage = UglyToad.PdfPig.Content.Page;
@@ -60,10 +61,14 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         {
             // PDF digital: extracción de texto directa (líneas crudas; el merge de filas partidas
             // lo aplica el parser, que es donde vive la lógica de interpretación).
-            var bank = DetectBank(pages, fileName);
-            _logger.LogDebug("[PDF] Ruta DIGITAL — banco detectado: {Bank}", bank);
+            //
+            // Las filas se arman ANTES de detectar el banco: la señal más confiable (el CBU del
+            // encabezado) necesita saber qué líneas son el encabezado, y eso solo existe con la
+            // grilla posicional armada — no con la bolsa de palabras de la página.
             var rows = ExtractPositionalRows(pages);
             _logger.LogDebug("[PDF] Filas posicionales extraídas: {RowCount}", rows.Count);
+            var bank = DetectBank(pages, rows, fileName);
+            _logger.LogDebug("[PDF] Ruta DIGITAL — banco detectado: {Bank}", bank);
             return new StatementDocument(bank, StatementSource.Digital, rows);
         }
 
@@ -101,10 +106,10 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
     }
 
     /// <summary>
-    /// Determina a qué banco pertenece el PDF analizando el nombre del archivo
-    /// y una muestra del texto de las primeras páginas.
+    /// Determina a qué banco pertenece el PDF: nombre del archivo → CBU del encabezado → muestra
+    /// del texto de las primeras páginas.
     /// </summary>
-    private static string DetectBank(IList<PdfPage> pages, string fileName)
+    private static string DetectBank(IList<PdfPage> pages, IReadOnlyList<StatementLine> rows, string fileName)
     {
         var normalizedFileName = (fileName ?? string.Empty).ToUpperInvariant()
             .Replace("_20", " ")
@@ -120,6 +125,9 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
             normalizedFileName.Contains("_MP_") ||
             normalizedFileName.Contains(" MP ") ||
             normalizedFileName.Contains("-MP-"))        return BankCodes.MercadoPago;
+
+        // El CBU etiquetado del encabezado manda sobre cualquier palabra suelta del cuerpo.
+        if (DetectBankFromHeaderCbu(rows) is { } byCbu) return byCbu;
 
         // Fallback: Analizar el contenido de las primeras dos páginas
         var sample = new StringBuilder();
@@ -198,7 +206,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
     /// <summary>
     /// Detecta el banco desde el texto ya extraído (usado en el path OCR donde no hay Pages de PdfPig).
     /// </summary>
-    private static string DetectBankFromRows(List<StatementLine> rows, string fileName)
+    internal static string DetectBankFromRows(List<StatementLine> rows, string fileName)
     {
         var normalizedFileName = (fileName ?? string.Empty).ToUpperInvariant()
             .Replace("_20", " ").Replace("%20", " ");
@@ -210,6 +218,9 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         if (normalizedFileName.Contains("CIUDAD"))      return BankCodes.Ciudad;
         if (normalizedFileName.Contains("MERCADOPAGO") ||
             normalizedFileName.Contains("_MP_"))        return BankCodes.MercadoPago;
+
+        // El CBU etiquetado del encabezado manda sobre cualquier palabra suelta del cuerpo.
+        if (DetectBankFromHeaderCbu(rows) is { } byCbu) return byCbu;
 
         var text = string.Join(" ",
             rows.Take(80).SelectMany(r => r.Cells.Select(c => c.Text))
@@ -230,6 +241,47 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
             return BankCodes.Santander;
 
         return BankCodes.Generic;
+    }
+
+    // ── Detección por CBU del encabezado ───────────────────────────────────────
+    //
+    // Existe porque buscar el NOMBRE del banco en el texto es una señal ruidosa: la descripción de
+    // un movimiento puede nombrar a otra entidad. Un extracto de Santander con una transferencia
+    // "De ... / mercado pago / ..." se detectaba como MercadoPago —la palabra aparece en el cuerpo
+    // y el chequeo de MercadoPago corre antes que el de Santander— y terminaba parseado con la
+    // estrategia equivocada: sin columnas Débito/Crédito, TODOS los movimientos quedaban como
+    // crédito. El CBU del encabezado no tiene esa ambigüedad: identifica a la cuenta que el
+    // documento informa, y su prefijo, a la entidad que la emitió.
+
+    /// <summary>Solo el encabezado: pasada esa altura ya empiezan los movimientos.</summary>
+    private const int HeaderRowsToScan = 40;
+
+    /// <summary>
+    /// CBU/CVU precedido de su etiqueta en la MISMA fila. La etiqueta es lo que separa el CBU de
+    /// la cuenta (el dato que buscamos) de una corrida larga de dígitos cualquiera — un número de
+    /// referencia, un CUIT sin guiones o varios importes que por casualidad suman 22 dígitos.
+    /// </summary>
+    private static readonly Regex RxLabeledCbu = new(
+        @"\b(?:CBU|CVU)\b[^\d]{0,20}(\d[\d\s.\-]{20,32}\d)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Banco emisor leído del CBU etiquetado del encabezado, o <c>null</c> si no hay ninguno
+    /// legible o su prefijo no está en el catálogo (ver <see cref="BankCodes.FromCbu"/>).
+    /// </summary>
+    internal static string? DetectBankFromHeaderCbu(IReadOnlyList<StatementLine> rows)
+    {
+        foreach (var row in rows.Take(HeaderRowsToScan))
+        {
+            var line = string.Join(" ", row.Cells.Select(c => c.Text)).ToUpperInvariant();
+
+            foreach (Match m in RxLabeledCbu.Matches(line))
+            {
+                var digits = new string([.. m.Groups[1].Value.Where(char.IsDigit)]);
+                if (BankCodes.FromCbu(digits) is { } bank) return bank;
+            }
+        }
+
+        return null;
     }
 
     private static string GetTessDataPath()
