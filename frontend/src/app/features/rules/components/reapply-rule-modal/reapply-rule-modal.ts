@@ -57,14 +57,13 @@ export class ReapplyRuleModal {
    */
   outOfScopeCount = computed(() => this.preview()?.skippedOutOfScope ?? 0);
 
+  /**
+   * Solo mueve el signal. El recálculo del preview lo dispara el effect del constructor, que
+   * depende de `scope` — pedirlo también acá mandaba DOS requests por cada cambio de alcance,
+   * justo al endpoint más caro del flujo (recorre todo el historial de la empresa).
+   */
   setScope(scope: ReapplyScope): void {
-    if (this.scope() === scope) return;
     this.scope.set(scope);
-
-    // El preview depende del alcance: hay que recalcularlo, si no el modal mostraría el impacto
-    // de la otra opción y el usuario confirmaría sobre un número que no corresponde.
-    const rule = this.rule();
-    if (rule) this.loadPreview(rule);
   }
 
   /** Total de coincidencias que quedan intactas por alguna de las exclusiones. */
@@ -81,7 +80,12 @@ export class ReapplyRuleModal {
   constructor() {
     effect(() => {
       const rule = this.rule();
-      if (rule) this.loadPreview(rule);
+      // `scope` se lee acá y no dentro de loadPreview a propósito: la dependencia del effect
+      // sobre el alcance tiene que ser explícita. El preview mide el impacto de UN alcance
+      // concreto, así que cambiarlo obliga a recalcularlo — si no, el modal mostraría el número
+      // de la otra opción y el usuario confirmaría sobre un dato que no corresponde.
+      const scope = this.scope();
+      if (rule) this.loadPreview(rule, scope);
       else      this.resetState();
     });
   }
@@ -96,12 +100,12 @@ export class ReapplyRuleModal {
   }
 
   /** Pide el impacto sin escribir: cuántos movimientos se van a sobrescribir y de qué origen. */
-  private loadPreview(rule: AccountingRule): void {
+  private loadPreview(rule: AccountingRule, scope: ReapplyScope): void {
     this.preview.set(null);
     this.jobState.set(null);
     this.isLoadingPreview.set(true);
 
-    this.ruleService.reapplyPreview(rule.id, this.scope()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.ruleService.reapplyPreview(rule.id, scope).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: preview => {
         this.preview.set(preview);
         this.isLoadingPreview.set(false);

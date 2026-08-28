@@ -31,6 +31,15 @@
     <ProjectReference Include="..\ContableAI.Infrastructure\ContableAI.Infrastructure.csproj" />
   </ItemGroup>
 
+  <!--
+    Mismo criterio que Infrastructure: los handlers de los endpoints se declaran `internal` para
+    que no formen parte de la superficie pública del ensamblado, pero los tests necesitan poder
+    invocarlos sin levantar un host HTTP completo.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ContableAI.Api.Tests" />
+  </ItemGroup>
+
   <!-- Tessdata: copiado al output para OCR en dev Windows (en Docker se instala por apt) -->
   <ItemGroup>
     <None Update="tessdata\**\*">

@@ -48,6 +48,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ContableAI.Domain\ContableAI.Domain.csproj" />
     <ProjectReference Include="..\..\src\ContableAI.Infrastructure\ContableAI.Infrastructure.csproj" />
+    <!--
+      NO referenciar acá ContableAI.API. Su `tessdata` (40 MB) se copia al output del proyecto que
+      la referencie, y GetTessDataPath() busca justamente ahí: con esos archivos presentes, los
+      tests del corpus dejan de saltear la ruta OCR y arrancan a correr Tesseract sobre los PDFs
+      escaneados — la suite pasa de ~90 s a más de 10 minutos. Los tests que necesitan la API viven
+      en ContableAI.Api.Tests, que no tiene tests de parseo.
+    -->
   </ItemGroup>
 
 </Project>
