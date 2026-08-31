@@ -1,3 +1,4 @@
+import { effect, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -267,6 +268,38 @@ describe('ReconciliationService', () => {
       // Con un filtro puesto, la grilla vacía es un "sin resultados", no un onboarding.
       service.setFilter({ search: 'edenor' });
       expect(service.isEmptyCompany()).toBe(false);
+    });
+
+    // Regresión del bucle infinito de requests. La página recarga la grilla desde un effect()
+    // cuando el job de reaplicación termina. loadData() lee filtros/paginación/empresa de forma
+    // SÍNCRONA, así que sin untracked() esas lecturas quedaban registradas como dependencias del
+    // effect llamador; la respuesta reescribe _pagination (objeto nuevo, siempre "cambia") y el
+    // effect se re-disparaba solo: cientos de GET /transactions por segundo.
+    it('loadData() no registra dependencias: llamarlo desde un effect no genera un bucle', () => {
+      const trigger = signal(0);
+
+      TestBed.runInInjectionContext(() => {
+        effect(() => {
+          trigger();               // única dependencia legítima
+          service.loadData();
+        });
+      });
+
+      TestBed.tick();
+      const first = httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/transactions'));
+
+      // Esta respuesta escribe _pagination. Si el effect la tuviera como dependencia, volvería
+      // a correr y pediría de nuevo — el bucle.
+      first.flush(pagedResult([makeTx({ id: 'tx-1' })], { totalCount: 1, totalPages: 1 }));
+
+      TestBed.tick();
+      httpMock.expectNone(r => r.method === 'GET' && r.url.endsWith('/transactions'));
+
+      // Y el effect sigue vivo para lo que sí es su dependencia.
+      trigger.update(n => n + 1);
+      TestBed.tick();
+      httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/transactions'))
+              .flush(pagedResult([]));
     });
 
     // Regresión del "spinner infinito": tras reaplicar una regla, el GET de la grilla quedaba
