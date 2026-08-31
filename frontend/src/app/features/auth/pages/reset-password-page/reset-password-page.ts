@@ -3,11 +3,12 @@ import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, Va
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { AuthService } from '../../../../core/services/auth.service';
 import { LucideAngularModule } from 'lucide-angular';
+import { PasswordInput } from '../../../../shared/components/password-input/password-input';
 
 @Component({
   selector: 'app-reset-password-page',
   standalone: true,
-  imports: [ReactiveFormsModule, RouterLink, LucideAngularModule],
+  imports: [ReactiveFormsModule, RouterLink, LucideAngularModule, PasswordInput],
   templateUrl: './reset-password-page.html',
 })
 export class ResetPasswordPage implements OnInit {
