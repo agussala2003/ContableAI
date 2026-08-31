@@ -1,7 +1,7 @@
 import { Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer } from 'rxjs';
-import { switchMap, take, takeWhile, tap } from 'rxjs/operators';
+import { finalize, switchMap, take, takeWhile, tap } from 'rxjs/operators';
 import { LucideAngularModule } from 'lucide-angular';
 import { AccountingRule, ReapplyRuleReport, ReapplyScope, RuleService } from '../../../../core/services/rule.service';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -30,6 +30,12 @@ export class ReapplyRuleModal {
   closed = output<void>();
   /** El job terminó bien: el padre puede recargar sus datos. */
   completed = output<ReapplyRuleReport>();
+  /**
+   * Hay o no un job en vuelo. Lo consume la grilla para el spinner de la fila: sin esto el padre
+   * solo sabe si el modal está abierto, y el kebab giraba desde que se abría el preview —cuando
+   * todavía no hay nada corriendo— hasta que alguien cerrara el modal.
+   */
+  running = output<boolean>();
 
   private ruleService = inject(RuleService);
   private toast       = inject(ToastService);
@@ -93,7 +99,7 @@ export class ReapplyRuleModal {
   private resetState(): void {
     this.preview.set(null);
     this.isLoadingPreview.set(false);
-    this.isReapplying.set(false);
+    this.setRunning(false);
     this.jobState.set(null);
     // Vuelve al alcance seguro: que la elección destructiva de una regla no se herede a la próxima.
     this.scope.set('pending');
@@ -131,13 +137,17 @@ export class ReapplyRuleModal {
     const rule = this.rule();
     if (!rule) return;
 
-    this.isReapplying.set(true);
+    // El reporte se captura ACÁ: si el usuario manda el modal al fondo mientras el job corre,
+    // resetState() vacía `preview` y el mensaje final anunciaría "0 movimientos".
+    const report = this.preview();
+
+    this.setRunning(true);
     this.jobState.set('Enqueued');
 
     this.ruleService.reapplyAsync(rule.id, this.scope()).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: ({ jobId }) => this.pollJob(jobId, rule),
+      next: ({ jobId }) => this.pollJob(jobId, rule, report),
       error: err => {
-        this.isReapplying.set(false);
+        this.setRunning(false);
         this.jobState.set(null);
         this.toast.error(this.problemMessage(err, 'No se pudo iniciar la reaplicación.'));
       },
@@ -149,7 +159,7 @@ export class ReapplyRuleModal {
    * tope de intentos se avisa sin dar el proceso por perdido, porque el job sigue corriendo del
    * lado del servidor.
    */
-  private pollJob(jobId: string, rule: AccountingRule): void {
+  private pollJob(jobId: string, rule: AccountingRule, report: ReapplyRuleReport | null): void {
     const maxPolls = Math.ceil(this.POLL_TIMEOUT_MS / this.POLL_INTERVAL_MS);
     let polls = 0;
     let finished = false;
@@ -159,6 +169,14 @@ export class ReapplyRuleModal {
       tap(() => polls++),
       switchMap(() => this.ruleService.getJobStatus(jobId)),
       takeWhile(status => !this.isFinalJobState(status.state), true),
+      // ÚNICA salida del estado "procesando". Antes lo apagaba cada rama por su cuenta y la del
+      // error se olvidaba de avisarle al padre: el spinner de la fila —que se apaga con (running)
+      // / (closed)— quedaba girando para siempre sobre una regla sin nada en vuelo. finalize
+      // corre en éxito, en error, al agotarse el polling y al destruirse el componente.
+      finalize(() => {
+        this.setRunning(false);
+        this.jobState.set(null);
+      }),
       takeUntilDestroyed(this.destroyRef),
     ).subscribe({
       next: status => {
@@ -166,10 +184,8 @@ export class ReapplyRuleModal {
         if (!this.isFinalJobState(status.state)) return;
 
         finished = true;
-        this.isReapplying.set(false);
 
         if (status.state === 'Succeeded') {
-          const report = this.preview();
           const updated = report?.totalToUpdate ?? 0;
           this.toast.success(
             `"${rule.keyword}" se reaplicó a ${updated} movimiento${updated !== 1 ? 's' : ''}.`
@@ -177,27 +193,32 @@ export class ReapplyRuleModal {
           // Los movimientos cambiaron: la grilla de conciliación tiene que releerlos.
           this.ruleService.triggerTransactionRefresh();
           if (report) this.completed.emit(report);
-          this.close();
         } else {
           this.toast.error('La reaplicación falló. Revisá el estado del trabajo o reintentá.');
-          this.close();
         }
+        this.close();
       },
       error: () => {
-        this.isReapplying.set(false);
-        this.jobState.set(null);
         this.toast.error('Se perdió la conexión mientras se seguía el progreso. El proceso puede haber continuado.');
+        // Cerrar también acá: el job sigue del lado del servidor, pero la UI no tiene nada más
+        // que mostrar y dejar el modal abierto deja la fila marcada como ocupada.
+        this.close();
       },
       complete: () => {
         // Solo se llega acá sin resultado si se agotaron los intentos (al destruir el componente
         // polls < maxPolls, así que no hay toast espurio al navegar a otra pantalla).
         if (!finished && polls >= maxPolls) {
-          this.isReapplying.set(false);
           this.toast.warning('La reaplicación está tardando más de lo normal. Sigue corriendo en segundo plano.');
           this.close();
         }
       },
     });
+  }
+
+  /** Único punto que mueve `isReapplying`, para que el padre nunca se entere a destiempo. */
+  private setRunning(running: boolean): void {
+    this.isReapplying.set(running);
+    this.running.emit(running);
   }
 
   private isFinalJobState(state: string): boolean {

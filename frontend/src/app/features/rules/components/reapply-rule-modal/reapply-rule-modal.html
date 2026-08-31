@@ -157,11 +157,16 @@
       </div>
 
       <div class="flex items-center justify-end gap-2 px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-700">
-        <button (click)="close()" [disabled]="isReapplying()"
+        <!-- Nunca deshabilitado: con el botón bloqueado, cualquier job que tardara —o cualquier
+             estado que el polling no reconociera como final— dejaba al usuario encerrado mirando
+             el spinner, sin forma de volver a la pantalla. El job sigue corriendo igual. -->
+        <button (click)="close()"
           class="px-3.5 py-2 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300
                  bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
                  hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors">
-          @if ((preview()?.totalToUpdate ?? 0) === 0 && !isReapplying() && !isLoadingPreview()) { Cerrar } @else { Cancelar }
+          @if (isReapplying()) { Seguir en segundo plano }
+          @else if ((preview()?.totalToUpdate ?? 0) === 0 && !isLoadingPreview()) { Cerrar }
+          @else { Cancelar }
         </button>
         <button (click)="confirm()"
           [disabled]="isReapplying() || isLoadingPreview() || (preview()?.totalToUpdate ?? 0) === 0"

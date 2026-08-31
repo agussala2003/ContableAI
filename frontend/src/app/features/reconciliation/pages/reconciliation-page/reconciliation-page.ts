@@ -1,6 +1,6 @@
 import { Component, inject, signal, computed, effect, OnInit, viewChild, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { timer, switchMap, take } from 'rxjs';
+import { timer, switchMap, take, finalize } from 'rxjs';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { CompanyService } from '../../../../core/services/company.service';
@@ -313,10 +313,14 @@ export class ReconciliationPage implements OnInit {
     };
 
     this.isSavingQuickRule.set(true);
-    this.ruleService.createRule(companyId, req).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+    this.ruleService.createRule(companyId, req).pipe(
+      // Una sola salida del estado de guardado: cualquier rama que se olvide de apagarlo deja el
+      // botón en "Guardando..." para siempre.
+      finalize(() => this.isSavingQuickRule.set(false)),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
       next: (rule) => {
         this.bulkRules.update(list => [rule, ...list]);
-        this.isSavingQuickRule.set(false);
         this.closeQuickRuleModal();
         this.toast.success('Regla creada.');
         // Encadena el flujo retroactivo: el usuario acaba de crear la regla mirando un movimiento
@@ -325,7 +329,6 @@ export class ReconciliationPage implements OnInit {
         this.reapplyingRule.set(rule);
       },
       error: () => {
-        this.isSavingQuickRule.set(false);
         this.toast.error('No se pudo crear la regla rápida.');
       },
     });
@@ -414,7 +417,8 @@ export class ReconciliationPage implements OnInit {
     let found = false;
     timer(2000, 2000).pipe(
       take(10),
-      switchMap(() => this.afipService.getVouchers(companyId)),
+      // silent: sin esto, cada ciclo del polling levanta el overlay global bloqueante.
+      switchMap(() => this.afipService.getVouchers(companyId, true)),
       takeUntilDestroyed(this.destroyRef),
     ).subscribe({
       next: (vouchers) => {

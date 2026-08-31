@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap } from 'rxjs';
 import { ConfigService } from '../config/config.service';
@@ -44,6 +44,15 @@ export class CompanyService {
   // Estado global: empresa seleccionada actualmente
   activeCompany = signal<Company | null>(null);
   companies = signal<Company[]>([]);
+
+  /**
+   * Id de la empresa activa. Es la dependencia que deben observar los effects que recargan datos:
+   * `activeCompany` es un OBJETO y `loadCompanies()` lo reemplaza por una instancia nueva en cada
+   * llamada —abrir el modal de empresas la dispara—, así que un effect atado al objeto se
+   * re-ejecutaba, y lanzaba otra request, sin que la empresa hubiera cambiado. El computed compara
+   * strings: solo emite cuando la empresa es realmente otra.
+   */
+  readonly activeCompanyId = computed(() => this.activeCompany()?.id ?? null);
 
   loadCompanies(): Observable<Company[]> {
     return this.http.get<Company[]>(this.apiUrl).pipe(

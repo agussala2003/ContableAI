@@ -38,8 +38,8 @@
         [searchQuery]="searchQuery()"
         [filterType]="filterType()"
         [deletingId]="deletingId()"
-        [promotingId]="promotingRule()?.id ?? null"
-        [reapplyingId]="reapplyingRule()?.id ?? null"
+        [promotingId]="isPromoting() ? (promotingRule()?.id ?? null) : null"
+        [reapplyingId]="reapplyRunningId()"
         [overrideMapByOwnRule]="overrideMapByOwnRule()"
         [overrideMapByGlobalRule]="overrideMapByGlobalRule()"
         (createRequested)="openCreate()"
@@ -71,6 +71,7 @@
 
   <app-reapply-rule-modal
     [rule]="reapplyingRule()"
+    (running)="onReapplyRunning($event)"
     (closed)="reapplyingRule.set(null)"
     (completed)="onReapplyCompleted()"
   />

@@ -205,6 +205,69 @@ describe('ReconciliationService', () => {
       httpMock.expectOne(r => r.url.endsWith('/companies/company-2/afip/vouchers')).flush([]);
       httpMock.expectOne(r => r.url.endsWith('/companies/company-2/bank-accounts')).flush([]);
     });
+
+    // Regresión del "falso empty state": el usuario dejaba trabajo a medias en A, miraba B y al
+    // volver a A el onboarding "Subí tu primer extracto" le tapaba todo. La causa era que cada
+    // loadData() abría su propio subscribe: la respuesta —vacía— de B llegaba después de la de A
+    // y pisaba la grilla. El listado en vuelo tiene que cancelarse al cambiar de empresa.
+    it('cancela el listado de la empresa anterior al volver atrás (A → B → A)', () => {
+      const flushSideRequests = (companyId: string) => {
+        httpMock.expectOne(r => r.url.endsWith(`/companies/${companyId}/afip/vouchers`)).flush([]);
+        httpMock.expectOne(r => r.url.endsWith(`/companies/${companyId}/bank-accounts`)).flush([]);
+      };
+
+      // Empresa A, con movimientos ya cargados.
+      companyService.activeCompany.set(makeCompany({ id: 'company-a' }));
+      TestBed.tick();
+      flushList(pagedResult([makeTx({ id: 'tx-a' })], { totalCount: 1, totalPages: 1 }));
+      flushSideRequests('company-a');
+      expect(service.isEmptyCompany()).toBe(false);
+
+      // Empresa B (vacía). Su listado queda en vuelo: el usuario vuelve antes de que responda.
+      companyService.activeCompany.set(makeCompany({ id: 'company-b' }));
+      TestBed.tick();
+      flushSideRequests('company-b');
+
+      // Vuelta a A.
+      companyService.activeCompany.set(makeCompany({ id: 'company-a' }));
+      TestBed.tick();
+      flushSideRequests('company-a');
+
+      const listRequests = httpMock.match(r => r.method === 'GET' && r.url.endsWith('/transactions'));
+      const requestB = listRequests.find(r => r.request.params.get('companyId') === 'company-b');
+      const liveRequests = listRequests.filter(r => !r.cancelled);
+
+      // La de B ya no puede contestar, así que no hay forma de que pise la grilla de A.
+      expect(requestB?.cancelled).toBe(true);
+      expect(liveRequests.length).toBe(1);
+      expect(liveRequests[0].request.params.get('companyId')).toBe('company-a');
+
+      // Mientras la recarga está en vuelo tampoco se muestra el onboarding.
+      expect(service.isEmptyCompany()).toBe(false);
+
+      liveRequests[0].flush(pagedResult([makeTx({ id: 'tx-a' })], { totalCount: 1, totalPages: 1 }));
+
+      expect(service.transactions().length).toBe(1);
+      expect(service.isEmptyCompany()).toBe(false);
+    });
+
+    it('isEmptyCompany solo es true con la empresa activa cargada y sin movimientos', () => {
+      companyService.activeCompany.set(makeCompany({ id: 'company-a' }));
+      TestBed.tick();
+
+      // En vuelo: todavía no se sabe si está vacía.
+      expect(service.isEmptyCompany()).toBe(false);
+
+      flushList(pagedResult([], { totalCount: 0, totalPages: 0 }));
+      httpMock.expectOne(r => r.url.endsWith('/companies/company-a/afip/vouchers')).flush([]);
+      httpMock.expectOne(r => r.url.endsWith('/companies/company-a/bank-accounts')).flush([]);
+
+      expect(service.isEmptyCompany()).toBe(true);
+
+      // Con un filtro puesto, la grilla vacía es un "sin resultados", no un onboarding.
+      service.setFilter({ search: 'edenor' });
+      expect(service.isEmptyCompany()).toBe(false);
+    });
   });
 
   // ── Pila de deshacer (undo stack) ─────────────────────────────────────────

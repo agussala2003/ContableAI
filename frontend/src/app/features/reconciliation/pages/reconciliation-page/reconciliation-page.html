@@ -27,7 +27,11 @@
   }
 
   <!-- ESTADO 2 — Empresa activa, sin transacciones (Onboarding) -->
-  @else if (!svc.isLoading() && svc.transactions().length === 0 && !svc.hasActiveFilters()) {
+  <!-- La condición vive en el servicio (isEmptyCompany): además de "no hay filas" exige que lo
+       cargado sea DE la empresa activa y que el total del backend sea cero. Con la condición
+       anterior, una respuesta de otra empresa que llegaba tarde mostraba este onboarding encima
+       del trabajo ya hecho. -->
+  @else if (svc.isEmptyCompany()) {
   <div class="flex flex-col items-center justify-center h-full gap-4 px-4 py-4 overflow-y-auto">
 
     <div class="w-full max-w-2xl flex items-center justify-between animate-fade-in">
