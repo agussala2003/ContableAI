@@ -195,7 +195,14 @@ export class ReconciliationService {
   private subscribeToLoadRequests(): void {
     this._loadRequests.pipe(
       tap(() => this._isLoading.set(true)),
-      switchMap(() => {
+      // untracked() NO es decorativo: este proyector corre de forma SÍNCRONA dentro de quien
+      // haya llamado a loadData(). Si el llamador es un effect(), los signals que se leen acá
+      // —filtros, paginación, empresa activa— quedan registrados como dependencias SUYAS. Y como
+      // la respuesta escribe _pagination (objeto nuevo en cada update, así que siempre "cambia"),
+      // el effect se volvía a disparar, pedía de nuevo, volvía a escribir _pagination… cientos de
+      // GET /transactions por segundo. Envolverlo acá lo arregla para TODOS los call sites, no
+      // solo para el que lo destapó.
+      switchMap(() => untracked(() => {
         const f = this._filters();
         const p = this._pagination();
         const companyId = this.companyService.activeCompanyId() ?? undefined;
@@ -236,7 +243,7 @@ export class ReconciliationService {
             return of({ companyId: companyId ?? null, result: null });
           }),
         );
-      }),
+      })),
       takeUntilDestroyed(this.destroyRef),
     ).subscribe(({ companyId, result }) => {
       // Red de seguridad: la empresa pudo cambiar entre el pedido y la respuesta.

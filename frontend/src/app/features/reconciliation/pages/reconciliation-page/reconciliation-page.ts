@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed, effect, OnInit, viewChild, DestroyRef } from '@angular/core';
+import { Component, inject, signal, computed, effect, untracked, OnInit, viewChild, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { timer, switchMap, take, finalize } from 'rxjs';
 import { DecimalPipe } from '@angular/common';
@@ -138,13 +138,20 @@ export class ReconciliationPage implements OnInit {
   readonly pageSizeOptions = [10, 50, 100] as const;
 
   constructor() {
+    // El tick es la ÚNICA dependencia de este effect. La recarga va dentro de untracked() porque
+    // loadData() lee filtros/paginación/empresa de forma síncrona: sin aislarla, esas lecturas se
+    // volvían dependencias del effect, y como la respuesta reescribe la paginación el effect se
+    // re-disparaba solo, en bucle. Se ve como "Procesando..." eterno con cientos de GET por
+    // segundo en la pestaña Network, justo después de reaplicar una regla.
     effect(() => {
       const tick = this.ruleService.transactionRefreshTick();
-      if (tick > 0) this.svc.loadData();
+      if (tick > 0) untracked(() => this.svc.loadData());
     });
     effect(() => {
       const dups = this.svc.skippedDuplicates();
-      if (dups.length) this.pendingDuplicates.set(dups);
+      untracked(() => {
+        if (dups.length) this.pendingDuplicates.set(dups);
+      });
     });
   }
 

@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed, effect, DestroyRef } from '@angular/core';
+import { Component, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Subject, of, catchError, map, switchMap, tap } from 'rxjs';
 import { DecimalPipe, NgClass } from '@angular/common';
@@ -112,12 +112,16 @@ export class DashboardPage {
       const companyId = this.companyService.activeCompanyId();
       const month     = this.selectedMonth();
       const year      = this.selectedYear();
-      if (companyId) {
-        this.load(companyId, month, year);
-      } else {
-        this.stats.set(null);
-        this.loading.set(false);
-      }
+      // Las tres lecturas de arriba son las dependencias buscadas; lo de abajo no debe sumar
+      // ninguna más (ver el comentario del mismo patrón en ReconciliationService).
+      untracked(() => {
+        if (companyId) {
+          this.load(companyId, month, year);
+        } else {
+          this.stats.set(null);
+          this.loading.set(false);
+        }
+      });
     });
   }
 
