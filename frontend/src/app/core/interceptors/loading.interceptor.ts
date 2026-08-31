@@ -12,9 +12,11 @@ export const loadingInterceptor: HttpInterceptorFn = (req, next) => {
     return next(req);
   }
 
-  loadingService.begin();
+  // El token se cierra en finalize, que corre en las TRES salidas posibles: respuesta, error y
+  // cancelación (unsubscribe, ej. el switchMap de la grilla descartando una carga anterior).
+  const token = loadingService.begin();
 
   return next(req).pipe(
-    finalize(() => loadingService.end()),
+    finalize(() => loadingService.end(token)),
   );
 };

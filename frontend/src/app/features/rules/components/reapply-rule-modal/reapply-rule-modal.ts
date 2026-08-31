@@ -1,7 +1,7 @@
 import { Component, DestroyRef, computed, effect, inject, input, output, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { timer } from 'rxjs';
-import { finalize, switchMap, take, takeWhile, tap } from 'rxjs/operators';
+import { Subject, of, timer } from 'rxjs';
+import { catchError, finalize, map, switchMap, take, takeWhile, tap } from 'rxjs/operators';
 import { LucideAngularModule } from 'lucide-angular';
 import { AccountingRule, ReapplyRuleReport, ReapplyScope, RuleService } from '../../../../core/services/rule.service';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -83,7 +83,12 @@ export class ReapplyRuleModal {
   private readonly POLL_INTERVAL_MS = 2000;
   private readonly POLL_TIMEOUT_MS  = 5 * 60_000;
 
+  /** Canal del preview: switchMap cancela el cálculo anterior al cambiar el alcance. */
+  private readonly previewRequests = new Subject<{ rule: AccountingRule; scope: ReapplyScope }>();
+
   constructor() {
+    this.subscribeToPreviewRequests();
+
     effect(() => {
       const rule = this.rule();
       // `scope` se lee acá y no dentro de loadPreview a propósito: la dependencia del effect
@@ -110,17 +115,36 @@ export class ReapplyRuleModal {
     this.preview.set(null);
     this.jobState.set(null);
     this.isLoadingPreview.set(true);
+    this.previewRequests.next({ rule, scope });
+  }
 
-    this.ruleService.reapplyPreview(rule.id, scope).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: preview => {
-        this.preview.set(preview);
-        this.isLoadingPreview.set(false);
-      },
-      error: err => {
-        this.isLoadingPreview.set(false);
-        this.toast.error(this.problemMessage(err, 'No se pudo calcular el impacto de la reaplicación.'));
+  /**
+   * Suscripción única del preview.
+   *
+   * El switchMap importa acá más que en ningún otro lado: cambiar el alcance dispara un cálculo
+   * nuevo, y si el viejo llegaba último el modal mostraba el número del OTRO alcance. El usuario
+   * confirmaba una acción destructiva sobre un dato que no correspondía. Además, isLoadingPreview
+   * se apaga siempre —haya respuesta o error—, así que el modal nunca queda en "Calculando...".
+   */
+  private subscribeToPreviewRequests(): void {
+    this.previewRequests.pipe(
+      switchMap(({ rule, scope }) =>
+        this.ruleService.reapplyPreview(rule.id, scope).pipe(
+          map(preview => ({ preview, error: null as unknown })),
+          catchError(error => of({ preview: null, error })),
+        )
+      ),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(({ preview, error }) => {
+      this.isLoadingPreview.set(false);
+
+      if (error) {
+        this.toast.error(this.problemMessage(error, 'No se pudo calcular el impacto de la reaplicación.'));
         this.close();
-      },
+        return;
+      }
+
+      this.preview.set(preview);
     });
   }
 

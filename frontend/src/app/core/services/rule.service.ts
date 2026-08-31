@@ -185,17 +185,28 @@ export class RuleService {
     return this.http.patch<void>(`${this.apiBase}/rules/${id}/deactivate`, {});
   }
 
-  /** Preview de la reaplicación forzada: calcula el impacto sin escribir nada. */
+  /**
+   * Preview de la reaplicación forzada: calcula el impacto sin escribir nada.
+   *
+   * SKIP_LOADING: el modal ya muestra "Calculando el impacto...". Sin esto, además, se levantaba
+   * el overlay global BLOQUEANTE sobre un endpoint que recorre todo el historial de la empresa
+   * — el que más tarda de todo el flujo.
+   */
   reapplyPreview(id: string, scope: ReapplyScope = 'all'): Observable<ReapplyRuleReport> {
     return this.http.post<ReapplyRuleReport>(
       `${this.apiBase}/rules/${id}/reapply-async?dryRun=true&scope=${scope}`, {},
+      { context: new HttpContext().set(SKIP_LOADING, true) },
     );
   }
 
-  /** Encola la reaplicación forzada en Hangfire; el progreso se sigue con {@link getJobStatus}. */
+  /**
+   * Encola la reaplicación forzada en Hangfire; el progreso se sigue con {@link getJobStatus}.
+   * SKIP_LOADING por lo mismo que el preview: el progreso se muestra dentro del modal.
+   */
   reapplyAsync(id: string, scope: ReapplyScope = 'all'): Observable<{ jobId: string; message: string }> {
     return this.http.post<{ jobId: string; message: string }>(
       `${this.apiBase}/rules/${id}/reapply-async?scope=${scope}`, {},
+      { context: new HttpContext().set(SKIP_LOADING, true) },
     );
   }
 

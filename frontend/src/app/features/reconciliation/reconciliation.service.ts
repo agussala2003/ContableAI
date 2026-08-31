@@ -1,6 +1,6 @@
 import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Subject, of, timer, switchMap, takeWhile, take, tap, map, catchError } from 'rxjs';
+import { Subject, of, timer, switchMap, takeWhile, take, tap, map, catchError, timeout, TimeoutError } from 'rxjs';
 import { BankTransaction, Transaction, UploadResponse, UploadJobResultEnvelope, SkippedDuplicate, CurrencyTotals } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
@@ -21,6 +21,9 @@ export interface UploadEvent {
   /** Cuenta elegida a mano; ausente = detectar por OCR. */
   bankAccountId?: string;
 }
+
+/** Tope de espera del listado de movimientos antes de dar la carga por fallida. */
+const LOAD_TIMEOUT_MS = 30_000;
 
 /**
  * Feature-scoped state service for the reconciliation module.
@@ -216,10 +219,22 @@ export class ReconciliationService {
           page:         p.page,
           pageSize:     p.pageSize,
         }).pipe(
+          // Tope duro. Sin esto, una request que no resuelve —ni respuesta, ni error, ni
+          // cancelación— deja _isLoading en true PARA SIEMPRE: la grilla se queda en skeleton y
+          // el overlay global tapa la pantalla. Es el "spinner infinito" que aparecía justo
+          // después de reaplicar una regla, cuando el backend venía de un job pesado.
+          timeout({ each: LOAD_TIMEOUT_MS }),
           map(result => ({ companyId: companyId ?? null, result })),
           // El error se convierte en un valor: si se propagara, mataría la suscripción y la
           // grilla no volvería a cargar en toda la sesión.
-          catchError(() => of({ companyId: companyId ?? null, result: null })),
+          catchError(err => {
+            if (err instanceof TimeoutError) {
+              this.toast.error(
+                'La carga de movimientos está tardando demasiado. Reintentá en unos segundos.',
+              );
+            }
+            return of({ companyId: companyId ?? null, result: null });
+          }),
         );
       }),
       takeUntilDestroyed(this.destroyRef),

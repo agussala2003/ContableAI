@@ -268,6 +268,34 @@ describe('ReconciliationService', () => {
       service.setFilter({ search: 'edenor' });
       expect(service.isEmptyCompany()).toBe(false);
     });
+
+    // Regresión del "spinner infinito": tras reaplicar una regla, el GET de la grilla quedaba
+    // colgado sin respuesta, sin error y sin cancelarse. isLoading se quedaba en true, la grilla
+    // en skeleton y el overlay global bloqueaba la pantalla hasta recargar.
+    it('apaga el skeleton si el listado nunca responde (timeout de 30 s)', () => {
+      vi.useFakeTimers();
+      try {
+        const errorSpy = vi.spyOn(toast, 'error');
+
+        companyService.activeCompany.set(makeCompany({ id: 'company-a' }));
+        TestBed.tick();
+
+        httpMock.expectOne(r => r.url.endsWith('/companies/company-a/afip/vouchers')).flush([]);
+        httpMock.expectOne(r => r.url.endsWith('/companies/company-a/bank-accounts')).flush([]);
+
+        const listReq = httpMock.expectOne(r => r.method === 'GET' && r.url.endsWith('/transactions'));
+        expect(service.isLoading()).toBe(true);
+
+        // La request no se responde nunca: solo el timeout puede sacar a la grilla de ahí.
+        vi.advanceTimersByTime(30_000);
+
+        expect(service.isLoading()).toBe(false);
+        expect(listReq.cancelled).toBe(true);
+        expect(errorSpy).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   // ── Pila de deshacer (undo stack) ─────────────────────────────────────────
