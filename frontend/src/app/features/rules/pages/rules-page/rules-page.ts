@@ -181,6 +181,18 @@ export class RulesPage {
   /** Regla en curso de reaplicación; abre `app-reapply-rule-modal` cuando no es null. */
   reapplyingRule = signal<AccountingRule | null>(null);
 
+  /**
+   * Regla con un job de reaplicación REALMENTE en vuelo. Es lo que alimenta el spinner de la
+   * fila: `reapplyingRule` solo dice que el modal está abierto —incluso mientras se calcula el
+   * preview, cuando todavía no corre nada— y dejaba el kebab girando de más. El modal lo avisa
+   * con (running), que su finalize garantiza en éxito, error, timeout y destrucción.
+   */
+  reapplyRunningId = signal<string | null>(null);
+
+  onReapplyRunning(running: boolean): void {
+    this.reapplyRunningId.set(running ? this.reapplyingRule()?.id ?? null : null);
+  }
+
   constructor() {
     effect(() => {
       const company = this.companyService.activeCompany();

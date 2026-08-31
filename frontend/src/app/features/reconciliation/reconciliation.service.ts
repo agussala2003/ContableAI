@@ -1,6 +1,6 @@
 import { Injectable, inject, signal, computed, effect, untracked, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { timer, switchMap, takeWhile, take, tap } from 'rxjs';
+import { Subject, of, timer, switchMap, takeWhile, take, tap, map, catchError } from 'rxjs';
 import { BankTransaction, Transaction, UploadResponse, UploadJobResultEnvelope, SkippedDuplicate, CurrencyTotals } from '../../core/services/transaction';
 import { ToastService } from '../../core/services/toast.service';
 import { ConfirmDialogService } from '../../core/services/confirm-dialog.service';
@@ -63,6 +63,14 @@ export class ReconciliationService {
   private _availableYears         = signal<number[]>([]);
   private _pendingAfipCount       = signal<number>(0);
   private _skippedDuplicates      = signal<SkippedDuplicate[]>([]);
+  /** Empresa a la que pertenece lo que hay HOY en la grilla; null hasta la primera respuesta. */
+  private _loadedCompanyId        = signal<string | null>(null);
+
+  /**
+   * Canal único de recarga. Todas las llamadas a loadData() pasan por acá y el switchMap de
+   * abajo cancela la request anterior, de modo que nunca puede haber dos listados en vuelo.
+   */
+  private readonly _loadRequests = new Subject<void>();
 
   // ── Undo Stack ─────────────────────────────────────────────────────────
   private _undoStack: Array<{ id: string; oldAccount: string }> = [];
@@ -112,6 +120,7 @@ export class ReconciliationService {
   readonly availableYears    = this._availableYears.asReadonly();
   readonly pendingAfipCount  = this._pendingAfipCount.asReadonly();
   readonly skippedDuplicates = this._skippedDuplicates.asReadonly();
+  readonly loadedCompanyId   = this._loadedCompanyId.asReadonly();
 
   // ── Computed ───────────────────────────────────────────────────────────
   readonly saldo = computed(() => this._totalIngresosFiltered() - this._totalEgresosFiltered());
@@ -128,23 +137,122 @@ export class ReconciliationService {
       .filter(t => t.assignedAccount && !t.journalEntryId)
       .map(t => t.id)
   );
+  /**
+   * La empresa activa está REALMENTE vacía y corresponde mostrar el onboarding.
+   *
+   * No alcanza con "la grilla no tiene filas": esa condición también es cierta mientras una
+   * recarga está en vuelo, cuando lo que quedó en pantalla es de otra empresa, o cuando el
+   * usuario está parado en una página que quedó fuera de rango. Se exige, además, que lo cargado
+   * pertenezca a la empresa activa y que el TOTAL del backend —no el de la página— sea cero.
+   */
+  readonly isEmptyCompany = computed(() =>
+    !this._isLoading()
+    && this._loadedCompanyId() !== null
+    && this._loadedCompanyId() === this.companyService.activeCompanyId()
+    && this._pagination().totalCount === 0
+    && !this.hasActiveFilters()
+  );
+
   readonly canExport = computed(() => {
     const companyId = this.companyService.activeCompany()?.id;
     return !!companyId && !this._isLoading() && this._pagination().totalCount > 0;
   });
 
   constructor() {
-    // Reload when the active company changes (reset to page 1)
+    this.subscribeToLoadRequests();
+
+    // Reload when the active company changes (reset to page 1).
+    // Depende de activeCompanyId (string) y no de activeCompany (objeto): loadCompanies()
+    // reemplaza el objeto por una instancia nueva cada vez que se abre el modal de empresas, y
+    // con el objeto como dependencia este effect recargaba la grilla sin que la empresa hubiera
+    // cambiado — una request de más compitiendo con la que sí importaba.
     effect(() => {
-      const company = this.companyService.activeCompany();
+      const companyId = this.companyService.activeCompanyId();
       untracked(() => {
         this._pagination.update(p => ({ ...p, page: 1 }));
         this._filters.update(f => ({ ...f, bankCode: null, bankAccountId: null }));
         this.loadData();
         this.refreshAfipCount();
         // Alimenta el selector de cuenta de la Dropzone.
-        this.bankAccountService.refresh(company?.id);
+        this.bankAccountService.refresh(companyId ?? undefined);
       });
+    });
+  }
+
+  /**
+   * Suscripción única del listado.
+   *
+   * Antes cada loadData() abría su propio subscribe. Al cambiar de empresa A → B → A quedaban
+   * tres requests en vuelo sin ninguna relación entre sí, y la grilla terminaba mostrando la que
+   * respondía última: si B contestaba después de A, la pantalla quedaba con los datos —vacíos—
+   * de B mientras el selector decía A, y el onboarding "Subí tu primer extracto" tapaba todo el
+   * trabajo hecho en A. El switchMap cancela la anterior en cada emisión, y el companyId con el
+   * que se pidió viaja con la respuesta para descartar cualquier resultado que ya no corresponda.
+   */
+  private subscribeToLoadRequests(): void {
+    this._loadRequests.pipe(
+      tap(() => this._isLoading.set(true)),
+      switchMap(() => {
+        const f = this._filters();
+        const p = this._pagination();
+        const companyId = this.companyService.activeCompanyId() ?? undefined;
+
+        return this.txService.getTransactions({
+          companyId,
+          month:        f.month    ?? undefined,
+          year:         f.year     ?? undefined,
+          search:       f.search   || undefined,
+          account:      f.account  || undefined,
+          bankCode:      f.bankCode      ?? undefined,
+          bankAccountId: f.bankAccountId ?? undefined,
+          direction:    f.direction ?? undefined,
+          currency:     f.currency  ?? undefined,
+          sortBy:       f.sortBy   ?? undefined,
+          sortDir:      f.sortDir  ?? undefined,
+          strictSearch: f.strictSearch || undefined,
+          exactAmount:  f.amountMode === 'exact' ? f.exactAmount ?? undefined : undefined,
+          minAmount:    f.amountMode === 'range' ? f.minAmount ?? undefined : undefined,
+          maxAmount:    f.amountMode === 'range' ? f.maxAmount ?? undefined : undefined,
+          page:         p.page,
+          pageSize:     p.pageSize,
+        }).pipe(
+          map(result => ({ companyId: companyId ?? null, result })),
+          // El error se convierte en un valor: si se propagara, mataría la suscripción y la
+          // grilla no volvería a cargar en toda la sesión.
+          catchError(() => of({ companyId: companyId ?? null, result: null })),
+        );
+      }),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(({ companyId, result }) => {
+      // Red de seguridad: la empresa pudo cambiar entre el pedido y la respuesta.
+      if (companyId !== (this.companyService.activeCompanyId() ?? null)) {
+        this._isLoading.set(false);
+        return;
+      }
+
+      if (!result) {
+        this._isLoading.set(false);
+        return;
+      }
+
+      this._transactions.set(result.items);
+      this._pagination.update(pg => ({
+        ...pg,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+      }));
+      this._totalIngresosFiltered.set(result.totalIngresosFiltered ?? 0);
+      this._totalEgresosFiltered.set(result.totalEgresosFiltered ?? 0);
+      this._totalIngresosAll.set(result.totalIngresosAll ?? 0);
+      this._totalEgresosAll.set(result.totalEgresosAll ?? 0);
+      this._currencyTotals.set(result.currencyTotals ?? []);
+      this._availableAccounts.set(result.availableAccounts ?? []);
+      this._availableBankAccounts.set(result.availableBankAccounts ?? []);
+      this._availableBanks.set(result.availableBanks ?? []);
+      this._availableMonths.set(result.availableMonths ?? []);
+      this._availableYears.set(result.availableYears ?? []);
+      this._loadedCompanyId.set(companyId);
+      this._isLoading.set(false);
     });
   }
 
@@ -176,54 +284,12 @@ export class ReconciliationService {
   }
 
   // ── Data loading ───────────────────────────────────────────────────────
+  /**
+   * Pide una recarga de la grilla. La request real —y la cancelación de la anterior si todavía
+   * está en vuelo— la resuelve la suscripción única de {@link subscribeToLoadRequests}.
+   */
   loadData(): void {
-    const f = this._filters();
-    const p = this._pagination();
-    const companyId = this.companyService.activeCompany()?.id;
-
-    this._isLoading.set(true);
-    this.txService.getTransactions({
-      companyId,
-      month:        f.month    ?? undefined,
-      year:         f.year     ?? undefined,
-      search:       f.search   || undefined,
-      account:      f.account  || undefined,
-      bankCode:      f.bankCode      ?? undefined,
-      bankAccountId: f.bankAccountId ?? undefined,
-      direction:    f.direction ?? undefined,
-      currency:     f.currency  ?? undefined,
-      sortBy:       f.sortBy   ?? undefined,
-      sortDir:      f.sortDir  ?? undefined,
-      strictSearch: f.strictSearch || undefined,
-      exactAmount:  f.amountMode === 'exact' ? f.exactAmount ?? undefined : undefined,
-      minAmount:    f.amountMode === 'range' ? f.minAmount ?? undefined : undefined,
-      maxAmount:    f.amountMode === 'range' ? f.maxAmount ?? undefined : undefined,
-      page:         p.page,
-      pageSize:     p.pageSize,
-    }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (result) => {
-        this._transactions.set(result.items);
-        this._pagination.update(pg => ({
-          ...pg,
-          totalCount: result.totalCount,
-          totalPages: result.totalPages,
-        }));
-        this._totalIngresosFiltered.set(result.totalIngresosFiltered ?? 0);
-        this._totalEgresosFiltered.set(result.totalEgresosFiltered ?? 0);
-        this._totalIngresosAll.set(result.totalIngresosAll ?? 0);
-        this._totalEgresosAll.set(result.totalEgresosAll ?? 0);
-        this._currencyTotals.set(result.currencyTotals ?? []);
-        this._availableAccounts.set(result.availableAccounts ?? []);
-        this._availableBankAccounts.set(result.availableBankAccounts ?? []);
-        this._availableBanks.set(result.availableBanks ?? []);
-        this._availableMonths.set(result.availableMonths ?? []);
-        this._availableYears.set(result.availableYears ?? []);
-        this._isLoading.set(false);
-      },
-      error: () => {
-        this._isLoading.set(false);
-      },
-    });
+    this._loadRequests.next();
   }
 
   // ── Filters ────────────────────────────────────────────────────────────

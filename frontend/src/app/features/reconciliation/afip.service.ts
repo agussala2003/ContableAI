@@ -1,8 +1,9 @@
 import { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpContext } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { ConfigService } from '../../core/config/config.service';
 import { SkippedDuplicate, Currency } from '../../core/services/transaction';
+import { SKIP_LOADING } from '../../core/interceptors/loading.interceptor';
 
 export interface AfipVoucher {
   id: string;
@@ -65,8 +66,15 @@ export class AfipService {
     return this.http.post<AfipUploadResult>(`${this.apiUrl}/companies/${companyId}/afip/upload`, formData);
   }
 
-  getVouchers(companyId: string): Observable<AfipVoucher[]> {
-    return this.http.get<AfipVoucher[]>(`${this.apiUrl}/companies/${companyId}/afip/vouchers`);
+  /**
+   * @param silent Sin overlay global. Obligatorio cuando se llama en bucle: pollAfipResult pide
+   * los comprobantes cada 2 segundos y, sin esto, cada ciclo levanta el modal "Procesando..." de
+   * pantalla completa del layout — el mismo spinner que el usuario ve como trabado.
+   */
+  getVouchers(companyId: string, silent = false): Observable<AfipVoucher[]> {
+    return this.http.get<AfipVoucher[]>(`${this.apiUrl}/companies/${companyId}/afip/vouchers`, {
+      context: new HttpContext().set(SKIP_LOADING, silent),
+    });
   }
 
   // Re-dispara el job de cruce manualmente (útil luego de subir extractos).

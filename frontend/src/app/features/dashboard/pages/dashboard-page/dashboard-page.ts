@@ -1,5 +1,6 @@
 import { Component, inject, signal, computed, effect, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Subject, of, catchError, map, switchMap, tap } from 'rxjs';
 import { DecimalPipe, NgClass } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
@@ -98,18 +99,54 @@ export class DashboardPage {
 
   protected skeletonCards = Array.from({ length: 4 });
 
+  /** Canal único de carga: el switchMap de abajo cancela la request anterior. */
+  private readonly loadRequests = new Subject<{ companyId: string; month: number; year: number }>();
+
   constructor() {
+    this.subscribeToLoadRequests();
+
     // Re-fetch whenever company, month, or year changes.
+    // Depende de activeCompanyId (string), no del objeto: loadCompanies() lo reemplaza por una
+    // instancia nueva en cada llamada y el effect se disparaba sin que la empresa cambiara.
     effect(() => {
-      const company = this.companyService.activeCompany();
-      const month   = this.selectedMonth();
-      const year    = this.selectedYear();
-      if (company) {
-        this.load(company.id, month, year);
+      const companyId = this.companyService.activeCompanyId();
+      const month     = this.selectedMonth();
+      const year      = this.selectedYear();
+      if (companyId) {
+        this.load(companyId, month, year);
       } else {
         this.stats.set(null);
         this.loading.set(false);
       }
+    });
+  }
+
+  /**
+   * Igual que en la grilla de conciliación: sin switchMap, cambiar de empresa A → B → A deja
+   * varias requests en vuelo y el dashboard se queda con la que responde última, que puede ser
+   * la de otra empresa. El companyId viaja con la respuesta como red de seguridad.
+   */
+  private subscribeToLoadRequests(): void {
+    this.loadRequests.pipe(
+      tap(() => {
+        this.loading.set(true);
+        this.error.set(null);
+      }),
+      switchMap(({ companyId, month, year }) =>
+        this.dashboardService.getStats(companyId, month, year).pipe(
+          map(data => ({ companyId, data })),
+          catchError(() => of({ companyId, data: null })),
+        )
+      ),
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe(({ companyId, data }) => {
+      if (companyId !== this.companyService.activeCompanyId()) {
+        this.loading.set(false);
+        return;
+      }
+      if (data) this.stats.set(data);
+      else      this.error.set('No se pudieron cargar los datos del dashboard.');
+      this.loading.set(false);
     });
   }
 
@@ -118,22 +155,11 @@ export class DashboardPage {
   }
 
   protected refresh(): void {
-    const id = this.companyService.activeCompany()?.id;
+    const id = this.companyService.activeCompanyId();
     if (id) this.load(id, this.selectedMonth(), this.selectedYear());
   }
 
   private load(companyId: string, month: number, year: number): void {
-    this.loading.set(true);
-    this.error.set(null);
-    this.dashboardService.getStats(companyId, month, year).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: data => {
-        this.stats.set(data);
-        this.loading.set(false);
-      },
-      error: () => {
-        this.error.set('No se pudieron cargar los datos del dashboard.');
-        this.loading.set(false);
-      },
-    });
+    this.loadRequests.next({ companyId, month, year });
   }
 }
