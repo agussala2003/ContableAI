@@ -22,6 +22,12 @@ internal interface IBankStatementParser
     /// <summary>Interpreta las líneas del extracto y devuelve las transacciones (sin la moneda,
     /// que estampa el orquestador a nivel documento).</summary>
     IReadOnlyList<BankTransaction> Parse(IReadOnlyList<StatementLine> lines, string? fileName);
+
+    /// <summary>
+    /// Número de cuenta propio del banco, para los formatos donde la detección genérica del
+    /// orquestador lee mal el encabezado. <c>null</c> = usar la detección genérica.
+    /// </summary>
+    string? DetectAccountNumber(IReadOnlyList<StatementLine> lines) => null;
 }
 
 /// <summary>

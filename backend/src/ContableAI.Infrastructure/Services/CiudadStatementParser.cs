@@ -11,9 +11,14 @@ using ContableAI.Domain.Constants;
 namespace ContableAI.Infrastructure.Services;
 
 /// <summary>
-/// Parser dedicado de extractos de Banco Ciudad. Formato propio: columnas
-/// Fecha / Descripción / Referencia / Débitos / Créditos / Saldo, fechas dd/MM/yyyy e importes en
-/// formato US (coma=miles, punto=decimal). Excluye la sección fiscal del total del banco.
+/// Parser dedicado de extractos de Banco Ciudad. El banco entrega tres formatos distintos y se
+/// elige por el encabezado de la tabla:
+///   · Home banking "Últimos movimientos": Fecha / Monto (con signo) / N° de Comprobante /
+///     Descripción / Saldo, fechas dd/MM/yyyy e importes argentinos ("$ -500.000,00").
+///   · Resumen de cuenta oficial: FECHA / CONCEPTO / DÉBITO / CRÉDITO / SALDO / DESCRIPCIÓN DE
+///     MOVIMIENTO, fechas "10-DIC-2025" e importes argentinos sin punto de millones ("1000.000,00").
+///   · Formato legacy: Fecha / Descripción / Referencia / Débitos / Créditos / Saldo, importes en
+///     formato US (coma=miles, punto=decimal). Excluye la sección fiscal del total del banco.
 /// </summary>
 internal sealed class CiudadStatementParser : IBankStatementParser
 {
@@ -25,7 +30,191 @@ internal sealed class CiudadStatementParser : IBankStatementParser
     public string Bank => BankCodes.Ciudad;
 
     public IReadOnlyList<BankTransaction> Parse(IReadOnlyList<StatementLine> lines, string? fileName)
-        => ParseBancoCiudad([.. lines], _logger);
+    {
+        List<StatementLine> rows = [.. lines];
+
+        if (rows.Any(IsHomeBankingHeader)) return ParseHomeBanking(rows, _logger);
+        if (rows.Any(IsResumenHeader))     return ParseResumen(rows, _logger);
+
+        return ParseBancoCiudad(rows, _logger);
+    }
+
+    /// <summary>
+    /// Los dos formatos nuevos muestran la misma cuenta escrita distinto: el home banking como
+    /// sucursal(8)+cuenta(10) de corrido ("000000290000016566") y el resumen como "0001656/6".
+    /// La detección genérica lee el CUIT en el primero y "016566" en el segundo, lo que creaba dos
+    /// cuentas provisionales para la misma cuenta real. Se normalizan ambos a la forma del
+    /// resumen (8 dígitos, "00016566"), que es la que el usuario copia al cargar la cuenta.
+    /// </summary>
+    public string? DetectAccountNumber(IReadOnlyList<StatementLine> lines)
+    {
+        foreach (var row in lines.Take(40))
+        {
+            var line = RemoveDiacritics(JoinCells(row)).ToUpperInvariant();
+
+            var hb = RxHomeBankingAccount.Match(line);
+            if (hb.Success) return CanonicalAccount(hb.Groups[1].Value[^10..]);
+
+            if (line.Contains("CUENTA NUMERO"))
+            {
+                var token = row.Cells.Select(c => c.Text).FirstOrDefault(t => RxResumenAccount.IsMatch(t));
+                if (token is not null) return CanonicalAccount(new string([.. token.Where(char.IsDigit)]));
+            }
+        }
+
+        return null;
+    }
+
+    private static string CanonicalAccount(string digits) => digits.TrimStart('0').PadLeft(8, '0');
+
+    // "CC $ 000000290000016566" / "CA U$S ..." — tipo de cuenta, moneda y 18 dígitos.
+    private static readonly Regex RxHomeBankingAccount = new(
+        @"\b(?:CC|CA)\s+\S+\s+(\d{18})\b", RegexOptions.Compiled);
+
+    // "0001656/6" — cuenta con dígito verificador, en la fila "CUENTA NÚMERO" del resumen.
+    private static readonly Regex RxResumenAccount = new(@"^\d{4,12}/\d$", RegexOptions.Compiled);
+
+    // Importe del resumen oficial: miles con punto pero sin punto de millones ("4653.730,89").
+    private static readonly Regex RxResumenAmount = new(@"^-?\d+(?:\.\d{3})*,\d{2}$", RegexOptions.Compiled);
+
+    private static readonly Regex RxResumenDate = new(@"^(\d{2})-([A-Z]{3})-(\d{4})$", RegexOptions.Compiled);
+
+    private static readonly Dictionary<string, int> SpanishMonths = new()
+    {
+        ["ENE"] = 1, ["FEB"] = 2, ["MAR"] = 3, ["ABR"] = 4, ["MAY"] = 5, ["JUN"] = 6,
+        ["JUL"] = 7, ["AGO"] = 8, ["SEP"] = 9, ["SET"] = 9, ["OCT"] = 10, ["NOV"] = 11, ["DIC"] = 12,
+    };
+
+    private static bool IsHomeBankingHeader(StatementLine row)
+    {
+        var u = RemoveDiacritics(JoinCells(row)).ToUpperInvariant();
+        return u.Contains("FECHA") && u.Contains("MONTO") && u.Contains("COMPROBANTE");
+    }
+
+    private static bool IsResumenHeader(StatementLine row)
+    {
+        var u = RemoveDiacritics(JoinCells(row)).ToUpperInvariant();
+        return u.Contains("FECHA") && u.Contains("CONCEPTO") && u.Contains("DEBITO") &&
+               u.Contains("CREDITO") && u.Contains("SALDO");
+    }
+
+    // "N/D LEY 25413DEBIT", "LEY 25413DEBITOS": palabras pegadas en el PDF.
+    private static string NormalizeDescription(IEnumerable<string> parts)
+    {
+        var desc = Regex.Replace(string.Join(" ", parts), @"\s+", " ").Trim();
+        desc = Regex.Replace(desc, @"(LEY 25413)(?=[A-Z])", "$1 ", RegexOptions.IgnoreCase);
+        return string.IsNullOrWhiteSpace(desc) ? "Movimiento Ciudad" : desc;
+    }
+
+    // ── Home banking "Últimos movimientos" ──────────────────────────────────────
+    // Las columnas se corren de un export a otro (el ancho depende del contenido), así que se
+    // lee por orden de tokens y no por posición: fecha, "$", monto con signo, comprobante,
+    // descripción, "$", saldo. El monto es el primer importe y el saldo el último.
+    private static List<BankTransaction> ParseHomeBanking(List<StatementLine> rows, ILogger logger)
+    {
+        var txs = new List<BankTransaction>();
+
+        foreach (var row in rows)
+        {
+            if (row.Cells.Count == 0 ||
+                !DateOnly.TryParseExact(row.Cells[0].Text.Trim(), "dd/MM/yyyy", out var date))
+                continue;
+
+            var texts = row.Cells.Select(c => c.Text.Trim().TrimStart('$').Trim()).ToList();
+            var amountIdx = Enumerable.Range(1, texts.Count - 1).Where(i => IsArgentineAmount(texts[i])).ToList();
+            if (amountIdx.Count < 2)
+            {
+                logger.LogDebug("[CIUDAD-HB] SKIP (sin monto y saldo) — '{Line}'", JoinCells(row));
+                continue;
+            }
+
+            int montoIdx = amountIdx[0], saldoIdx = amountIdx[^1];
+            var amount = ParseArgentineAmount(texts[montoIdx]);
+            if (amount == 0) continue;
+
+            int i = montoIdx + 1;
+            string? comprobante = null;
+            if (i < saldoIdx && Regex.IsMatch(texts[i], @"^\d+$")) comprobante = texts[i++];
+
+            var descParts = texts[i..saldoIdx].Where(t => t.Length > 0);
+
+            txs.Add(new BankTransaction
+            {
+                Date        = date,
+                Description = NormalizeDescription(descParts),
+                Amount      = Math.Abs(amount),
+                Type        = amount < 0 ? TransactionType.Debit : TransactionType.Credit,
+                SourceBank  = BankCiudad,
+                ExternalId  = comprobante,
+            });
+        }
+
+        logger.LogDebug("[CIUDAD-HB] Total transacciones parseadas: {Count}", txs.Count);
+        return txs.OrderBy(t => t.Date).ToList();
+    }
+
+    // ── Resumen de cuenta oficial ───────────────────────────────────────────────
+    // Columnas de importe alineadas a la derecha: se asignan por la posición del borde derecho
+    // respecto de dónde arranca el encabezado de la columna siguiente.
+    private static List<BankTransaction> ParseResumen(List<StatementLine> rows, ILogger logger)
+    {
+        var txs = new List<BankTransaction>();
+        double? creditX = null, saldoX = null;
+
+        foreach (var row in rows)
+        {
+            if (row.Cells.Count == 0) continue;
+
+            if (IsResumenHeader(row))
+            {
+                foreach (var cell in row.Cells)
+                {
+                    var cu = RemoveDiacritics(cell.Text).ToUpperInvariant();
+                    if (cu == "CREDITO")    creditX = cell.X;
+                    else if (cu == "SALDO") saldoX  = cell.X;
+                }
+                continue;
+            }
+
+            if (creditX is null || saldoX is null) continue;
+
+            var m = RxResumenDate.Match(row.Cells[0].Text.Trim().ToUpperInvariant());
+            if (!m.Success || !SpanishMonths.TryGetValue(m.Groups[2].Value, out var month)) continue;
+
+            var date = new DateOnly(int.Parse(m.Groups[3].Value), month, int.Parse(m.Groups[1].Value));
+
+            decimal debit = 0, credit = 0;
+            var descParts = new List<string>();
+
+            foreach (var cell in row.Cells.Skip(1))
+            {
+                var txt = cell.Text.Trim();
+                if (!RxResumenAmount.IsMatch(txt)) { descParts.Add(txt); continue; }
+
+                if (cell.Right <= creditX)     debit  = ParseArgentineAmount(txt);
+                else if (cell.Right <= saldoX) credit = ParseArgentineAmount(txt);
+                // else: SALDO, no es movimiento
+            }
+
+            if (debit == 0 && credit == 0)
+            {
+                logger.LogDebug("[CIUDAD-RES] SKIP (sin importe) — '{Line}'", JoinCells(row));
+                continue;
+            }
+
+            txs.Add(new BankTransaction
+            {
+                Date        = date,
+                Description = NormalizeDescription(descParts),
+                Amount      = debit > 0 ? debit : credit,
+                Type        = debit > 0 ? TransactionType.Debit : TransactionType.Credit,
+                SourceBank  = BankCiudad,
+            });
+        }
+
+        logger.LogDebug("[CIUDAD-RES] Total transacciones parseadas: {Count}", txs.Count);
+        return txs.OrderBy(t => t.Date).ToList();
+    }
 
     // ── Lógica específica Banco Ciudad (movida verbatim desde PdfBankParser) ────
     private static List<BankTransaction> ParseBancoCiudad(List<StatementLine> rows, ILogger logger)

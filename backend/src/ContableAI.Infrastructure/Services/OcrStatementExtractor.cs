@@ -154,7 +154,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
             return BankCodes.MercadoPago;
 
         // Ciudad: account format 3-029- (bank code 029) or explicit REFERENCIA column header
-        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))
+        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD") || IsCiudadHomeBanking(text))
             return BankCodes.Ciudad;
 
         // Ver la nota en DetectBankFromRows: Santander se detecta por el prefijo 072 del CBU
@@ -230,7 +230,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         if (text.Contains("GALICIA"))                                          return BankCodes.Galicia;
         if (text.Contains("CREDICOOP") || text.Contains("COOPERATIVA DE CRED")) return BankCodes.Credicoop;
         if (text.Contains("MERCADO PAGO") || text.Contains("MERCADOPAGO"))    return BankCodes.MercadoPago;
-        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD"))         return BankCodes.Ciudad;
+        if (text.Contains("3-029-") || text.Contains("BANCO CIUDAD") || IsCiudadHomeBanking(text)) return BankCodes.Ciudad;
 
         // Santander va ULTIMO y se apoya en el CBU, no en el nombre: en sus extractos el logo
         // del encabezado es vectorial, así que la palabra "SANTANDER" no aparece en el texto
@@ -241,6 +241,16 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
             return BankCodes.Santander;
 
         return BankCodes.Generic;
+    }
+
+    /// <summary>
+    /// Export "Últimos movimientos" del home banking de Ciudad: el logo es una imagen, así que el
+    /// nombre del banco no aparece como texto. Se reconoce por la combinación de su encabezado.
+    /// </summary>
+    private static bool IsCiudadHomeBanking(string upperText)
+    {
+        var t = BankParsingHelpers.RemoveDiacritics(upperText);
+        return t.Contains("ULTIMOS MOVIMIENTOS") && t.Contains("BUSQUEDA POR") && t.Contains("DE COMPROBANTE");
     }
 
     // ── Detección por CBU del encabezado ───────────────────────────────────────

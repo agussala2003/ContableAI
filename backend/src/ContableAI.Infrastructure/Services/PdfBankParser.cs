@@ -75,9 +75,13 @@ public class PdfBankParser : IBankParser
             var currency = DetectCurrency(rows);
             _logger.LogDebug("[PDF] Moneda detectada: {Currency}", currency);
 
+            var parser = _bankParsers.GetValueOrDefault(doc.Bank) ?? _genericParser;
+
             // 4. Identificación de la cuenta a nivel documento, para el enrutamiento automático.
+            //    La estrategia del banco puede aportar su propio número cuando el genérico no sirve.
             var ids = DetectAccountIdentifiers(rows);
-            _logger.LogDebug("[PDF] Cuenta detectada: {Account} — CBU: {Cbu}", ids.AccountNumber, ids.Cbu);
+            var accountNumber = parser.DetectAccountNumber(rows) ?? ids.AccountNumber;
+            _logger.LogDebug("[PDF] Cuenta detectada: {Account} — CBU: {Cbu}", accountNumber, ids.Cbu);
 
             if (ids.HasMultipleAccounts)
                 _logger.LogWarning(
@@ -85,14 +89,13 @@ public class PdfBankParser : IBankParser
                     string.Join(", ", ids.LabeledCbus));
 
             // 5. Despacho a la estrategia del banco (o la genérica si no hay una específica).
-            var parser = _bankParsers.GetValueOrDefault(doc.Bank) ?? _genericParser;
             var txs = parser.Parse(rows, fileName).ToList();
 
             // Post-pass: estampar la moneda detectada en todas las transacciones del extracto.
             foreach (var tx in txs)
                 tx.Currency = currency;
 
-            return new ParsedStatement(txs, currency, doc.Bank, ids.AccountNumber, ids.Cbu)
+            return new ParsedStatement(txs, currency, doc.Bank, accountNumber, ids.Cbu)
             {
                 ConflictingAccountIdentifiers = ids.HasMultipleAccounts ? ids.LabeledCbus : [],
             };
