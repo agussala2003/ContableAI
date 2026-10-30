@@ -29,9 +29,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build /app/publish .
 
+# El paquete NuGet Tesseract 5.2.0 solo trae binarios de Windows. En Linux busca, dentro de
+# /app/x64, "libleptonica-1.82.0.so" y "libtesseract50.so", y carga "libdl" sin versión. apt
+# instala liblept.so.5, libtesseract.so.5 y libdl.so.2: sin estos symlinks el OCR falla con
+# DllNotFoundException ("Exception has been thrown by the target of an invocation").
+RUN LIBDIR="$(dirname "$(find /usr/lib -name liblept.so.5 | head -1)")" \
+    && mkdir -p /app/x64 \
+    && ln -s "$LIBDIR/liblept.so.5"      /app/x64/libleptonica-1.82.0.so \
+    && ln -s "$LIBDIR/libtesseract.so.5" /app/x64/libtesseract50.so \
+    && ln -sf "$(find /usr/lib /lib -name libdl.so.2 | head -1)" "$LIBDIR/libdl.so"
+
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
-# Apunta al tessdata instalado por apt (contiene spa.traineddata)
-ENV TESSDATA_PREFIX=/usr/share/tessdata
+# Apunta al tessdata instalado por apt (spa + eng) en Ubuntu 24.04
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 ENTRYPOINT ["dotnet", "ContableAI.API.dll"]
