@@ -363,7 +363,7 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
                     // Ordenar filas de arriba hacia abajo (Y ascendente en Tesseract)
                     foreach (var (yKey, cells) in wordsByY.OrderBy(kvp => kvp.Key))
                     {
-                        var sorted = cells.OrderBy(c => c.X).ToList();
+                        var sorted = MergeSplitAmountTokens(cells.OrderBy(c => c.X).ToList());
                         // Negamos yKey para que el parser (que espera Y descendente de PdfPig) lo procese bien
                         allRows.Add(new StatementLine(pageNum, -yKey, sorted));
                     }
@@ -373,5 +373,33 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         }
 
         return allRows;
+    }
+
+    // "399.644," + "61": Tesseract a veces parte un importe en la coma decimal y devuelve dos
+    // palabras con cajas superpuestas. Ninguna de las dos es un importe, y la fila se perdía entera.
+    private static readonly Regex RxAmountHead = new(@"^-?\d[\d.]*,$", RegexOptions.Compiled);
+    private static readonly Regex RxAmountTail = new(@"^\d{1,2}$", RegexOptions.Compiled);
+
+    /// <summary>Re-une los fragmentos de un importe que el OCR partió en la coma decimal.</summary>
+    internal static List<StatementToken> MergeSplitAmountTokens(List<StatementToken> sorted)
+    {
+        var result = new List<StatementToken>(sorted.Count);
+
+        foreach (var token in sorted)
+        {
+            var prev = result.Count > 0 ? result[^1] : null;
+
+            // Pegados o superpuestos: un hueco real entre columnas es mucho mayor que 15 px.
+            if (prev is not null && RxAmountHead.IsMatch(prev.Text) && RxAmountTail.IsMatch(token.Text) &&
+                token.X <= prev.Right + 15)
+            {
+                result[^1] = new StatementToken(prev.X, Math.Max(prev.Right, token.Right), prev.Text + token.Text);
+                continue;
+            }
+
+            result.Add(token);
+        }
+
+        return result;
     }
 }
