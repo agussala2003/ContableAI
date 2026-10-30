@@ -33,7 +33,9 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
     // este freno, N jobs de Hangfire ejecutando OCR en simultáneo pueden saturar CPU y memoria del
     // proceso igual que antes lo hacían N requests HTTP concurrentes. Bloquea el hilo del worker de
     // Hangfire que lo espera (no hay problema: son hilos de background, no de atención de requests).
-    private static readonly SemaphoreSlim OcrGate = new(2, 2);
+    // De a uno: con la cuota de CPU de producción dos OCR en paralelo no terminan antes (se reparten
+    // la misma CPU) y suman sus picos de memoria, que en una instancia de 512 MB disparan un OOM.
+    private static readonly SemaphoreSlim OcrGate = new(1, 1);
 
     public StatementDocument Extract(Stream statementStream, string fileName)
     {
@@ -322,8 +324,9 @@ internal sealed class OcrStatementExtractor : IStatementTextExtractor
         var tessDataPath = GetTessDataPath();
         var allRows = new List<StatementLine>();
 
-        // spa+eng: español primero, inglés como fallback para números y siglas
-        using var engine = new TesseractEngine(tessDataPath, "spa+eng", EngineMode.LstmOnly);
+        // Solo spa: el modelo de inglés no mejoraba la lectura de extractos (números y siglas salen
+        // igual) y cargar dos modelos sube el pico de memoria del OCR.
+        using var engine = new TesseractEngine(tessDataPath, "spa", EngineMode.LstmOnly);
 
         int pageNum = 0;
 #pragma warning disable CA1416 // Se sabe que esto corre en Windows o contenedores permitidos

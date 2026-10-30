@@ -47,5 +47,9 @@ ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 # CPU real. Con la cuota chica de Render los threads se pisan: medido con 0.1 CPU, un extracto de
 # 4 páginas no termina en 7 minutos sin esto y tarda ~50 s con un solo thread.
 ENV OMP_THREAD_LIMIT=1
+# Tesseract y PDFium reservan memoria nativa con malloc; glibc abre un arena por thread y cada job
+# de Hangfire corre en uno distinto, así que el RSS crece entre OCRs sin volver al sistema. Con 2
+# arenas la memoria liberada se reutiliza y la instancia de 512 MB no llega al OOM.
+ENV MALLOC_ARENA_MAX=2
 
 ENTRYPOINT ["dotnet", "ContableAI.API.dll"]

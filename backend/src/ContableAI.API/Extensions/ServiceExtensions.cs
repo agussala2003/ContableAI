@@ -158,16 +158,16 @@ public static class ServiceExtensions
 
         // P-9: dos servers en el mismo proceso con colas y workers EXPLÍCITOS (el default de
         // Hangfire son hasta 20 workers compitiendo con la API por el thread pool):
-        //   · "uploads" — 2 workers, alineados con el SemaphoreSlim(2,2) del OCR: nunca hay
+        //   · "uploads" — 1 worker, alineado con el SemaphoreSlim(1,1) del OCR: nunca hay
         //     un worker bloqueado esperando el gate, y N subidas simultáneas encolan en vez
-        //     de acaparar workers.
+        //     de acaparar workers (ni de sumar picos de memoria de OCR en paralelo).
         //   · "default" — 3 workers para el resto (asientos, cruce AFIP, retención,
         //     aprendizaje proactivo): las subidas pesadas no pueden starvear estos jobs.
         services.AddHangfireServer(options =>
         {
             options.ServerName  = $"{Environment.MachineName}:uploads";
             options.Queues      = [HangfireQueues.Uploads];
-            options.WorkerCount = 2;
+            options.WorkerCount = 1;
         });
         services.AddHangfireServer(options =>
         {
