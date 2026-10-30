@@ -43,5 +43,9 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 # Apunta al tessdata instalado por apt (spa + eng) en Ubuntu 24.04
 ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
+# Tesseract paraleliza con OpenMP según los cores que VE el contenedor (16+), no según la cuota de
+# CPU real. Con la cuota chica de Render los threads se pisan: medido con 0.1 CPU, un extracto de
+# 4 páginas no termina en 7 minutos sin esto y tarda ~50 s con un solo thread.
+ENV OMP_THREAD_LIMIT=1
 
 ENTRYPOINT ["dotnet", "ContableAI.API.dll"]
